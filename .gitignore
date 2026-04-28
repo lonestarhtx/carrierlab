@@ -1,0 +1,27 @@
+# Unreal generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# IDE and local machine state
+.claude/
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build products and diagnostics
+*.obj
+*.pdb
+*.dll
+*.lib
+*.exp
+*.log
+
+# OS noise
+Thumbs.db
+Desktop.ini
