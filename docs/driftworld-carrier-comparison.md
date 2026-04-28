@@ -1,102 +1,100 @@
 # Driftworld Carrier Comparison
 
-Status: pre-coding deliverable. No production code is approved by this document.
+Status: revised pre-Stage-0 deliverable. Driftworld is used as independent
+confirmation and contrast, not as authority over the Cortial thesis.
 
 ## Sources
 
-- Driftworld paper: `C:\Users\Michael\Documents\Unreal Projects\Aurous\docs\driftworld-tectonics\driftworld-tectonics.pdf`
-- Paper extraction: `docs/paper-carrier-extraction.md`
-- Aurous failure memo: `C:\Users\Michael\Documents\Unreal Projects\Aurous\docs\tectonic-architecture-failure-memo-2026-04.md`
+- Driftworld paper:
+  `Intermediate/CarrierLabResearchExtracts/driftworld-tectonics.layout.txt`
+- Cortial paper/thesis extraction:
+  `docs/paper-carrier-extraction.md`
+- Aurous failure memo, for comparison discipline only
 
-## Executive Comparison
+## Executive Read
 
-Driftworld is an independent Unity implementation inspired by Cortial et al.,
-but it is not a literal clone. It keeps the central carrier idea: crust data
-lives on moving plate geometry and is periodically resampled to a compact
-closed surface layer. Its strongest value to CarrierLab is architectural
-triangulation: it shows that an implementation can separate the simulation
-carrier from the render/output surface and still produce plausible results.
+Driftworld independently re-derives the same carrier family: a broken,
+plate-separated crust layer carries simulation state, while a compact closed
+data layer receives resampled output. Its apparent success supports the thesis
+algorithm as implementable, but it is not the lab specification. Where
+Driftworld diverges from the thesis, CarrierLab follows the thesis.
 
-It also documents deviations that matter for falsification. Driftworld merges
-whole plates on continental collision, omits fold direction, uses simplified
-ridge placement, uses a ranking score for overlap precedence, and relies on
-Unity float/compute-shader infrastructure. Those choices mean Driftworld's
-success cannot prove the paper exactly, but it strongly informs the lab's
-design and diagnostics.
+The most important confirmation is architectural: simulation authority is not
+the render/output layer. Driftworld explicitly separates crust carrier data
+from compact output data, which matches the thesis's plate-local triangulation
+plus global-resampling structure.
 
-## Layer Model
+## Layer Comparison
 
-Driftworld has three layers:
-
-- Crust layer: the simulation carrier. It has broken topology along plate
-  borders and moves by plate transforms.
-- Data layer: a compact closed sphere surface used for resampled output and
-  overlay data.
-- Render layer: a lower-resolution mesh used because of Unity mesh limits.
-
-Short source anchor from Driftworld: "Crust keeps all the tectonic model information";
-"Data layer provides compact surface data."
-
-CarrierLab interpretation:
-
-- The paper carrier should be tested as plate-local authority plus downstream
-  projection/resampling, not as persistent global sample ownership.
-- CarrierLab should name these layers explicitly to prevent authority drift:
-  `CarrierPlateMesh`, `ProjectionGrid`, and `ExportSurface`.
-
-## Where Driftworld Matches The Paper
-
-| Topic | Paper | Driftworld | CarrierLab implication |
+| Topic | Cortial thesis | Driftworld | CarrierLab decision |
 | --- | --- | --- | --- |
-| Unit sphere | Sphere centered at origin | Unit sphere simulation, scaled for rendering | Use unit sphere and report physical km only as derived units. |
-| Sampling | Fibonacci samples plus spherical Delaunay | Prepared Delaunay meshes | Use deterministic sample/mesh generation with hashes. |
-| Plate identity | Plate domains with plate-local crust fields | Equivalence classes of vertices and plate objects | Store plate-local authority, not global output authority. |
-| Motion | Rigid rotation by axis and speed | Quaternion transform per plate | Analytic rotation gives independent drift oracle. |
-| Gaps | Divergence creates oceanic crust | Surface voids are filled during resampling | Misses must be classified before fill. |
-| Resampling | Periodic global resampling every 10-60 iterations | Resampling interpolates current broken crust onto original mesh | Resampling is an experimental operation, not a hidden cleanup. |
-| Acceleration | BVH for plates | BVH and compute shaders | CarrierLab needs an acceleration strategy by Stage 3. |
+| Carrier layer | One duplicated spherical triangulation per plate | Crust layer has broken topology at plate borders | Adopt plate-local duplicated carrier meshes. |
+| Output layer | Original global TDS is reused for resampling | Data layer is a compact closed sphere mesh | Treat global samples as projection/resampling output, not persistent transport authority. |
+| Render layer | Downstream terrain amplification/rendering | Separate Render layer due Unity limits | Out of CarrierLab scope except diagnostic PNG exports. |
+| Plate motion | Plate mesh vertices are updated each step | Plate quaternion transform is accumulated and applied when needed | Follow thesis: per-step vertex motion for Stage 1. Track FP drift explicitly. |
+| Resampling | Periodic `DeltaT` event, then rebuild plate meshes | Periodic/event-forced resampling onto original mesh | Implement as Stage 1.5, separate from within-window rigid projection. |
+| Overlap resolution | Subduction/collision filter removes losing triangles | Rank score can decide precedence | Do not import rank score. Stage 1 uses explicit no-subduction tie-break and raw counts. |
 
-## Where Driftworld Differs
+## Driftworld Evidence
 
-| Topic | Driftworld difference | Risk for CarrierLab |
-| --- | --- | --- |
-| Initial parameters | Defaults to 20 plates and, for testing, zero initial continental probability | Cannot use Driftworld defaults for the paper's 40 plate / 0.3 land baseline without documenting the change. |
-| Fold direction | Not implemented | Driftworld success does not validate every paper material field. CarrierLab Stage 0-2 can omit fold direction only if the omission is listed as out-of-scope for rigid transport. |
-| Collision | Whole plates can merge; paper attaches connected terranes | Do not infer terrane-transfer correctness from Driftworld. CarrierLab stages before mutation should avoid collision features entirely. |
-| Overlap precedence | Plate rank score decides "goes under" | Ranking is a heuristic, not paper proof. Lab overlap diagnostics must report raw geometry before resolving. |
-| Resampling | Forces resampling on continental collision and resets transforms | This is a design adaptation. CarrierLab should separate periodic paper resampling from event-triggered resampling. |
-| Ridge estimate | Uses nearest two plates and midpoint assumptions | Useful as a fallback model, but the lab should make ridge construction auditable. |
-| Precision | Mostly float precision, with tolerances and clamping | CarrierLab should use double precision and classify tolerance effects. |
-| Rendering | Missing texture data can be a rendering-only issue | Exports cannot be accepted without raw metric backing. |
+Short anchors from Driftworld:
 
-## What Driftworld's Apparent Success Tells Us
+- Sec. 4.2, lines 1427-1431: "Crust keeps all the tectonic model information";
+  "Data layer provides compact surface data."
+- Sec. 4.2, lines 1429-1432: crust topology is "broken along the plate borders";
+  ridges are present in Data because they are used for resampling.
+- Sec. 3.7, lines 1112-1117: resampling is used "to fill the gaps" and
+  interpolate current broken-surface data onto the original mesh.
+- Sec. 3.6, lines 1058-1062: Driftworld updates a quaternion transform by
+  `omega dt` and plates move as rigid bodies.
+- Sec. 4.2.1, lines 1468-1471: vertex positions "do not change" and transforms
+  act on them when needed.
+- Sec. 5.1, lines 1968-1971: interpolation artifacts appear along plate
+  borders and often have single-sample size.
+- Sec. 5.6, lines 2043-2045: past crust artifacts were caused by incorrectly
+  normalized barycentric interpolation plus crust resampling.
 
-Driftworld weakly supports the hypothesis that Aurous's old failure was not
-inevitable. It reports robust enough 500k data output to avoid serious
-irrecoverable artifacts, while acknowledging runtime, memory, interpolation,
-and missing-texture issues.
+## What Driftworld Confirms
 
-That is not enough to answer the CarrierLab question. Driftworld does not
-report the required miss/multi-hit/CAF/drift-coherence metrics, and it changes
-several core mechanics. It is evidence that the carrier family is plausible,
-not evidence that the paper carrier passes at 60k-250k under the proposed
-gates.
+1. Broken-topology crust authority plus compact closed output is a workable
+   architecture. This strengthens the case that Aurous's earlier failure was
+   implementation-specific or environment-specific, not an obvious conceptual
+   impossibility.
 
-## Design Lessons Imported Into CarrierLab
+2. Periodic resampling is not optional glue. It is the operation that reconciles
+   drifting, broken plate-local crust with a closed global surface.
 
-- Separate simulation authority from output layers.
-- Record plate transforms rather than physically mutating every position each
-  step.
-- Treat resampling as a named event with before/after metrics.
-- Use raw geometry diagnostics before any winner selection.
-- Keep texture/export errors separate from carrier errors.
-- Include precision and tolerance diagnostics from the beginning.
+3. Barycentric interpolation and resampling are load-bearing and fragile. The
+   Driftworld past-issue note maps directly to CarrierLab diagnostics: if
+   normalization is wrong, artifacts can appear after only 20-30 steps.
 
-## Design Lessons Not Imported
+4. Rendering/export artifacts can be unrelated to carrier correctness.
+   Driftworld's missing texture issue is explicitly a rendering problem. In
+   CarrierLab, PNGs can never pass a stage without raw metrics.
 
-- Do not use Unity float precision as precedent.
-- Do not use whole-plate merge behavior as paper evidence.
-- Do not accept "visually robust" as a substitute for miss, overlap, CAF, and
-  drift metrics.
-- Do not let render layer constraints determine simulation authority.
+## Where CarrierLab Must Not Follow Driftworld
 
+- Do not adopt the quaternion accumulator as the canonical motion model. The
+  thesis updates plate geometry per step; CarrierLab follows that and measures
+  cumulative floating-point drift.
+
+- Do not adopt whole-plate merge behavior or rank-based overlap precedence.
+  Those are Driftworld simplifications around collision/subduction, which are
+  outside the early CarrierLab scope.
+
+- Do not use Driftworld defaults as paper baselines. Driftworld's table lists
+  20 plates and zero initial continental probability for its model value,
+  while the paper Table 2 baseline is 40 plates and 0.3 land coverage.
+
+- Do not treat Driftworld's visual success as a substitute for miss, overlap,
+  CAF, mass, drift-coherence, determinism, memory, and step-kernel metrics.
+
+## Implication For Differential Diagnosis
+
+If CarrierLab reproduces the thesis carrier cleanly, the diff against Aurous's
+failed prototype becomes the bug list. Driftworld already points to likely
+high-value suspects: whether Aurous used ray-from-origin triangle intersection
+or a different containment predicate, whether barycentric normalization was
+independently audited, whether broken plate-local authority was kept separate
+from compact output state, and whether render/export artifacts were mistaken
+for carrier facts.

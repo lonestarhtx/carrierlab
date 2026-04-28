@@ -1,332 +1,306 @@
 # Carrier Design
 
-Status: pre-coding deliverable. No production code is approved by this document.
+Status: revised pre-Stage-0 design note. The current Stage 0 code is
+provisional until the thesis-spec audit below is complete and the readback is
+approved.
 
-## Research Target
+## Research Goal
 
-CarrierLab will test whether a clean-room moving plate-local crust carrier can
-preserve coherent material transport, projection coverage, and boundary quality
-at 60k, 100k, and 250k samples on a unit sphere.
+CarrierLab's goal is to reproduce the carrier model from the Cortial
+paper/thesis faithfully in a clean-room implementation, achieving the
+published per-step performance envelope from paper Section 7.4 Table 2 and
+producing carrier-layer behavior consistent with the prerequisites for the
+paper's published outputs.
 
-The first implementation scope is deliberately smaller than the full paper:
+This is paper-faithful reproduction with Aurous differential diagnosis, not a
+falsification experiment. The paper's algorithm is treated as the gold
+standard. The lab's job is to identify the implementation gap that caused
+Aurous's earlier paper-faithful prototype to fail.
 
-- no subduction
-- no collision
-- no rifting
-- no uplift
-- no erosion
-- no terrain beauty
-- rigid motion plus projection/resampling diagnostics only
+The paper's morphology figures include subduction, collision, rifting,
+oceanic generation, and downstream terrain processes. Visual matching to those
+figures is out of scope for CarrierLab. The carrier behaves correctly when its
+layer-local invariants hold.
 
-The lab must answer whether the carrier itself works before any tectonic
-process is layered on top.
+## Reproduction Outcomes
+
+1. Faithful reproduction succeeded. CarrierLab matches Table 2 performance
+   envelope and carrier-layer behavior. The diff against Aurous's failed
+   prototype is the bug list.
+
+2. Faithful reproduction succeeded mechanically but performance/quality
+   diverged. The implementation follows the thesis spec, but measured results
+   diverge from published performance or carrier quality. This points to
+   environment, query infrastructure, precision, triangulation, or implementation
+   overhead.
+
+3. Faithful reproduction blocked by underspecification. A specific paper/thesis
+   gap prevents a clean implementation. The result identifies the gap without
+   blaming the paper.
 
 ## Authority Rules
 
 Authoritative data:
 
-- plate-local crust geometry
-- plate rigid transform
+- plate-local duplicated triangulations
+- physically updated plate vertex positions during rigid motion
+- plate geodetic motion parameters
 - plate-local crust/material fields
-- explicit projection and resampling diagnostics
+- pre-resampling and post-resampling plate-local state
 
 Projection/output data:
 
 - global sample projection results
-- plate id visualization
-- material class visualization
-- miss, overlap, boundary, and continental-fraction maps
-- per-step metric rows and hashes
+- selected plate id after tie-break
+- material visualization layers
+- miss, overlap, boundary, drift-error, and continental-fraction maps
+- metrics rows, hashes, and checkpoint reports
 
 Forbidden authority:
 
 - persistent global sample ownership as material transport
-- hysteresis, retention, backfill, recovery, or anchoring heuristics
-- generic miss-to-ocean repair without classifying why the miss happened
-- Aurous exporter/control-panel/sidecar infrastructure
+- ownership persistence, hysteresis, retention, backfill, recovery, repair, or
+  anchoring heuristics
+- generic miss-to-ocean repair without miss classification
+- Aurous exporter, control panel, sidecar, V6, V9, or Prototype A-E code
 
 ## Core Data Primitives
 
 `SphereSample`
 
-- sample id
-- unit position
+- deterministic Fibonacci sample id
+- unit position on the output/global TDS
 - deterministic area weight
-- neighbor ids for diagnostic adjacency
+- initial diagnostic plate id only
 
 `CarrierPlate`
 
 - plate id
-- initial center and current rotation
-- local spherical patch geometry
-- local triangles and adjacency
-- material samples attached in plate-local coordinates
-- deterministic motion parameters
+- geodetic rotation axis and angular speed
+- duplicated local vertices copied from the global TDS
+- duplicated local triangles copied/re-indexed/re-compacted from the global TDS
+- empty neighbor slots at plate borders
+- plate-local material fields
 
-`MaterialSample`
+`CarrierPlateTriangle`
 
-- local position on owning plate
-- continental weight in [0, 1]
-- crust class for visualization
-- elevation/thickness/age placeholders only where required for projection
-- immutable initial id for drift/mass audits
+- local vertex indices
+- source global triangle id for audit
+- boundary flag
+- material interpolation inputs
 
 `ProjectionHit`
 
 - global sample id
-- candidate plate id
-- candidate triangle id
-- barycentric weights
-- angular residual
-- hit class: exact, boundary-degenerate, tolerance, invalid
+- candidate plate id and plate-local triangle id
+- barycentric weights from ray/triangle intersection
+- boundary-degenerate flag
+- raw hit class before resolver
 
 `ProjectionResult`
 
 - global sample id
 - raw candidate count
-- selected plate id, if any
+- resolved plate id, if any
 - selected material fields
-- classification: exact-hit, true-miss, divergent-gap, numeric-miss,
-  topology-hole, true-overlap, convergent-overlap, boundary-degenerate-overlap
+- classification: exact-hit, boundary-degenerate-overlap, true-miss,
+  divergent-gap, numeric-miss, topology-hole, convergent-overlap,
+  numeric-overlap, topology-duplicate, third-plate-intrusion
 
-## Geometry And Projection
+## Geometry And Query Model
 
-The implementation should use a deterministic unit-sphere sample set and a
-spherical triangle mesh. The paper uses Fibonacci sampling plus spherical
-Delaunay triangulation. If the implementation chooses an equivalent robust
-triangulation method, it must document the substitution and prove Stage 0
-coverage before any motion.
+Defaults:
 
-Projection algorithm:
+- samples: deterministic Fibonacci lattice
+- triangulation: clean-room spherical Bowyer-Watson Delaunay
+- plate count: 40
+- land coverage: 0.3
+- seed: 42
+- timestep: `dt = 2 My`
+- resampling cadence: `DeltaT = (1-alpha)M + alpha m`, with
+  `alpha = min(1, vm/v0)`, `M = 128 Ma`, `m = 32 Ma`, and `v0 = 100 mm/y`
 
-1. Rotate every carrier plate by its current rigid transform.
-2. For every global sample, enumerate all plate triangles that contain the
-   sample under the geometric predicate.
-3. Record raw candidates before resolving.
-4. Resolve output with a deterministic tie-break only after metrics capture
-   raw candidate counts.
-5. Transfer material by barycentric interpolation for exact hits.
-6. Classify zero-candidate samples before any fill is applied.
-7. Emit metrics and maps from the raw and resolved results.
+The query model is thesis-specific:
 
-Boundary degeneracy policy before coding:
+1. For each global sample `p`, construct the ray from the planet center through
+   `p`.
+2. Test that ray against plate-local triangle meshes.
+3. Record every raw hit before resolving.
+4. Ignore subducting/colliding triangles only in stages where those processes
+   exist. They do not exist in Stage 0, Stage 1, or Stage 1.5.
+5. Transfer material by barycentric interpolation for resolved exact hits.
+6. Classify misses and overlaps before any fill or tie-break is consumed by a
+   downstream operation.
 
-- A sample exactly on a plate edge/vertex is logged as a
-  boundary-degenerate candidate.
+Spherical-triangle containment may be useful as a diagnostic cross-check, but
+it is not the thesis query model for projection/resampling.
+
+## Boundary And Tie Policy
+
+Boundary policy:
+
+- Exact edge/vertex hits are logged as boundary-degenerate.
 - The resolved output uses a deterministic half-open ownership rule.
-- The raw degeneracy count remains visible and cannot be hidden inside "pass".
+- Raw candidate counts and boundary-degenerate counts remain visible.
 - True Stage 0 failure is any non-degenerate miss or non-degenerate overlap.
 
-This policy exists because a point-on-triangle query can otherwise count a
-single shared mesh vertex as multiple hits even when there is no area overlap.
+No-subduction multi-hit tie-break:
 
-## Miss Classification
+- Stage 1 and Stage 1.5 use nearest plate centroid.
+- Equal-distance ties resolve to the lowest plate id.
+- Raw multi-hit count is always reported before this winner is applied.
 
-Every no-hit sample must be classified as one of:
+This tie-break is a lab default for the no-subduction subset. It must be called
+out in verdict reporting if raw multi-hit counts are high.
 
-- `divergent-gap`: bounded by two or more separating plate fronts and expected
-  to become new oceanic crust in a later mutation stage
-- `numeric-miss`: within a declared angular tolerance of a valid triangle or
-  boundary but rejected by the predicate
-- `topology-hole`: not near any valid plate frontier and not explained by
-  divergence
-- `out-of-domain`: invalid input sample, NaN, non-unit position, or corrupted
-  mesh
-
-Stage 0 allows none of these except zero-count fields. Stage 1 and Stage 2 may
-produce divergent gaps under rigid motion, but they must not silently become
-material without a named mutation stage.
-
-## Overlap Classification
-
-Every multi-candidate sample must be classified as one of:
-
-- `boundary-degenerate-overlap`: zero-area edge/vertex degeneracy
-- `convergent-overlap`: area overlap caused by rigid plate convergence
-- `numeric-overlap`: tolerance artifact around a boundary
-- `topology-duplicate`: duplicate triangles or duplicated plate authority
-
-CarrierLab must report both raw multi-hit counts and true area-overlap counts.
-If the raw number looks like the Aurous failure signature, the classification
-must explain whether it is real area overlap or boundary degeneracy.
-
-## Material Transport Diagnostics
-
-Independent recomputation is mandatory:
-
-- Compute analytic plate rotations from initial transforms and current step.
-- Track immutable material ids for continental samples.
-- Compute expected centroid motion in plate-local coordinates rotated to world.
-- Compute observed projected continental centroid from projection results.
-- Compare expected and observed displacement in angular units and km-equivalent.
-- Compute material mass from plate-local authoritative samples and from
-  projected visible samples separately.
-
-The implementation must not use a value produced by the projection resolver as
-the oracle for the same projection resolver.
-
-## Stage Gates
+## Stage Split
 
 Stage 0: cold-start carrier
 
-- no motion
-- no mutation
-- every global sample has exactly one resolved plate
-- no non-degenerate misses
-- no non-degenerate overlaps
-- CAF equals initialized continental mass within tolerance
-- deterministic hash stable across repeated runs
+- Build global TDS.
+- Build per-plate duplicated topology.
+- Project at t=0 through ray-from-origin plate-triangle queries.
+- No motion, no mutation.
 
-Stage 1: rigid motion preservation
+Stage 1: within-window rigid motion
 
-- rotate plates only
-- report raw miss and multi-hit counts each step
-- material centroid displacement matches analytic rotation
-- authoritative material area conserved
-- no NaN/Inf
-- compare against Aurous baseline where available
+- Physically rotate all plate-local vertices each step.
+- Project against moved triangulations.
+- Do not resample.
+- Test barycentric interpolation and drift coherence under motion.
 
-Stage 1.5: named resampling sub-stage
+Stage 1.5: cross-window resampling
 
-- introduce paper-style global resampling only after Stage 1 rigid projection
-  has a written checkpoint and explicit go/no-go
-- do not silently blend resampling into Stage 1
-- report pre-resample and post-resample coverage, mass, CAF, and drift metrics
-- classify every miss and overlap before applying any new-ocean fill policy
+- Trigger at the thesis cadence.
+- Reuse the original global TDS as the resampling target.
+- Transfer current crust data from moved plate-local geometry.
+- Fill zero-hit divergent gaps through the q1/q2/ridge-midpoint algorithm.
+- Rebuild plate-local duplicated triangulations after assignment.
 
 Stage 2: long-horizon stability
 
-- 1000 steps
-- misses do not grow superlinearly unless explained by geometric divergence
-- true overlaps remain bounded or are classified as convergence
-- CAF does not collapse as a projection artifact
-- visuals show coherent material drift rather than samplewise noise
+- Run 1000 steps with periodic resampling.
+- Preserve determinism, mass accounting, bounded classified misses/overlaps,
+  and plausible CAF.
 
 Stage 3: resolution scaling
 
-- repeat at 60k, 100k, and 250k
-- keep stage parameters fixed unless a written gate revision is approved
-- compare qualitative verdict across resolutions
+- Repeat at 60k, 100k, 250k, and 500k.
+- Record whether the qualitative result changes by resolution.
 
 Stage 4: verdict
 
-- viable, viable-with-modifications, or not viable
-- quantified comparison to Aurous
-- architecture implication for Aurous recorded separately from the lab result
+- Select one reproduction outcome.
+- Quantify comparison to Aurous baselines.
+- Document implications for Aurous's current C/D/E path.
 
-## Stage Checkpoint Rule
+## Pre-Stage-0 Code Audit Required
 
-At the end of every stage, CarrierLab must write a checkpoint report before any
-next-stage work begins. The checkpoint must include:
+The current Stage 0 implementation predates the thesis read. It uses
+sample/incident-triangle projection support rather than the thesis's
+ray-from-origin triangle intersection.
 
-- exact command and seed
-- sample count and plate count
-- pass/fail status for every gate
-- stop-condition review
-- metric table and export locations
-- comparison to Aurous baselines or "no baseline available"
-- explicit recommendation: go, no-go, or revise-gate
+Before the Stage 0 checkpoint can pass:
 
-The user reviews the checkpoint and records explicit go/no-go. There are no
-silent stage transitions.
+1. Replace sample/incident-triangle projection with ray-from-planet-center
+   queries against per-plate triangle meshes.
+2. Verify per-plate triangulation construction matches thesis sec. 3.2.4:
+   duplicated topology, local re-indexing, local compaction, and empty
+   neighborhood at borders.
+3. Verify the boundary-degeneracy policy is operational under ray queries.
+4. Re-run the Stage 0 cold-start test under the corrected implementation.
+5. Document the diff between provisional and corrected output in the readback
+   and later Stage 0 checkpoint.
 
-## Runtime And Memory Stop Bounds
+The existing Stage 0 code is scaffolding to be revised, not a passing
+implementation.
 
-Practical bounds approved for the experiment:
+## Diagnostics And Oracles
 
-| Resolution | Wall-clock bound | Memory bound |
-| --- | ---: | ---: |
-| 60k | 10 minutes | 4 GB |
-| 100k | 30 minutes | 8 GB |
-| 250k | 45 minutes | 16 GB |
+Every stage gate must use independent recomputation:
 
-Exceeding these bounds is a stop condition for that resolution and must be
-reported as part of the checkpoint rather than optimized around silently.
-The 250k timing ceiling is anchored to Cortial et al. Section 7.4 Table 2,
-which reports 1.24 seconds per step at 250k for the full tectonic process set,
-plus episodic oceanic crust and rifting costs. CarrierLab's carrier-only subset
-should run faster than the paper's full pipeline, not slower; exceeding the
-bound is a research finding to investigate before continuing.
+- Drift expected value comes from the plate's initial axis, angular speed, and
+  accumulated time, not from projection output.
+- Mass from plate-local authority and mass from projected output are reported
+  separately.
+- Determinism is asserted by same-seed replay and stable hash.
+- Miss/overlap classes are counted before any resolver/tie-break.
+- Negative controls include zero-motion, single-plate, forced convergence,
+  forced divergence, ocean-only, all-continental, and single-sample-feature
+  tests.
 
-## Pre-Code Review Answers
+Aurous comparison row schema:
 
-1. Boundary policy is approved as written. Boundary-degenerate samples are
-   logged separately, resolved by deterministic half-open ownership, and cannot
-   hide non-degenerate misses or overlaps.
-2. Stage 1 is rigid projection first. Global resampling is Stage 1.5, a named
-   sub-stage with its own checkpoint.
-3. Runtime and memory bounds are 60k within 10 minutes and 4 GB, 100k within
-   30 minutes and 8 GB, and 250k within 45 minutes and 16 GB, anchored against
-   Cortial et al. Section 7.4 Table 2 rather than Aurous wall-clock behavior.
-4. The mesh path is clean-room Fibonacci sampling plus Bowyer-Watson spherical
-   Delaunay. Any substitution requires a written checkpoint revision.
+`{metric, lab_value, aurous_value, aurous_run_id, parameters_match: bool}`
 
-## Required Metrics
+If no Aurous baseline exists, the row must say `no baseline available` and name
+the run needed to obtain it.
 
-Per step:
+## Performance Budgets
 
-- sample count
-- plate count
-- seed
-- step
-- wall-clock time
-- memory snapshot
-- raw hit count
-- raw miss count
-- raw multi-hit count
-- true miss count
-- true overlap count
-- boundary-degenerate count
-- resolved classified count
-- CAF from authoritative plate-local material
-- CAF from projected output
-- total material mass
-- drift expected distance
-- drift observed distance
-- drift error mean, p50, p95
-- NaN/Inf count
-- output hash
+Budgets are anchored against paper Section 7.4 Table 2 per-step times and
+separate simulation kernel time from diagnostic/export time.
 
-Per run:
+| Resolution | `step_kernel_ms` for 1000 steps | `step_with_diagnostics_ms` for 1000 steps | Memory ceiling |
+| --- | ---: | ---: | ---: |
+| 60k | <= 2 minutes total | <= 5 minutes total | <= 2 GB |
+| 100k | <= 5 minutes total | <= 15 minutes total | <= 4 GB |
+| 250k | <= 20 minutes total | <= 45 minutes total | <= 8 GB |
+| 500k | <= 45 minutes total | <= 90 minutes total | <= 16 GB |
 
-- deterministic hash pair for same-seed replay
-- resolution summary
-- stop-condition summary
-- comparison row against Aurous baselines
+`step_kernel_ms` is the simulation cost per step and should be compared
+directly against paper Table 2. CarrierLab's subset of paper processes
+(rigid motion plus projection plus diagnostics, with no subduction, collision,
+rifting, or oceanic generation) should run faster than the paper's per-step
+total. `step_with_diagnostics_ms` includes PNG export, hashing, and metric
+computation, which can dominate runtime and is not comparable to Table 2.
 
-## Exports
+If `step_kernel_ms` exceeds paper Table 2 for the same resolution, that is a
+finding worth investigating regardless of total runtime.
 
-Per stage and checkpoint:
+## Stop Conditions And Investigation Checkpoints
 
-- PlateId
-- material class
-- continental fraction map
-- miss mask
-- overlap mask
-- boundary mask
-- drift error map
-- contact sheet
-- metrics CSV or JSONL
+A stop condition pauses stage advancement and triggers a written investigation
+checkpoint. It is not automatically a final verdict.
 
-Exports are downstream diagnostics. Passing images without raw metrics cannot
-pass a stage.
+The investigation must record:
 
-## Aurous Differences
+- which thesis section was checked
+- what the spec says
+- what the implementation does
+- where they diverge
+- what the proposed fix is
 
-Different from Aurous Prototype C:
+Only if the failure persists after thesis-spec audit does it escalate to a
+verdict-level finding.
 
-- Prototype C uses nearest rotated centers for ownership and decoupled material
-  projection.
-- CarrierLab tests the paper-family plate-local geometry carrier.
-- CarrierLab permits projection misses/overlaps as measured geometry facts
-  during motion; Prototype C intentionally removes ownership gaps/overlaps by
-  construction.
+Stop conditions:
 
-Different from Aurous failed V6/V9 remesh path:
+- Stage 0 non-degenerate miss or overlap
+- Stage 1 Aurous-like high miss plus high multi-hit by step 100
+- CAF collapse without a named material mutation
+- determinism break
+- memory or runtime ceiling exceeded
+- any hard Aurous anti-pattern appears
 
-- CarrierLab is clean-room and must not reuse V6/V9 code.
-- CarrierLab separates raw geometry diagnostics from resolution and material
-  fill.
-- CarrierLab does not use existing Unreal query infrastructure, exporter, or
-  repair logic.
-- CarrierLab treats failure as evidence, not as a prompt for threshold tuning.
+## Repository Hygiene Check
+
+Before Stage 0 resumes:
+
+- confirm git repo is initialized and remote is set
+- confirm `AGENTS.md` contains the push-verification rule using `git ls-remote`
+- confirm `.gitignore` excludes `Saved/`, `Intermediate/`, `Binaries/`, and
+  `DerivedDataCache/`
+- confirm the initial commit captures the four pre-coding deliverables
+- add a Stage 0 audit commit capturing the revised deliverables, code audit,
+  and readback
+
+## Checkpoint Rule
+
+At the end of every stage, CarrierLab writes
+`docs/checkpoints/stage-N-report.md` before any next-stage work begins. The
+report includes gate-by-gate pass/fail status, raw metrics, Aurous comparison
+rows, visual export locations, stop-condition review, and an honest
+recommendation.
+
+The user records explicit go/no-go. No stage advances silently.
