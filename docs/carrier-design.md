@@ -112,7 +112,8 @@ Forbidden authority:
 Defaults:
 
 - samples: deterministic Fibonacci lattice
-- triangulation: clean-room spherical Bowyer-Watson Delaunay
+- triangulation: Unreal GeometryCore `FConvexHull3d` over unit-sphere samples,
+  using the 3D convex-hull/spherical-Delaunay equivalence
 - plate count: 40
 - land coverage: 0.3
 - seed: 42
@@ -140,7 +141,9 @@ it is not the thesis query model for projection/resampling.
 Boundary policy:
 
 - Exact edge/vertex hits are logged as boundary-degenerate.
-- The resolved output uses a deterministic half-open ownership rule.
+- A named half-open ownership resolver is not yet implemented in Stage 1.
+- Until that resolver exists and is tested directly, reports must not describe
+  boundary resolution as thesis-faithful half-open ownership.
 - Raw candidate counts and boundary-degenerate counts remain visible.
 - True Stage 0 failure is any non-degenerate miss or non-degenerate overlap.
 
@@ -150,8 +153,11 @@ No-subduction multi-hit tie-break:
 - Equal-distance ties resolve to the lowest plate id.
 - Raw multi-hit count is always reported before this winner is applied.
 
-This tie-break is a lab default for the no-subduction subset. It must be called
-out in verdict reporting if raw multi-hit counts are high.
+This tie-break is a lab policy for the no-subduction subset, not a
+thesis-faithful substitute for subduction/collision exclusion. It must be
+called out in checkpoint and verdict reporting if raw multi-hit counts are high.
+Stage 1.5 must report per-plate projected area deltas so centroid-resolution
+bias is visible.
 
 ## Stage Split
 
@@ -172,10 +178,13 @@ Stage 1: within-window rigid motion
 Stage 1.5: cross-window resampling
 
 - Trigger at the thesis cadence.
+- Run cadence-first before stress tests at 100/200/400 accumulated steps.
 - Reuse the original global TDS as the resampling target.
 - Transfer current crust data from moved plate-local geometry.
 - Fill zero-hit divergent gaps through the q1/q2/ridge-midpoint algorithm.
 - Rebuild plate-local duplicated triangulations after assignment.
+- Report authoritative CAF, projected CAF, projected-authoritative delta, and
+  per-plate area deltas before and after every resampling event.
 
 Stage 2: long-horizon stability
 
@@ -223,7 +232,9 @@ Every stage gate must use independent recomputation:
   accumulated time, not from projection output.
 - Mass from plate-local authority and mass from projected output are reported
   separately.
-- Determinism is asserted by same-seed replay and stable hash.
+- Determinism is asserted by same-seed replay and stable hashes. Stage 1's
+  strided output hash is only a smoke hash; Stage 1.5 must add full projection
+  and full plate-authority hashes before any verdict-level determinism claim.
 - Miss/overlap classes are counted before any resolver/tie-break.
 - Negative controls include zero-motion, single-plate, forced convergence,
   forced divergence, ocean-only, all-continental, and single-sample-feature
@@ -257,6 +268,53 @@ computation, which can dominate runtime and is not comparable to Table 2.
 
 If `step_kernel_ms` exceeds paper Table 2 for the same resolution, that is a
 finding worth investigating regardless of total runtime.
+
+## Stage 1 Hardening Addendum
+
+Stage 1 did not produce a clean carrier-viability pass. It showed exact
+rigid-motion transport in plate-local geometry, but projected coverage degrades
+without resampling. At 250k/40/seed-42 step 100, raw miss rate is close to the
+Aurous failure memo baseline; raw multi-hit is similar but not exact. At step
+400, authoritative CAF remains stable while projected CAF has lost roughly 38%
+relative to authority. That distinction is binding for Stage 1.5.
+
+Stage 1.5 implementation is blocked until these hardening items are represented
+in the design and checkpoint gates:
+
+- republished Stage 1 tables must show authoritative CAF and projected CAF as
+  separate columns
+- forced convergence and forced divergence must be numeric pass/fail controls
+  with directional expectations, not `inspect` labels
+- interpretation must say that Aurous almost certainly had implementation or
+  architecture issues, while Stage 1 does not identify which one
+- the third explanation remains live: Aurous's resampling path may have both
+  failed to close geometric gaps and destroyed material
+- `ChooseNearestCandidatePlate` must remain labeled as a lab policy, and
+  Stage 1.5 must report per-plate projected area deltas to detect centroid bias
+
+Should-fix items allowed to land inside the Stage 1.5 design phase, but before
+Stage 1.5 verdict claims:
+
+- strengthen determinism with full projection and full authority hashes
+- implement a named half-open boundary resolver, or keep the design explicitly
+  aligned with nearest-centroid policy resolution
+- add ocean-only, all-continental, single-sample-feature, and perturbed-boundary
+  negative controls
+- profile Stage 1 kernel time against paper Table 2 before adding q1/q2 nearest
+  boundary search
+- add construction-time triangulation invariants:
+  `Triangles.Num() == 2 * SampleCount - 4`, Euler characteristic 2, no duplicate
+  undirected faces, and no nonmanifold edges
+
+Stage 1.5 must explicitly address the top three pre-mortem risks from the
+review:
+
+1. Long-window resampling shock: cadence-first runs are judged before 100/200/400
+   stress windows.
+2. Projected CAF loss at the resampling boundary: authoritative/projected CAF
+   delta is a gate, not a narrative note.
+3. No-subduction tie-break bias: per-plate projected area deltas and raw
+   multi-hit class counts are reported before centroid resolution is trusted.
 
 ## Stop Conditions And Investigation Checkpoints
 

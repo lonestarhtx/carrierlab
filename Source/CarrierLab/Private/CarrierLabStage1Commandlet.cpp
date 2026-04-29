@@ -870,8 +870,17 @@ namespace
 		}
 		Metrics.BvhBuildSeconds = FPlatformTime::Seconds() - BvhStartSeconds;
 
+		double AuthoritativeContinentalArea = 0.0;
 		double ProjectedContinentalArea = 0.0;
-		const double SampleArea = State.Samples.Num() > 0 ? 1.0 / static_cast<double>(State.Samples.Num()) : 0.0;
+		double TotalArea = 0.0;
+		for (const CarrierLab::FSphereSample& Sample : State.Samples)
+		{
+			TotalArea += Sample.AreaWeight;
+			if (Sample.bContinental)
+			{
+				AuthoritativeContinentalArea += Sample.AreaWeight;
+			}
+		}
 		const double ProjectionStartSeconds = FPlatformTime::Seconds();
 		IMeshSpatial::FQueryOptions QueryOptions(2.0 + 1.0e-6);
 		TArray<MeshIntersection::FHitIntersectionResult> Hits;
@@ -1002,14 +1011,15 @@ namespace
 			if (State.Plates.IsValidIndex(ResolvedPlateId) && State.Plates[ResolvedPlateId].bContinental)
 			{
 				OutBuffers.ContinentalMask[Sample.Id] = 1;
-				ProjectedContinentalArea += SampleArea;
+				ProjectedContinentalArea += Sample.AreaWeight;
 			}
 		}
 
 		Metrics.ProjectionSeconds = FPlatformTime::Seconds() - ProjectionStartSeconds;
 		Metrics.StepKernelSeconds = Metrics.BvhBuildSeconds + Metrics.ProjectionSeconds;
-		Metrics.AuthoritativeCAF = State.Config.ContinentalPlateFraction;
-		Metrics.ProjectedCAF = ProjectedContinentalArea;
+		Metrics.TotalMaterialArea = TotalArea;
+		Metrics.AuthoritativeCAF = AuthoritativeContinentalArea / FMath::Max(TotalArea, UE_DOUBLE_SMALL_NUMBER);
+		Metrics.ProjectedCAF = ProjectedContinentalArea / FMath::Max(TotalArea, UE_DOUBLE_SMALL_NUMBER);
 		ComputeDriftMetrics(State, InitialPositions, Motions, Step, OutBuffers, Metrics);
 		Metrics.MemoryUsedBytes = FPlatformMemory::GetStats().UsedPhysical;
 		Metrics.DeterminismHash = MakeHash(Metrics, OutBuffers);
@@ -1239,19 +1249,22 @@ namespace
 		Markdown += FString::Printf(TEXT("Artifacts root: `%s`\n\n"), *OutputRoot);
 		Markdown += TEXT("BoundaryMask rendering note: white means the ray hit at least one plate-local triangle on a barycentric edge/vertex within epsilon; black means no boundary-degenerate hit. It is a hit-degeneracy diagnostic, not an area-fill measure, so it can look visually heavier than the count-based metric.\n\n");
 		Markdown += TEXT("## Main Run Metrics\n\n");
-		Markdown += TEXT("| Resolution | Step | Miss % | Multi-hit % | CAF | Third-plate | Drift expected km | Drift observed km | Drift err mean km | Drift err p95 km | Kernel s | Memory GB | Hash |\n");
-		Markdown += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Markdown += TEXT("| Resolution | Step | Miss % | Multi-hit % | Auth CAF | Proj CAF | Proj loss vs auth % | Third-plate | Drift expected km | Drift observed km | Drift err mean km | Drift err p95 km | Kernel s | Memory GB | Hash |\n");
+		Markdown += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		for (const FStage1Metrics& Metrics : MainMetrics)
 		{
 			const double MissRate = Metrics.SampleCount > 0 ? 100.0 * static_cast<double>(Metrics.RawMissCount) / static_cast<double>(Metrics.SampleCount) : 0.0;
 			const double MultiRate = Metrics.SampleCount > 0 ? 100.0 * static_cast<double>(Metrics.RawMultiHitCount) / static_cast<double>(Metrics.SampleCount) : 0.0;
+			const double ProjectedLossPercent = Metrics.AuthoritativeCAF > 0.0 ? 100.0 * (Metrics.AuthoritativeCAF - Metrics.ProjectedCAF) / Metrics.AuthoritativeCAF : 0.0;
 			Markdown += FString::Printf(
-				TEXT("| %d | %d | %.6f | %.6f | %.6f | %d | %.3f | %.3f | %.9f | %.9f | %.6f | %.3f | `%s` |\n"),
+				TEXT("| %d | %d | %.6f | %.6f | %.6f | %.6f | %.3f | %d | %.3f | %.3f | %.9f | %.9f | %.6f | %.3f | `%s` |\n"),
 				Metrics.Resolution,
 				Metrics.Step,
 				MissRate,
 				MultiRate,
+				Metrics.AuthoritativeCAF,
 				Metrics.ProjectedCAF,
+				ProjectedLossPercent,
 				Metrics.ThirdPlateIntrusionCount,
 				Metrics.DriftExpectedMeanKm,
 				Metrics.DriftObservedMeanKm,
@@ -1280,7 +1293,7 @@ namespace
 			}
 			if (Metrics.Step == 400)
 			{
-				Markdown += FString::Printf(TEXT("| CAF step 400 | %.12f | 0.000600000000 | true | Failure memo CAF-collapse baseline |\n"), Metrics.ProjectedCAF);
+				Markdown += FString::Printf(TEXT("| Projected CAF step 400 | %.12f | 0.000600000000 | true | Failure memo CAF-collapse baseline; lab authoritative CAF is %.12f |\n"), Metrics.ProjectedCAF, Metrics.AuthoritativeCAF);
 				Markdown += FString::Printf(TEXT("| Drift observed vs expected step 400 | %.3f / %.3f km | 524 / 8950 km | partial | Memo records observed-vs-expected, not mean angular error |\n"), Metrics.DriftObservedMeanKm, Metrics.DriftExpectedMeanKm);
 			}
 		}
@@ -1306,9 +1319,12 @@ namespace
 		}
 
 		Markdown += TEXT("\n## Stage 1 Read\n\n");
-		Markdown += TEXT("The motion oracle is strong: observed continental material displacement matches the analytic rotation at every resolution, and mean drift error stays at micrometer scale in Earth-kilometer units. That rules out the anchored-continent failure shape for this clean-room Stage 1 run.\n\n");
-		Markdown += TEXT("Coverage is not clean under long no-resampling motion. At 250k/40/seed-42 step 100, raw miss rate is 32.9700% versus Aurous's 33%, and raw multi-hit rate is 28.6968% versus Aurous's 24%. This reproduces the raw high-miss/high-multi part of the Aurous signature, but not the full cocktail: CAF remains 0.187612 at step 400 instead of collapsing to 0.0006, drift is exact rather than anchored, and the maps show coherent moving plate footprints rather than speckled material noise.\n\n");
-		Markdown += TEXT("Interpretation: Stage 1 proves rigid plate-local material transport under per-step vertex rotation, but it also shows that no-resampling coverage degrades to Aurous-scale raw gaps/overlaps by step 100. The targeted next question is Stage 1.5: whether the thesis resampling pass closes these gaps and resolves overlaps without CAF collapse.\n\n");
+		Markdown += TEXT("The motion oracle is strong: observed continental material displacement matches the analytic rotation at every resolution, and mean drift error stays at micrometer scale in Earth-kilometer units. This means the clean-room Stage 1 run does not reproduce Aurous's anchored-continent drift failure in the rigid-motion-only subset.\n\n");
+		Markdown += TEXT("Coverage is not clean under long no-resampling motion. At 250k/40/seed-42 step 100, raw miss rate is 32.9700% versus Aurous's 33%, and raw multi-hit rate is 28.6968% versus Aurous's 24%. This is similar but not exact: miss is close, while multi-hit differs by 10,555 samples at step 100. By step 400, projected CAF is 0.187612 while authoritative CAF remains about 0.301, a projected loss of about 37.5% relative to authority. That is not material preservation in projection; it is only evidence that the clean-room rigid subset does not collapse as catastrophically as Aurous's 0.0006 CAF run.\n\n");
+		Markdown += TEXT("Interpretation: Aurous almost certainly had implementation or architecture issues, because Stage 1 keeps rigid plate-local drift analytic and avoids the catastrophic CAF collapse. Stage 1 does not identify which Aurous bug caused the collapse. A third explanation remains live: Aurous's resampling path may have been broken in a way that both failed to close geometric gaps and destroyed material. The targeted next question is Stage 1.5: whether thesis-cadence resampling closes the Stage 1 gaps/overlaps without increasing projected-authoritative CAF error.\n\n");
+
+		Markdown += TEXT("## Resolver Policy Caveat\n\n");
+		Markdown += TEXT("Stage 1 resolves no-subduction multi-hit samples with `ChooseNearestCandidatePlate`, a nearest-current-plate-centroid lab policy with lowest-plate-id tie-break. This is not a thesis-faithful substitute for subduction/collision exclusion. Stage 1.5 must keep raw multi-hit counts visible, label centroid-resolved samples as policy-resolved, and report per-plate projected area deltas so centroid bias is measurable.\n\n");
 
 		Markdown += TEXT("\n## Determinism\n\n");
 		Markdown += FString::Printf(TEXT("Same-seed replay hashes %s across all main Stage 1 checkpoints.\n\n"), bAllDeterministic ? TEXT("matched") : TEXT("did not match"));
@@ -1331,8 +1347,9 @@ namespace
 		}
 
 		Markdown += TEXT("\n## Negative Controls\n\n");
-		Markdown += TEXT("| Control | Step | Miss | Multi-hit | CAF | Drift err mean km | Hash | Gate |\n");
-		Markdown += TEXT("|---|---:|---:|---:|---:|---:|---|---|\n");
+		Markdown += TEXT("Directional gates are now numeric: forced-convergence final step requires `multi >= 2 * miss`; forced-divergence final step requires `miss >= 2 * multi`. These are deliberately stricter than appearance checks, because a near-symmetric miss/multi result does not prove the control is directional.\n\n");
+		Markdown += TEXT("| Control | Step | Miss | Multi-hit | Auth CAF | Proj CAF | Drift err mean km | Hash | Gate | Expectation |\n");
+		Markdown += TEXT("|---|---:|---:|---:|---:|---:|---:|---|---|---|\n");
 		for (int32 ControlIndex = 0; ControlIndex < ControlMetrics.Num(); ++ControlIndex)
 		{
 			const FStage1Metrics& Metrics = ControlMetrics[ControlIndex];
@@ -1341,22 +1358,49 @@ namespace
 				ControlIndex < 4 ? TEXT("single-plate") :
 				ControlIndex < 6 ? TEXT("forced-convergence") :
 				TEXT("forced-divergence");
-			const FString Gate =
-				(Metrics.NaNOrInfCount == 0 && Metrics.DriftErrorMeanKm < 1.0e-6) ? TEXT("pass") : TEXT("inspect");
+			FString Expectation = TEXT("baseline capture");
+			bool bGatePass = true;
+			if (ControlName == TEXT("zero-motion") && Metrics.Step > 0)
+			{
+				const FStage1Metrics& Start = ControlMetrics[0];
+				Expectation = TEXT("same output hash/counts as step 0");
+				bGatePass = Metrics.DeterminismHash == Start.DeterminismHash &&
+					Metrics.RawMissCount == Start.RawMissCount &&
+					Metrics.RawMultiHitCount == Start.RawMultiHitCount &&
+					FMath::IsNearlyEqual(Metrics.ProjectedCAF, Start.ProjectedCAF, 1.0e-12);
+			}
+			else if (ControlName == TEXT("single-plate") && Metrics.Step > 0)
+			{
+				Expectation = TEXT("no misses, no overlaps");
+				bGatePass = Metrics.RawMissCount == 0 && Metrics.RawMultiHitCount == 0 && Metrics.NaNOrInfCount == 0;
+			}
+			else if (ControlName == TEXT("forced-convergence") && Metrics.Step > 0)
+			{
+				Expectation = TEXT("directional overlap dominance: multi >= 2 * miss");
+				bGatePass = Metrics.RawMultiHitCount >= 2 * Metrics.RawMissCount && Metrics.RawMultiHitCount > 0;
+			}
+			else if (ControlName == TEXT("forced-divergence") && Metrics.Step > 0)
+			{
+				Expectation = TEXT("directional gap dominance: miss >= 2 * multi");
+				bGatePass = Metrics.RawMissCount >= 2 * Metrics.RawMultiHitCount && Metrics.RawMissCount > 0;
+			}
+			const FString Gate = Metrics.Step == 0 ? TEXT("baseline") : (bGatePass ? TEXT("pass") : TEXT("fail"));
 			Markdown += FString::Printf(
-				TEXT("| %s (%d plates, %d samples) | %d | %d | %d | %.6f | %.9f | `%s` | %s |\n"),
+				TEXT("| %s (%d plates, %d samples) | %d | %d | %d | %.6f | %.6f | %.9f | `%s` | %s | %s |\n"),
 				*ControlName,
 				Metrics.PlateCount,
 				Metrics.Resolution,
 				Metrics.Step,
 				Metrics.RawMissCount,
 				Metrics.RawMultiHitCount,
+				Metrics.AuthoritativeCAF,
 				Metrics.ProjectedCAF,
 				Metrics.DriftErrorMeanKm,
 				*Metrics.DeterminismHash,
-				*Gate);
+				*Gate,
+				*Expectation);
 		}
-		Markdown += FString::Printf(TEXT("\nControl gate summary: %s.\n\n"), bControlsPassed ? TEXT("pass") : TEXT("inspect required"));
+		Markdown += FString::Printf(TEXT("\nControl gate summary: %s.\n\n"), bControlsPassed ? TEXT("pass") : TEXT("fail"));
 
 		Markdown += TEXT("## Visual Exports\n\n");
 		Markdown += TEXT("Each `main/<resolution>/step_###` folder contains `PlateId.png`, `MissMask.png`, `OverlapMask.png`, `BoundaryMask.png`, `ContinentalFraction.png`, `ThirdPlateIntrusion.png`, `DriftErrorMap.png`, and `ContactSheet.png`.\n\n");
@@ -1367,7 +1411,7 @@ namespace
 		}
 		else
 		{
-			Markdown += TEXT("No-go until the flagged determinism/control issue is investigated against the thesis spec.\n");
+			Markdown += TEXT("No-go for Stage 1.5 implementation until the failed control gate is either fixed or explicitly re-scoped. Stage 1 remains useful evidence for rigid drift, but the forced directional controls are not yet discriminating convergence from divergence.\n");
 		}
 		return Markdown;
 	}
@@ -1518,10 +1562,26 @@ int32 UCarrierLabStage1Commandlet::Main(const FString& Params)
 			DivergeEnd = &Metrics;
 		}
 	}
-	bControlsPassed = bControlsPassed && ZeroStart != nullptr && ZeroEnd != nullptr && ZeroStart->DeterminismHash == ZeroEnd->DeterminismHash;
-	bControlsPassed = bControlsPassed && SingleEnd != nullptr && SingleEnd->RawMissCount == 0 && SingleEnd->RawMultiHitCount == 0;
-	bControlsPassed = bControlsPassed && ConvergeEnd != nullptr && ConvergeEnd->RawMultiHitCount > 0;
-	bControlsPassed = bControlsPassed && DivergeEnd != nullptr && DivergeEnd->RawMissCount > 0;
+	bControlsPassed = bControlsPassed &&
+		ZeroStart != nullptr &&
+		ZeroEnd != nullptr &&
+		ZeroStart->DeterminismHash == ZeroEnd->DeterminismHash &&
+		ZeroStart->RawMissCount == ZeroEnd->RawMissCount &&
+		ZeroStart->RawMultiHitCount == ZeroEnd->RawMultiHitCount &&
+		FMath::IsNearlyEqual(ZeroStart->ProjectedCAF, ZeroEnd->ProjectedCAF, 1.0e-12);
+	bControlsPassed = bControlsPassed &&
+		SingleEnd != nullptr &&
+		SingleEnd->RawMissCount == 0 &&
+		SingleEnd->RawMultiHitCount == 0 &&
+		SingleEnd->NaNOrInfCount == 0;
+	bControlsPassed = bControlsPassed &&
+		ConvergeEnd != nullptr &&
+		ConvergeEnd->RawMultiHitCount >= 2 * ConvergeEnd->RawMissCount &&
+		ConvergeEnd->RawMultiHitCount > 0;
+	bControlsPassed = bControlsPassed &&
+		DivergeEnd != nullptr &&
+		DivergeEnd->RawMissCount >= 2 * DivergeEnd->RawMultiHitCount &&
+		DivergeEnd->RawMissCount > 0;
 
 	for (const FStage1Metrics& Metrics : MainMetrics)
 	{
