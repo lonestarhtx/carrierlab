@@ -8,7 +8,7 @@ public class CarrierLab : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "GeometryCore" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "GeometryCore", "GeometryFramework" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "ImageWrapper", "Json" });
 
