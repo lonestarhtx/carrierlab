@@ -113,11 +113,26 @@ namespace
 		FString DeterminismHash;
 	};
 
+	struct FStage1DirectionalDebug
+	{
+		FString ScenarioName;
+		FVector3d Plate0Axis = FVector3d::UnitZ();
+		FVector3d Plate1Axis = FVector3d::UnitZ();
+		double Plate0AngularSpeedRadiansPerStep = 0.0;
+		double Plate1AngularSpeedRadiansPerStep = 0.0;
+		double Plate0VelocityTowardPlate1 = 0.0;
+		double Plate1VelocityTowardPlate0 = 0.0;
+		double MidpointSignedSeparationVelocity = 0.0;
+		bool bMidpointSeparating = false;
+	};
+
 	struct FRunResult
 	{
 		TArray<FStage1Metrics> Metrics;
 		TMap<int32, FString> HashByStep;
 		TArray<FString> ExportPaths;
+		FStage1DirectionalDebug DirectionalDebug;
+		bool bHasDirectionalDebug = false;
 		bool bPassed = true;
 	};
 
@@ -375,14 +390,14 @@ namespace
 		}
 	}
 
-	bool IsSeparatingKinematics(const FVector3d& Position, const TArray<FStage1Motion>& Motions)
+	double SignedPairSeparationVelocity(const FVector3d& Position, const TArray<FStage1Motion>& Motions)
 	{
 		int32 A = INDEX_NONE;
 		int32 B = INDEX_NONE;
 		FindTwoNearestPlates(Position, Motions, A, B);
 		if (!Motions.IsValidIndex(A) || !Motions.IsValidIndex(B))
 		{
-			return false;
+			return 0.0;
 		}
 
 		const FVector3d ToB = NormalizeOrFallback(
@@ -390,7 +405,12 @@ namespace
 			FVector3d::UnitX());
 		const FVector3d VelocityA = FVector3d::CrossProduct(Motions[A].Axis, Position) * Motions[A].AngularSpeedRadiansPerStep;
 		const FVector3d VelocityB = FVector3d::CrossProduct(Motions[B].Axis, Position) * Motions[B].AngularSpeedRadiansPerStep;
-		return FVector3d::DotProduct(VelocityB - VelocityA, ToB) > 0.0;
+		return FVector3d::DotProduct(VelocityB - VelocityA, ToB);
+	}
+
+	bool IsSeparatingKinematics(const FVector3d& Position, const TArray<FStage1Motion>& Motions)
+	{
+		return SignedPairSeparationVelocity(Position, Motions) > 0.0;
 	}
 
 	FColor PlateColor(const int32 PlateId)
@@ -712,6 +732,46 @@ namespace
 		}
 	}
 
+	FStage1DirectionalDebug BuildDirectionalDebug(
+		const FString& ScenarioName,
+		const CarrierLab::FCarrierState& State,
+		const TArray<FStage1Motion>& Motions)
+	{
+		FStage1DirectionalDebug Debug;
+		Debug.ScenarioName = ScenarioName;
+		if (State.Plates.Num() < 2 || Motions.Num() < 2)
+		{
+			return Debug;
+		}
+
+		const FVector3d Center0 = State.Plates[0].InitialCenter;
+		const FVector3d Center1 = State.Plates[1].InitialCenter;
+		const FVector3d Toward1From0 = NormalizeOrFallback(
+			Center1 - FVector3d::DotProduct(Center1, Center0) * Center0,
+			FVector3d::UnitX());
+		const FVector3d Toward0From1 = NormalizeOrFallback(
+			Center0 - FVector3d::DotProduct(Center0, Center1) * Center1,
+			FVector3d::UnitX());
+		const FVector3d Midpoint = NormalizeOrFallback(Center0 + Center1, Center0);
+		const FVector3d Velocity0 = FVector3d::CrossProduct(Motions[0].Axis, Center0) * Motions[0].AngularSpeedRadiansPerStep;
+		const FVector3d Velocity1 = FVector3d::CrossProduct(Motions[1].Axis, Center1) * Motions[1].AngularSpeedRadiansPerStep;
+
+		Debug.Plate0Axis = Motions[0].Axis;
+		Debug.Plate1Axis = Motions[1].Axis;
+		Debug.Plate0AngularSpeedRadiansPerStep = Motions[0].AngularSpeedRadiansPerStep;
+		Debug.Plate1AngularSpeedRadiansPerStep = Motions[1].AngularSpeedRadiansPerStep;
+		Debug.Plate0VelocityTowardPlate1 = FVector3d::DotProduct(Velocity0, Toward1From0);
+		Debug.Plate1VelocityTowardPlate0 = FVector3d::DotProduct(Velocity1, Toward0From1);
+		Debug.MidpointSignedSeparationVelocity = SignedPairSeparationVelocity(Midpoint, Motions);
+		Debug.bMidpointSeparating = Debug.MidpointSignedSeparationVelocity > 0.0;
+		return Debug;
+	}
+
+	FString VectorSummary(const FVector3d& Vector)
+	{
+		return FString::Printf(TEXT("(%.6f, %.6f, %.6f)"), Vector.X, Vector.Y, Vector.Z);
+	}
+
 	void ApplyOneRigidMotionStep(CarrierLab::FCarrierState& State, TArray<FStage1Motion>& Motions)
 	{
 		for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -998,6 +1058,11 @@ namespace
 					OutBuffers.OverlapClasses[Sample.Id] = static_cast<uint8>(EStage1OverlapClass::BoundaryDegenerate);
 					++Metrics.BoundaryDegenerateOverlapCount;
 				}
+				else if (IsSeparatingKinematics(Sample.UnitPosition, Motions))
+				{
+					OutBuffers.OverlapClasses[Sample.Id] = static_cast<uint8>(EStage1OverlapClass::NumericOverlap);
+					++Metrics.NumericOverlapCount;
+				}
 				else
 				{
 					OutBuffers.OverlapClasses[Sample.Id] = static_cast<uint8>(EStage1OverlapClass::ConvergentOverlap);
@@ -1197,6 +1262,24 @@ namespace
 		CaptureInitialPositions(State, InitialPositions);
 		TArray<FStage1Motion> Motions;
 		MotionBuilder(State, Motions);
+		if (PlateCount == 2 && ScenarioName.Contains(TEXT("control_forced")))
+		{
+			Result.DirectionalDebug = BuildDirectionalDebug(ScenarioName, State, Motions);
+			Result.bHasDirectionalDebug = true;
+			UE_LOG(
+				LogTemp,
+				Display,
+				TEXT("CarrierLab Stage 1 directional debug %s: plate0_axis=%s speed=%.12f plate0_toward_plate1=%.12f plate1_axis=%s speed=%.12f plate1_toward_plate0=%.12f midpoint_signed_separation=%.12f midpoint_class=%s"),
+				*ScenarioName,
+				*VectorSummary(Result.DirectionalDebug.Plate0Axis),
+				Result.DirectionalDebug.Plate0AngularSpeedRadiansPerStep,
+				Result.DirectionalDebug.Plate0VelocityTowardPlate1,
+				*VectorSummary(Result.DirectionalDebug.Plate1Axis),
+				Result.DirectionalDebug.Plate1AngularSpeedRadiansPerStep,
+				Result.DirectionalDebug.Plate1VelocityTowardPlate0,
+				Result.DirectionalDebug.MidpointSignedSeparationVelocity,
+				Result.DirectionalDebug.bMidpointSeparating ? TEXT("separating") : TEXT("converging"));
+		}
 
 		TArray<int32> SortedSteps = CheckpointSteps;
 		SortedSteps.Sort();
@@ -1240,6 +1323,7 @@ namespace
 		const TArray<FStage1Metrics>& MainMetrics,
 		const TArray<FStage1Metrics>& ReplayMetrics,
 		const TArray<FStage1Metrics>& ControlMetrics,
+		const TArray<FStage1DirectionalDebug>& DirectionalDebugs,
 		const bool bAllDeterministic,
 		const bool bControlsPassed)
 	{
@@ -1299,12 +1383,12 @@ namespace
 		}
 
 		Markdown += TEXT("\n## Classified Counts\n\n");
-		Markdown += TEXT("| Resolution | Step | Raw hit | Raw miss | Raw multi | Divergent gap | Numeric miss | Boundary-degenerate | Convergent overlap | Third-plate intrusion | NaN/Inf |\n");
-		Markdown += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		Markdown += TEXT("| Resolution | Step | Raw hit | Raw miss | Raw multi | Divergent gap | Numeric miss | Boundary-degenerate | Convergent overlap | Numeric overlap | Third-plate intrusion | NaN/Inf |\n");
+		Markdown += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
 		for (const FStage1Metrics& Metrics : MainMetrics)
 		{
 			Markdown += FString::Printf(
-				TEXT("| %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n"),
+				TEXT("| %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n"),
 				Metrics.Resolution,
 				Metrics.Step,
 				Metrics.RawHitCount,
@@ -1314,6 +1398,7 @@ namespace
 				Metrics.NumericMissCount,
 				Metrics.BoundaryDegenerateOverlapCount,
 				Metrics.ConvergentOverlapCount,
+				Metrics.NumericOverlapCount,
 				Metrics.ThirdPlateIntrusionCount,
 				Metrics.NaNOrInfCount);
 		}
@@ -1347,9 +1432,9 @@ namespace
 		}
 
 		Markdown += TEXT("\n## Negative Controls\n\n");
-		Markdown += TEXT("Directional gates are now numeric: forced-convergence final step requires `multi >= 2 * miss`; forced-divergence final step requires `miss >= 2 * multi`. These are deliberately stricter than appearance checks, because a near-symmetric miss/multi result does not prove the control is directional.\n\n");
-		Markdown += TEXT("| Control | Step | Miss | Multi-hit | Auth CAF | Proj CAF | Drift err mean km | Hash | Gate | Expectation |\n");
-		Markdown += TEXT("|---|---:|---:|---:|---:|---:|---:|---|---|---|\n");
+		Markdown += TEXT("Directional gates are numeric and sign-aware. Forced-convergence final step uses `ConvergentOverlap > 2 * NumericMiss`, `ConvergentOverlap > 5% samples`, and `ThirdPlateIntrusion < 1% samples`. Forced-divergence final step uses `DivergentGap > 2 * NumericOverlap`, `DivergentGap > 5% samples`, and `ThirdPlateIntrusion < 1% samples`. Whole-sphere raw miss/multi counts remain reported, but the gate keys on the directional buckets because two rigid full-sphere plates naturally create a complementary back-side signal.\n\n");
+		Markdown += TEXT("| Control | Step | Raw miss | Raw multi | Directional miss | Directional multi | Third-plate % | Auth CAF | Proj CAF | Drift err mean km | Hash | Gate | Expectation |\n");
+		Markdown += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|\n");
 		for (int32 ControlIndex = 0; ControlIndex < ControlMetrics.Num(); ++ControlIndex)
 		{
 			const FStage1Metrics& Metrics = ControlMetrics[ControlIndex];
@@ -1359,6 +1444,8 @@ namespace
 				ControlIndex < 6 ? TEXT("forced-convergence") :
 				TEXT("forced-divergence");
 			FString Expectation = TEXT("baseline capture");
+			int32 DirectionalMiss = 0;
+			int32 DirectionalMulti = 0;
 			bool bGatePass = true;
 			if (ControlName == TEXT("zero-motion") && Metrics.Step > 0)
 			{
@@ -1376,23 +1463,37 @@ namespace
 			}
 			else if (ControlName == TEXT("forced-convergence") && Metrics.Step > 0)
 			{
-				Expectation = TEXT("directional overlap dominance: multi >= 2 * miss");
-				bGatePass = Metrics.RawMultiHitCount >= 2 * Metrics.RawMissCount && Metrics.RawMultiHitCount > 0;
+				DirectionalMiss = Metrics.NumericMissCount;
+				DirectionalMulti = Metrics.ConvergentOverlapCount;
+				Expectation = TEXT("signed overlap dominance: convergent multi > 2x numeric miss and >5%; third-plate <1%");
+				bGatePass =
+					DirectionalMulti > 2 * DirectionalMiss &&
+					static_cast<double>(DirectionalMulti) > 0.05 * static_cast<double>(Metrics.SampleCount) &&
+					static_cast<double>(Metrics.ThirdPlateIntrusionCount) < 0.01 * static_cast<double>(Metrics.SampleCount);
 			}
 			else if (ControlName == TEXT("forced-divergence") && Metrics.Step > 0)
 			{
-				Expectation = TEXT("directional gap dominance: miss >= 2 * multi");
-				bGatePass = Metrics.RawMissCount >= 2 * Metrics.RawMultiHitCount && Metrics.RawMissCount > 0;
+				DirectionalMiss = Metrics.DivergentGapCount;
+				DirectionalMulti = Metrics.NumericOverlapCount;
+				Expectation = TEXT("signed gap dominance: divergent miss > 2x numeric multi and >5%; third-plate <1%");
+				bGatePass =
+					DirectionalMiss > 2 * DirectionalMulti &&
+					static_cast<double>(DirectionalMiss) > 0.05 * static_cast<double>(Metrics.SampleCount) &&
+					static_cast<double>(Metrics.ThirdPlateIntrusionCount) < 0.01 * static_cast<double>(Metrics.SampleCount);
 			}
 			const FString Gate = Metrics.Step == 0 ? TEXT("baseline") : (bGatePass ? TEXT("pass") : TEXT("fail"));
+			const double ThirdPlatePercent = Metrics.SampleCount > 0 ? 100.0 * static_cast<double>(Metrics.ThirdPlateIntrusionCount) / static_cast<double>(Metrics.SampleCount) : 0.0;
 			Markdown += FString::Printf(
-				TEXT("| %s (%d plates, %d samples) | %d | %d | %d | %.6f | %.6f | %.9f | `%s` | %s | %s |\n"),
+				TEXT("| %s (%d plates, %d samples) | %d | %d | %d | %d | %d | %.3f | %.6f | %.6f | %.9f | `%s` | %s | %s |\n"),
 				*ControlName,
 				Metrics.PlateCount,
 				Metrics.Resolution,
 				Metrics.Step,
 				Metrics.RawMissCount,
 				Metrics.RawMultiHitCount,
+				DirectionalMiss,
+				DirectionalMulti,
+				ThirdPlatePercent,
 				Metrics.AuthoritativeCAF,
 				Metrics.ProjectedCAF,
 				Metrics.DriftErrorMeanKm,
@@ -1402,12 +1503,32 @@ namespace
 		}
 		Markdown += FString::Printf(TEXT("\nControl gate summary: %s.\n\n"), bControlsPassed ? TEXT("pass") : TEXT("fail"));
 
+		Markdown += TEXT("## Directional Classification Debug\n\n");
+		Markdown += TEXT("Investigation result: the forced pair motion vectors are opposite as intended, and `IsSeparatingKinematics` uses the signed value `dot(Vb - Va, ToB)` without `abs` or magnitude collapse. The hidden bug was downstream: non-boundary two-hit overlaps were always bucketed as `ConvergentOverlap`, and the hardening gate compared whole-sphere raw miss/multi counts. With two rigid full-sphere plates, area preservation creates a complementary back-side gap or overlap, so raw miss/multi counts are expected to look near-symmetric. The fixed gate uses sign-aware directional buckets while still reporting the raw counts.\n\n");
+		Markdown += TEXT("| Scenario | Plate 0 axis | Plate 0 speed | Plate 0 toward P1 | Plate 1 axis | Plate 1 speed | Plate 1 toward P0 | Midpoint signed separation | Midpoint class |\n");
+		Markdown += TEXT("|---|---|---:|---:|---|---:|---:|---:|---|\n");
+		for (const FStage1DirectionalDebug& Debug : DirectionalDebugs)
+		{
+			Markdown += FString::Printf(
+				TEXT("| %s | `%s` | %.12f | %.12f | `%s` | %.12f | %.12f | %.12f | %s |\n"),
+				*Debug.ScenarioName,
+				*VectorSummary(Debug.Plate0Axis),
+				Debug.Plate0AngularSpeedRadiansPerStep,
+				Debug.Plate0VelocityTowardPlate1,
+				*VectorSummary(Debug.Plate1Axis),
+				Debug.Plate1AngularSpeedRadiansPerStep,
+				Debug.Plate1VelocityTowardPlate0,
+				Debug.MidpointSignedSeparationVelocity,
+				Debug.bMidpointSeparating ? TEXT("separating") : TEXT("converging"));
+		}
+		Markdown += TEXT("\n");
+
 		Markdown += TEXT("## Visual Exports\n\n");
 		Markdown += TEXT("Each `main/<resolution>/step_###` folder contains `PlateId.png`, `MissMask.png`, `OverlapMask.png`, `BoundaryMask.png`, `ContinentalFraction.png`, `ThirdPlateIntrusion.png`, `DriftErrorMap.png`, and `ContactSheet.png`.\n\n");
 		Markdown += TEXT("## Recommendation\n\n");
 		if (bAllDeterministic && bControlsPassed)
 		{
-			Markdown += TEXT("Conditional go for user review: Stage 1 passes rigid material transport, drift, determinism, runtime, and negative-control checks, but it reproduces Aurous-scale raw coverage gaps/overlaps when motion runs without resampling. My recommendation is to approve Stage 1.5 as the investigation of this exact coverage defect, not to advance to Stage 2 or declare the carrier viable from Stage 1 alone.\n");
+			Markdown += TEXT("Conditional go for user review: Stage 1 passes rigid material transport, drift, determinism, and the signed directional negative-control checks, but it reproduces Aurous-scale raw coverage gaps/overlaps when motion runs without resampling. Runtime remains a yellow flag at 500k and should be profiled before q1/q2 search is added. My recommendation is to approve Stage 1.5 as the investigation of this exact coverage defect, not to advance to Stage 2 or declare the carrier viable from Stage 1 alone.\n");
 		}
 		else
 		{
@@ -1436,6 +1557,7 @@ int32 UCarrierLabStage1Commandlet::Main(const FString& Params)
 	TArray<FStage1Metrics> MainMetrics;
 	TArray<FStage1Metrics> ReplayMetrics;
 	TArray<FStage1Metrics> ControlMetrics;
+	TArray<FStage1DirectionalDebug> DirectionalDebugs;
 
 	for (const int32 Resolution : Resolutions)
 	{
@@ -1498,7 +1620,7 @@ int32 UCarrierLabStage1Commandlet::Main(const FString& Params)
 		true).Metrics);
 
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab Stage 1: forced-convergence control."));
-	ControlMetrics.Append(RunStage1Scenario(
+	const FRunResult ForcedConvergenceResult = RunStage1Scenario(
 		OutputRoot,
 		TEXT("control_forced_convergence"),
 		10000,
@@ -1508,10 +1630,15 @@ int32 UCarrierLabStage1Commandlet::Main(const FString& Params)
 		{
 			BuildForcedPairMotions(State, Motions, true);
 		},
-		true).Metrics);
+		true);
+	ControlMetrics.Append(ForcedConvergenceResult.Metrics);
+	if (ForcedConvergenceResult.bHasDirectionalDebug)
+	{
+		DirectionalDebugs.Add(ForcedConvergenceResult.DirectionalDebug);
+	}
 
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab Stage 1: forced-divergence control."));
-	ControlMetrics.Append(RunStage1Scenario(
+	const FRunResult ForcedDivergenceResult = RunStage1Scenario(
 		OutputRoot,
 		TEXT("control_forced_divergence"),
 		10000,
@@ -1521,7 +1648,12 @@ int32 UCarrierLabStage1Commandlet::Main(const FString& Params)
 		{
 			BuildForcedPairMotions(State, Motions, false);
 		},
-		true).Metrics);
+		true);
+	ControlMetrics.Append(ForcedDivergenceResult.Metrics);
+	if (ForcedDivergenceResult.bHasDirectionalDebug)
+	{
+		DirectionalDebugs.Add(ForcedDivergenceResult.DirectionalDebug);
+	}
 
 	bool bAllDeterministic = true;
 	for (const FStage1Metrics& Metrics : MainMetrics)
@@ -1576,12 +1708,14 @@ int32 UCarrierLabStage1Commandlet::Main(const FString& Params)
 		SingleEnd->NaNOrInfCount == 0;
 	bControlsPassed = bControlsPassed &&
 		ConvergeEnd != nullptr &&
-		ConvergeEnd->RawMultiHitCount >= 2 * ConvergeEnd->RawMissCount &&
-		ConvergeEnd->RawMultiHitCount > 0;
+		ConvergeEnd->ConvergentOverlapCount > 2 * ConvergeEnd->NumericMissCount &&
+		static_cast<double>(ConvergeEnd->ConvergentOverlapCount) > 0.05 * static_cast<double>(ConvergeEnd->SampleCount) &&
+		static_cast<double>(ConvergeEnd->ThirdPlateIntrusionCount) < 0.01 * static_cast<double>(ConvergeEnd->SampleCount);
 	bControlsPassed = bControlsPassed &&
 		DivergeEnd != nullptr &&
-		DivergeEnd->RawMissCount >= 2 * DivergeEnd->RawMultiHitCount &&
-		DivergeEnd->RawMissCount > 0;
+		DivergeEnd->DivergentGapCount > 2 * DivergeEnd->NumericOverlapCount &&
+		static_cast<double>(DivergeEnd->DivergentGapCount) > 0.05 * static_cast<double>(DivergeEnd->SampleCount) &&
+		static_cast<double>(DivergeEnd->ThirdPlateIntrusionCount) < 0.01 * static_cast<double>(DivergeEnd->SampleCount);
 
 	for (const FStage1Metrics& Metrics : MainMetrics)
 	{
@@ -1601,7 +1735,7 @@ int32 UCarrierLabStage1Commandlet::Main(const FString& Params)
 		bAllPassed = false;
 	}
 
-	const FString Report = BuildReportMarkdown(OutputRoot, MainMetrics, ReplayMetrics, ControlMetrics, bAllDeterministic, bControlsPassed);
+	const FString Report = BuildReportMarkdown(OutputRoot, MainMetrics, ReplayMetrics, ControlMetrics, DirectionalDebugs, bAllDeterministic, bControlsPassed);
 	const FString ReportPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("docs"), TEXT("checkpoints"), TEXT("stage-1-report.md"));
 	if (!FFileHelper::SaveStringToFile(Report, *ReportPath))
 	{
