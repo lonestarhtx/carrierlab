@@ -112,7 +112,8 @@ namespace CarrierLab
 			Vertex.GlobalSampleId = Sample.Id;
 			Vertex.UnitPosition = Sample.UnitPosition;
 			Vertex.AreaWeight = Sample.AreaWeight;
-			Vertex.bContinental = Plate.bContinental;
+			Vertex.ContinentalFraction = Sample.ContinentalFraction;
+			Vertex.bContinental = Sample.bContinental;
 			const int32 LocalVertexId = Plate.Vertices.Add(Vertex);
 			Plate.GlobalSampleIdToLocalVertexId.Add(Sample.Id, LocalVertexId);
 			return LocalVertexId;
@@ -378,7 +379,8 @@ namespace CarrierLab
 		{
 			const int32 BestPlateId = FindNearestPlateCenter(Centers, Sample.UnitPosition);
 			Sample.PlateId = BestPlateId;
-			Sample.bContinental = State.Plates[BestPlateId].bContinental;
+			Sample.ContinentalFraction = State.Plates[BestPlateId].bContinental ? 1.0 : 0.0;
+			Sample.bContinental = Sample.ContinentalFraction >= 0.5;
 			State.Plates[BestPlateId].SampleIds.Add(Sample.Id);
 		}
 
@@ -559,6 +561,72 @@ namespace CarrierLab
 		return true;
 	}
 
+	void FCarrierLabStage0::RebuildPlateLocalStateFromSamples(FCarrierState& State)
+	{
+		for (FCarrierPlate& Plate : State.Plates)
+		{
+			Plate.SampleIds.Reset();
+			Plate.TriangleIds.Reset();
+			Plate.Vertices.Reset();
+			Plate.LocalTriangles.Reset();
+			Plate.GlobalSampleIdToLocalVertexId.Reset();
+		}
+
+		for (FSphereSample& Sample : State.Samples)
+		{
+			Sample.bContinental = Sample.ContinentalFraction >= 0.5;
+			if (!State.Plates.IsValidIndex(Sample.PlateId))
+			{
+				Sample.PlateId = 0;
+			}
+			State.Plates[Sample.PlateId].SampleIds.Add(Sample.Id);
+		}
+
+		for (int32 TriangleIndex = 0; TriangleIndex < State.Triangles.Num(); ++TriangleIndex)
+		{
+			FSphereTriangle& Triangle = State.Triangles[TriangleIndex];
+			const int32 PlateA = State.Samples.IsValidIndex(Triangle.A) ? State.Samples[Triangle.A].PlateId : INDEX_NONE;
+			const int32 PlateB = State.Samples.IsValidIndex(Triangle.B) ? State.Samples[Triangle.B].PlateId : INDEX_NONE;
+			const int32 PlateC = State.Samples.IsValidIndex(Triangle.C) ? State.Samples[Triangle.C].PlateId : INDEX_NONE;
+			Triangle.bBoundary = PlateA != PlateB || PlateB != PlateC;
+
+			if (PlateA == PlateB || PlateA == PlateC)
+			{
+				Triangle.PlateId = PlateA;
+			}
+			else if (PlateB == PlateC)
+			{
+				Triangle.PlateId = PlateB;
+			}
+			else
+			{
+				const FVector3d TriangleCenter = (
+					State.Samples[Triangle.A].UnitPosition +
+					State.Samples[Triangle.B].UnitPosition +
+					State.Samples[Triangle.C].UnitPosition).GetSafeNormal();
+				int32 BestPlateId = INDEX_NONE;
+				double BestDot = -TNumericLimits<double>::Max();
+				for (const FCarrierPlate& Plate : State.Plates)
+				{
+					const double Dot = FVector3d::DotProduct(TriangleCenter, Plate.InitialCenter);
+					if (Dot > BestDot || (FMath::IsNearlyEqual(Dot, BestDot) && (BestPlateId == INDEX_NONE || Plate.PlateId < BestPlateId)))
+					{
+						BestDot = Dot;
+						BestPlateId = Plate.PlateId;
+					}
+				}
+				Triangle.PlateId = BestPlateId;
+			}
+
+			if (State.Plates.IsValidIndex(Triangle.PlateId))
+			{
+				State.Plates[Triangle.PlateId].TriangleIds.Add(TriangleIndex);
+			}
+		}
+
+		BuildPlateLocalTriangulations(State);
+	}
+
 	FStage0Metrics FCarrierLabStage0::ProjectColdStart(const FCarrierState& State, FStage0ProjectionBuffers* OutProjectionBuffers)
 	{
 		const double StartTime = FPlatformTime::Seconds();
@@ -606,9 +674,9 @@ namespace CarrierLab
 			}
 
 			TotalArea += Sample.AreaWeight;
-			if (Sample.bContinental)
+			if (Sample.ContinentalFraction > 0.0)
 			{
-				AuthoritativeContinentalArea += Sample.AreaWeight;
+				AuthoritativeContinentalArea += Sample.AreaWeight * Sample.ContinentalFraction;
 			}
 
 			TArray<FProjectionCandidate> Candidates;
@@ -785,6 +853,7 @@ namespace CarrierLab
 		for (const FSphereSample& Sample : State.Samples)
 		{
 			HashMix(Hash, static_cast<uint64>(Sample.PlateId + 1));
+			HashMixDouble(Hash, Sample.ContinentalFraction);
 			HashMix(Hash, Sample.bContinental ? 1ull : 0ull);
 		}
 		for (const FSphereTriangle& Triangle : State.Triangles)
@@ -809,6 +878,7 @@ namespace CarrierLab
 				HashMixDouble(Hash, Vertex.UnitPosition.X);
 				HashMixDouble(Hash, Vertex.UnitPosition.Y);
 				HashMixDouble(Hash, Vertex.UnitPosition.Z);
+				HashMixDouble(Hash, Vertex.ContinentalFraction);
 				HashMix(Hash, Vertex.bContinental ? 1ull : 0ull);
 			}
 			for (const FCarrierPlateTriangle& Triangle : Plate.LocalTriangles)

@@ -147,17 +147,21 @@ Boundary policy:
 - Raw candidate counts and boundary-degenerate counts remain visible.
 - True Stage 0 failure is any non-degenerate miss or non-degenerate overlap.
 
-No-subduction multi-hit tie-break:
+No-subduction multi-hit policy:
 
-- Stage 1 and Stage 1.5 use nearest plate centroid.
-- Equal-distance ties resolve to the lowest plate id.
-- Raw multi-hit count is always reported before this winner is applied.
+- Stage 1 uses nearest plate centroid.
+- Stage 1.5 treats multi-hit resolution as an experimental condition:
+  centroid tie-break, synthetic lower-id-subducts labels for convergent
+  overlaps, and deterministic seeded random tie-break.
+- Equal-distance centroid ties resolve to the lowest plate id.
+- Raw multi-hit count is always reported before any policy winner is applied.
 
-This tie-break is a lab policy for the no-subduction subset, not a
-thesis-faithful substitute for subduction/collision exclusion. It must be
-called out in checkpoint and verdict reporting if raw multi-hit counts are high.
-Stage 1.5 must report per-plate projected area deltas so centroid-resolution
-bias is visible.
+These policies characterize the carrier foundation under missing
+subduction/collision state; they are not thesis-faithful substitutes for the
+thesis filter. Stage 1.5 reports AuthoritativeCAF, ProjectedCAF, gap-fill
+behavior, and per-plate area deltas under each policy so the checkpoint can
+distinguish process-independent carrier behavior from behavior future
+subduction integration owns.
 
 ## Stage Split
 
@@ -182,6 +186,10 @@ Stage 1.5: cross-window resampling
 - Reuse the original global TDS as the resampling target.
 - Transfer current crust data from moved plate-local geometry.
 - Fill zero-hit divergent gaps through the q1/q2/ridge-midpoint algorithm.
+- Transfer gap-fill material conservatively from q1/q2 boundary crust data in
+  Stage 1.5; qGamma provenance is still logged, but this carrier-foundation
+  slice does not permit gap fill to destroy continental mass through a deferred
+  oceanic-generation interpretation.
 - Rebuild plate-local duplicated triangulations after assignment.
 - Report authoritative CAF, projected CAF, projected-authoritative delta, and
   per-plate area deltas before and after every resampling event.
@@ -289,8 +297,9 @@ in the design and checkpoint gates:
   architecture issues, while Stage 1 does not identify which one
 - the third explanation remains live: Aurous's resampling path may have both
   failed to close geometric gaps and destroyed material
-- `ChooseNearestCandidatePlate` must remain labeled as a lab policy, and
-  Stage 1.5 must report per-plate projected area deltas to detect centroid bias
+- Stage 1.5 multi-hit resolution must remain labeled as an experimental policy
+  surface, and Stage 1.5 must report per-plate projected area deltas to detect
+  centroid or policy bias
 
 Should-fix items allowed to land inside the Stage 1.5 design phase, but before
 Stage 1.5 verdict claims:

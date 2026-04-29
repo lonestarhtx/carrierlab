@@ -20,6 +20,7 @@ namespace CarrierLab
 		FVector3d UnitPosition = FVector3d::ZeroVector;
 		double AreaWeight = 0.0;
 		int32 PlateId = INDEX_NONE;
+		double ContinentalFraction = 0.0;
 		bool bContinental = false;
 	};
 
@@ -37,6 +38,7 @@ namespace CarrierLab
 		int32 GlobalSampleId = INDEX_NONE;
 		FVector3d UnitPosition = FVector3d::ZeroVector;
 		double AreaWeight = 0.0;
+		double ContinentalFraction = 0.0;
 		bool bContinental = false;
 	};
 
@@ -140,6 +142,7 @@ namespace CarrierLab
 	{
 	public:
 		static bool BuildColdStartCarrier(const FStage0Config& Config, FCarrierState& OutState, FString& OutError);
+		static void RebuildPlateLocalStateFromSamples(FCarrierState& State);
 		static FStage0Metrics ProjectColdStart(const FCarrierState& State, FStage0ProjectionBuffers* OutProjectionBuffers = nullptr);
 		static FString HashStateAndMetrics(const FCarrierState& State, const FStage0Metrics& Metrics);
 
