@@ -49,6 +49,12 @@ namespace CarrierLab
 		bool bBoundary = false;
 	};
 
+	struct FCarrierRayTriangleRef
+	{
+		int32 PlateId = INDEX_NONE;
+		int32 LocalTriangleId = INDEX_NONE;
+	};
+
 	struct FCarrierPlate
 	{
 		int32 PlateId = INDEX_NONE;
@@ -69,6 +75,33 @@ namespace CarrierLab
 		TArray<FCarrierPlate> Plates;
 		TArray<TArray<int32>> SampleIncidentTriangleIds;
 		TArray<TArray<int32>> SampleNeighborIds;
+		TArray<TArray<FCarrierRayTriangleRef>> SampleRayCandidateTriangles;
+	};
+
+	enum class EStage0MissClass : uint8
+	{
+		None = 0,
+		NumericMiss = 1,
+		TopologyHole = 2,
+		OutOfDomain = 3
+	};
+
+	enum class EStage0OverlapClass : uint8
+	{
+		None = 0,
+		BoundaryDegenerate = 1,
+		NonDegenerate = 2,
+		ThirdPlateBoundary = 3,
+		ThirdPlateNonDegenerate = 4
+	};
+
+	struct FStage0ProjectionBuffers
+	{
+		TArray<int32> ResolvedPlateIds;
+		TArray<uint8> MissClasses;
+		TArray<uint8> OverlapClasses;
+		TArray<uint8> BoundaryMask;
+		TArray<uint8> ContinentalMask;
 	};
 
 	struct FStage0Metrics
@@ -88,12 +121,17 @@ namespace CarrierLab
 		int32 NonDegenerateMissCount = 0;
 		int32 NonDegenerateOverlapCount = 0;
 		int32 ThirdPlateIntrusionCount = 0;
+		int32 ThirdPlateBoundaryDegenerateCount = 0;
+		int32 ThirdPlateNonDegenerateCount = 0;
 		int32 NaNOrInfCount = 0;
+		int64 RayCandidateCount = 0;
 		int64 RayTriangleTestCount = 0;
 		double AuthoritativeContinentalAreaFraction = 0.0;
 		double ProjectedContinentalAreaFraction = 0.0;
 		double TotalMaterialArea = 0.0;
+		double BuildWallClockSeconds = 0.0;
 		double WallClockSeconds = 0.0;
+		double TotalWallClockSeconds = 0.0;
 		uint64 MemoryUsedBytes = 0;
 		FString DeterminismHash;
 	};
@@ -102,13 +140,13 @@ namespace CarrierLab
 	{
 	public:
 		static bool BuildColdStartCarrier(const FStage0Config& Config, FCarrierState& OutState, FString& OutError);
-		static FStage0Metrics ProjectColdStart(const FCarrierState& State);
+		static FStage0Metrics ProjectColdStart(const FCarrierState& State, FStage0ProjectionBuffers* OutProjectionBuffers = nullptr);
 		static FString HashStateAndMetrics(const FCarrierState& State, const FStage0Metrics& Metrics);
 
 	private:
 		static void GenerateFibonacciSamples(int32 SampleCount, TArray<FSphereSample>& OutSamples);
 		static void GeneratePlateCenters(const FStage0Config& Config, TArray<FVector3d>& OutCenters);
-		static bool BuildSphericalDelaunayBowyerWatson(const TArray<FSphereSample>& Samples, TArray<FSphereTriangle>& OutTriangles, FString& OutError);
+		static bool BuildSphericalDelaunayConvexHull(const TArray<FSphereSample>& Samples, TArray<FSphereTriangle>& OutTriangles, FString& OutError);
 		static void AssignPlatesAndTriangles(FCarrierState& State);
 		static void BuildAdjacency(FCarrierState& State);
 		static void BuildPlateLocalTriangulations(FCarrierState& State);

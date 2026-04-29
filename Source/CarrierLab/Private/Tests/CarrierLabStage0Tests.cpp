@@ -45,13 +45,15 @@ bool FCarrierLabStage0ColdStartSmokeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Euler characteristic remains spherical"), MetricsA.EulerCharacteristic, 2);
 	TestEqual(TEXT("Plate-local triangle copy covers global TDS"), MetricsA.PlateLocalTriangleCount, MetricsA.TriangleCount);
 	TestTrue(TEXT("Ray-triangle projection executed"), MetricsA.RayTriangleTestCount > 0);
+	TestTrue(TEXT("Ray-candidate acceleration limits projection work"), MetricsA.RayTriangleTestCount < static_cast<int64>(MetricsA.SampleCount) * static_cast<int64>(MetricsA.TriangleCount));
 	TestTrue(TEXT("Boundary degeneracy is tracked separately"), MetricsA.BoundaryDegenerateOverlapCount >= 0);
+	TestEqual(TEXT("Third-plate non-degenerate intrusions are absent"), MetricsA.ThirdPlateNonDegenerateCount, 0);
 	TestEqual(TEXT("Deterministic hash is stable"), MetricsA.DeterminismHash, MetricsB.DeterminismHash);
 	TestTrue(TEXT("Projected CAF matches authoritative CAF"),
 		FMath::IsNearlyEqual(MetricsA.AuthoritativeContinentalAreaFraction, MetricsA.ProjectedContinentalAreaFraction, 1.0e-12));
 
 	AddInfo(FString::Printf(
-		TEXT("[CarrierLabStage0 sample_count=%d plate_count=%d tris=%d local_tris=%d local_vertices=%d edges=%d euler=%d ray_tests=%lld hit=%d miss=%d multi=%d boundary_degenerate=%d third_plate_intrusion=%d caf=%.6f hash=%s]"),
+		TEXT("[CarrierLabStage0 sample_count=%d plate_count=%d tris=%d local_tris=%d local_vertices=%d edges=%d euler=%d ray_candidates=%lld ray_tests=%lld hit=%d miss=%d multi=%d boundary_degenerate=%d third_plate_intrusion=%d third_boundary=%d third_non_degenerate=%d caf=%.6f hash=%s]"),
 		MetricsA.SampleCount,
 		MetricsA.PlateCount,
 		MetricsA.TriangleCount,
@@ -59,12 +61,15 @@ bool FCarrierLabStage0ColdStartSmokeTest::RunTest(const FString& Parameters)
 		MetricsA.PlateLocalVertexCount,
 		MetricsA.EdgeCount,
 		MetricsA.EulerCharacteristic,
+		MetricsA.RayCandidateCount,
 		MetricsA.RayTriangleTestCount,
 		MetricsA.RawHitCount,
 		MetricsA.RawMissCount,
 		MetricsA.RawMultiHitCount,
 		MetricsA.BoundaryDegenerateOverlapCount,
 		MetricsA.ThirdPlateIntrusionCount,
+		MetricsA.ThirdPlateBoundaryDegenerateCount,
+		MetricsA.ThirdPlateNonDegenerateCount,
 		MetricsA.AuthoritativeContinentalAreaFraction,
 		*MetricsA.DeterminismHash));
 
@@ -107,10 +112,12 @@ bool FCarrierLabStage0ColdStartDeterminismTest::RunTest(const FString& Parameter
 	TestEqual(TEXT("Euler characteristic remains spherical at 1024/40"), MetricsA.EulerCharacteristic, 2);
 	TestEqual(TEXT("Plate-local triangle copy covers global TDS at 1024/40"), MetricsA.PlateLocalTriangleCount, MetricsA.TriangleCount);
 	TestTrue(TEXT("Ray-triangle projection executed at 1024/40"), MetricsA.RayTriangleTestCount > 0);
+	TestTrue(TEXT("Ray-candidate acceleration limits projection work at 1024/40"), MetricsA.RayTriangleTestCount < static_cast<int64>(MetricsA.SampleCount) * static_cast<int64>(MetricsA.TriangleCount));
+	TestEqual(TEXT("Third-plate non-degenerate intrusions are absent at 1024/40"), MetricsA.ThirdPlateNonDegenerateCount, 0);
 	TestEqual(TEXT("Deterministic hash is stable at 1024/40"), MetricsA.DeterminismHash, MetricsB.DeterminismHash);
 
 	AddInfo(FString::Printf(
-		TEXT("[CarrierLabStage0 sample_count=%d plate_count=%d tris=%d local_tris=%d local_vertices=%d edges=%d euler=%d ray_tests=%lld hit=%d miss=%d multi=%d boundary_degenerate=%d third_plate_intrusion=%d caf=%.6f hash=%s]"),
+		TEXT("[CarrierLabStage0 sample_count=%d plate_count=%d tris=%d local_tris=%d local_vertices=%d edges=%d euler=%d ray_candidates=%lld ray_tests=%lld hit=%d miss=%d multi=%d boundary_degenerate=%d third_plate_intrusion=%d third_boundary=%d third_non_degenerate=%d caf=%.6f hash=%s]"),
 		MetricsA.SampleCount,
 		MetricsA.PlateCount,
 		MetricsA.TriangleCount,
@@ -118,12 +125,15 @@ bool FCarrierLabStage0ColdStartDeterminismTest::RunTest(const FString& Parameter
 		MetricsA.PlateLocalVertexCount,
 		MetricsA.EdgeCount,
 		MetricsA.EulerCharacteristic,
+		MetricsA.RayCandidateCount,
 		MetricsA.RayTriangleTestCount,
 		MetricsA.RawHitCount,
 		MetricsA.RawMissCount,
 		MetricsA.RawMultiHitCount,
 		MetricsA.BoundaryDegenerateOverlapCount,
 		MetricsA.ThirdPlateIntrusionCount,
+		MetricsA.ThirdPlateBoundaryDegenerateCount,
+		MetricsA.ThirdPlateNonDegenerateCount,
 		MetricsA.AuthoritativeContinentalAreaFraction,
 		*MetricsA.DeterminismHash));
 

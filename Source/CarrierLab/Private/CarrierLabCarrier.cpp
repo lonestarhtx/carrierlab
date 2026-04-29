@@ -2,6 +2,7 @@
 
 #include "CarrierLabCarrier.h"
 
+#include "CompGeom/ConvexHull3.h"
 #include "HAL/PlatformMemory.h"
 
 namespace CarrierLab
@@ -31,6 +32,34 @@ namespace CarrierLab
 			int32 LocalTriangleId = INDEX_NONE;
 			bool bBoundaryDegenerate = false;
 		};
+
+		static int32 CountBits64(uint64 Value)
+		{
+			int32 Count = 0;
+			while (Value != 0)
+			{
+				Value &= (Value - 1);
+				++Count;
+			}
+			return Count;
+		}
+
+		static int32 LowestSetBitIndex(const uint64 Value)
+		{
+			if (Value == 0)
+			{
+				return INDEX_NONE;
+			}
+
+			for (int32 Index = 0; Index < 64; ++Index)
+			{
+				if ((Value & (1ull << Index)) != 0)
+				{
+					return Index;
+				}
+			}
+			return INDEX_NONE;
+		}
 
 		static uint64 MakeEdgeKey(const int32 A, const int32 B)
 		{
@@ -256,135 +285,50 @@ namespace CarrierLab
 		}
 	}
 
-	bool FCarrierLabStage0::BuildSphericalDelaunayBowyerWatson(
+	bool FCarrierLabStage0::BuildSphericalDelaunayConvexHull(
 		const TArray<FSphereSample>& Samples,
 		TArray<FSphereTriangle>& OutTriangles,
 		FString& OutError)
 	{
 		OutTriangles.Reset();
-		if (Samples.Num() < 16)
+		if (Samples.Num() < 4)
 		{
-			OutError = TEXT("Bowyer-Watson spherical Delaunay needs at least 16 samples for the seeded octahedron.");
+			OutError = TEXT("Convex-hull spherical Delaunay needs at least four samples.");
 			return false;
 		}
 
-		TArray<int32> Seeds;
-		AddUniqueSeed(Seeds, FindExtremeIndex(Samples, 0, true));
-		AddUniqueSeed(Seeds, FindExtremeIndex(Samples, 0, false));
-		AddUniqueSeed(Seeds, FindExtremeIndex(Samples, 1, true));
-		AddUniqueSeed(Seeds, FindExtremeIndex(Samples, 1, false));
-		AddUniqueSeed(Seeds, FindExtremeIndex(Samples, 2, true));
-		AddUniqueSeed(Seeds, FindExtremeIndex(Samples, 2, false));
-		if (Seeds.Num() != 6)
-		{
-			OutError = FString::Printf(TEXT("Expected 6 unique seed vertices, found %d."), Seeds.Num());
-			return false;
-		}
-
-		const int32 PX = Seeds[0];
-		const int32 NX = Seeds[1];
-		const int32 PY = Seeds[2];
-		const int32 NY = Seeds[3];
-		const int32 PZ = Seeds[4];
-		const int32 NZ = Seeds[5];
-
-		TArray<FWorkingTriangle> Triangles;
-		Triangles.Reserve(Samples.Num() * 2);
-		AddTriangleChecked(Samples, Triangles, PX, PY, PZ);
-		AddTriangleChecked(Samples, Triangles, PY, NX, PZ);
-		AddTriangleChecked(Samples, Triangles, NX, NY, PZ);
-		AddTriangleChecked(Samples, Triangles, NY, PX, PZ);
-		AddTriangleChecked(Samples, Triangles, PY, PX, NZ);
-		AddTriangleChecked(Samples, Triangles, NX, PY, NZ);
-		AddTriangleChecked(Samples, Triangles, NY, NX, NZ);
-		AddTriangleChecked(Samples, Triangles, PX, NY, NZ);
-
-		TSet<int32> SeedSet;
-		for (const int32 Seed : Seeds)
-		{
-			SeedSet.Add(Seed);
-		}
-
+		TArray<FVector3d> Points;
+		Points.Reserve(Samples.Num());
 		for (const FSphereSample& Sample : Samples)
 		{
-			if (SeedSet.Contains(Sample.Id))
-			{
-				continue;
-			}
+			Points.Add(Sample.UnitPosition);
+		}
 
-			TArray<bool> bBad;
-			bBad.Init(false, Triangles.Num());
-			int32 BadCount = 0;
-			for (int32 TriangleIndex = 0; TriangleIndex < Triangles.Num(); ++TriangleIndex)
-			{
-				if (CircumcircleContains(Samples, Triangles[TriangleIndex], Sample.UnitPosition))
-				{
-					bBad[TriangleIndex] = true;
-					++BadCount;
-				}
-			}
+		UE::Geometry::FConvexHull3d Hull;
+		Hull.bSaveTriangleNeighbors = false;
+		if (!Hull.Solve(TArrayView<const FVector3d>(Points.GetData(), Points.Num())) || !Hull.IsSolutionAvailable())
+		{
+			OutError = FString::Printf(
+				TEXT("FConvexHull3d failed to produce a 3D hull; reported dimension %d."),
+				Hull.GetDimension());
+			return false;
+		}
 
-			if (BadCount == 0)
-			{
-				for (int32 TriangleIndex = 0; TriangleIndex < Triangles.Num(); ++TriangleIndex)
-				{
-					if (PointInSphericalTriangle(Samples, Triangles[TriangleIndex], Sample.UnitPosition))
-					{
-						bBad[TriangleIndex] = true;
-						BadCount = 1;
-						break;
-					}
-				}
-			}
-
-			if (BadCount == 0)
-			{
-				OutError = FString::Printf(TEXT("Could not find insertion cavity for sample %d."), Sample.Id);
-				return false;
-			}
-
-			TMap<uint64, FBoundaryEdge> BoundaryEdges;
-			auto ToggleEdge = [&BoundaryEdges](const int32 A, const int32 B)
-			{
-				const uint64 Key = MakeEdgeKey(A, B);
-				if (BoundaryEdges.Contains(Key))
-				{
-					BoundaryEdges.Remove(Key);
-				}
-				else
-				{
-					BoundaryEdges.Add(Key, FBoundaryEdge{A, B});
-				}
-			};
-
-			TArray<FWorkingTriangle> KeptTriangles;
-			KeptTriangles.Reserve(Triangles.Num() + 2);
-			for (int32 TriangleIndex = 0; TriangleIndex < Triangles.Num(); ++TriangleIndex)
-			{
-				const FWorkingTriangle& Triangle = Triangles[TriangleIndex];
-				if (bBad[TriangleIndex])
-				{
-					ToggleEdge(Triangle.A, Triangle.B);
-					ToggleEdge(Triangle.B, Triangle.C);
-					ToggleEdge(Triangle.C, Triangle.A);
-				}
-				else
-				{
-					KeptTriangles.Add(Triangle);
-				}
-			}
-
-			Triangles = MoveTemp(KeptTriangles);
-			for (const TPair<uint64, FBoundaryEdge>& Entry : BoundaryEdges)
-			{
-				AddTriangleChecked(Samples, Triangles, Entry.Value.A, Entry.Value.B, Sample.Id);
-			}
+		if (Hull.GetNumHullPoints() != Samples.Num())
+		{
+			OutError = FString::Printf(
+				TEXT("FConvexHull3d used %d hull vertices for %d sphere samples."),
+				Hull.GetNumHullPoints(),
+				Samples.Num());
+			return false;
 		}
 
 		TSet<uint64> TriangleKeys;
-		OutTriangles.Reserve(Triangles.Num());
-		for (FWorkingTriangle Triangle : Triangles)
+		const TArray<UE::Geometry::FIndex3i>& HullTriangles = Hull.GetTriangles();
+		OutTriangles.Reserve(HullTriangles.Num());
+		for (const UE::Geometry::FIndex3i& HullTriangle : HullTriangles)
 		{
+			FWorkingTriangle Triangle{HullTriangle.A, HullTriangle.B, HullTriangle.C};
 			if (!OrientTriangle(Samples, Triangle))
 			{
 				continue;
@@ -471,8 +415,6 @@ namespace CarrierLab
 	{
 		State.SampleIncidentTriangleIds.SetNum(State.Samples.Num());
 		State.SampleNeighborIds.SetNum(State.Samples.Num());
-		TArray<TSet<int32>> NeighborSets;
-		NeighborSets.SetNum(State.Samples.Num());
 
 		for (int32 TriangleIndex = 0; TriangleIndex < State.Triangles.Num(); ++TriangleIndex)
 		{
@@ -484,20 +426,22 @@ namespace CarrierLab
 				const int32 B = Verts[(LocalIndex + 1) % 3];
 				const int32 C = Verts[(LocalIndex + 2) % 3];
 				State.SampleIncidentTriangleIds[A].Add(TriangleIndex);
-				NeighborSets[A].Add(B);
-				NeighborSets[A].Add(C);
+				State.SampleNeighborIds[A].AddUnique(B);
+				State.SampleNeighborIds[A].AddUnique(C);
 			}
 		}
 
-		for (int32 SampleIndex = 0; SampleIndex < NeighborSets.Num(); ++SampleIndex)
+		for (int32 SampleIndex = 0; SampleIndex < State.SampleNeighborIds.Num(); ++SampleIndex)
 		{
-			State.SampleNeighborIds[SampleIndex] = NeighborSets[SampleIndex].Array();
 			State.SampleNeighborIds[SampleIndex].Sort();
 		}
 	}
 
 	void FCarrierLabStage0::BuildPlateLocalTriangulations(FCarrierState& State)
 	{
+		State.SampleRayCandidateTriangles.Reset();
+		State.SampleRayCandidateTriangles.SetNum(State.Samples.Num());
+
 		for (FCarrierPlate& Plate : State.Plates)
 		{
 			Plate.Vertices.Reset();
@@ -520,7 +464,16 @@ namespace CarrierLab
 			LocalTriangle.C = FindOrAddLocalVertex(Plate, State.Samples[Triangle.C]);
 			LocalTriangle.SourceTriangleId = TriangleIndex;
 			LocalTriangle.bBoundary = Triangle.bBoundary;
-			Plate.LocalTriangles.Add(LocalTriangle);
+			const int32 LocalTriangleId = Plate.LocalTriangles.Add(LocalTriangle);
+
+			const int32 SourceVerts[3] = {Triangle.A, Triangle.B, Triangle.C};
+			for (const int32 SourceVertexId : SourceVerts)
+			{
+				if (State.SampleRayCandidateTriangles.IsValidIndex(SourceVertexId))
+				{
+					State.SampleRayCandidateTriangles[SourceVertexId].Add(FCarrierRayTriangleRef{Plate.PlateId, LocalTriangleId});
+				}
+			}
 		}
 	}
 
@@ -594,7 +547,7 @@ namespace CarrierLab
 		State.Config = Config;
 		GenerateFibonacciSamples(Config.SampleCount, State.Samples);
 
-		if (!BuildSphericalDelaunayBowyerWatson(State.Samples, State.Triangles, OutError))
+		if (!BuildSphericalDelaunayConvexHull(State.Samples, State.Triangles, OutError))
 		{
 			return false;
 		}
@@ -606,7 +559,7 @@ namespace CarrierLab
 		return true;
 	}
 
-	FStage0Metrics FCarrierLabStage0::ProjectColdStart(const FCarrierState& State)
+	FStage0Metrics FCarrierLabStage0::ProjectColdStart(const FCarrierState& State, FStage0ProjectionBuffers* OutProjectionBuffers)
 	{
 		const double StartTime = FPlatformTime::Seconds();
 		FStage0Metrics Metrics;
@@ -633,6 +586,15 @@ namespace CarrierLab
 		Metrics.EdgeCount = Edges.Num();
 		Metrics.EulerCharacteristic = Metrics.SampleCount - Metrics.EdgeCount + Metrics.TriangleCount;
 
+		if (OutProjectionBuffers != nullptr)
+		{
+			OutProjectionBuffers->ResolvedPlateIds.Init(INDEX_NONE, State.Samples.Num());
+			OutProjectionBuffers->MissClasses.Init(static_cast<uint8>(EStage0MissClass::None), State.Samples.Num());
+			OutProjectionBuffers->OverlapClasses.Init(static_cast<uint8>(EStage0OverlapClass::None), State.Samples.Num());
+			OutProjectionBuffers->BoundaryMask.Init(0, State.Samples.Num());
+			OutProjectionBuffers->ContinentalMask.Init(0, State.Samples.Num());
+		}
+
 		double AuthoritativeContinentalArea = 0.0;
 		double ProjectedContinentalArea = 0.0;
 		double TotalArea = 0.0;
@@ -650,11 +612,24 @@ namespace CarrierLab
 			}
 
 			TArray<FProjectionCandidate> Candidates;
-			for (const FCarrierPlate& Plate : State.Plates)
+			if (State.SampleRayCandidateTriangles.IsValidIndex(Sample.Id))
 			{
-				for (int32 LocalTriangleIndex = 0; LocalTriangleIndex < Plate.LocalTriangles.Num(); ++LocalTriangleIndex)
+				const TArray<FCarrierRayTriangleRef>& CandidateRefs = State.SampleRayCandidateTriangles[Sample.Id];
+				Metrics.RayCandidateCount += CandidateRefs.Num();
+				for (const FCarrierRayTriangleRef& CandidateRef : CandidateRefs)
 				{
-					const FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleIndex];
+					if (!State.Plates.IsValidIndex(CandidateRef.PlateId))
+					{
+						continue;
+					}
+
+					const FCarrierPlate& Plate = State.Plates[CandidateRef.PlateId];
+					if (!Plate.LocalTriangles.IsValidIndex(CandidateRef.LocalTriangleId))
+					{
+						continue;
+					}
+
+					const FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[CandidateRef.LocalTriangleId];
 					if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
 						!Plate.Vertices.IsValidIndex(Triangle.B) ||
 						!Plate.Vertices.IsValidIndex(Triangle.C))
@@ -673,7 +648,7 @@ namespace CarrierLab
 						Barycentric,
 						bBoundaryDegenerate))
 					{
-						Candidates.Add(FProjectionCandidate{Plate.PlateId, LocalTriangleIndex, bBoundaryDegenerate});
+						Candidates.Add(FProjectionCandidate{Plate.PlateId, CandidateRef.LocalTriangleId, bBoundaryDegenerate});
 					}
 				}
 			}
@@ -682,46 +657,96 @@ namespace CarrierLab
 			{
 				++Metrics.RawMissCount;
 				++Metrics.NonDegenerateMissCount;
+				if (OutProjectionBuffers != nullptr && OutProjectionBuffers->MissClasses.IsValidIndex(Sample.Id))
+				{
+					const bool bHadCandidateRefs =
+						State.SampleRayCandidateTriangles.IsValidIndex(Sample.Id) &&
+						!State.SampleRayCandidateTriangles[Sample.Id].IsEmpty();
+					OutProjectionBuffers->MissClasses[Sample.Id] = static_cast<uint8>(
+						bHadCandidateRefs ? EStage0MissClass::NumericMiss : EStage0MissClass::TopologyHole);
+				}
 				continue;
 			}
 
 			++Metrics.RawHitCount;
-			TSet<int32> CandidatePlateSet;
+			uint64 CandidatePlateMask = 0;
 			bool bAllCandidatesBoundaryDegenerate = true;
+			bool bAnyCandidateBoundaryDegenerate = false;
 			for (const FProjectionCandidate& Candidate : Candidates)
 			{
-				CandidatePlateSet.Add(Candidate.PlateId);
+				if (Candidate.PlateId >= 0 && Candidate.PlateId < 64)
+				{
+					CandidatePlateMask |= (1ull << Candidate.PlateId);
+				}
 				bAllCandidatesBoundaryDegenerate = bAllCandidatesBoundaryDegenerate && Candidate.bBoundaryDegenerate;
+				bAnyCandidateBoundaryDegenerate = bAnyCandidateBoundaryDegenerate || Candidate.bBoundaryDegenerate;
 			}
 
-			if (CandidatePlateSet.Num() > 1)
+			const int32 CandidatePlateCount = CountBits64(CandidatePlateMask);
+			if (CandidatePlateCount > 1)
 			{
 				++Metrics.RawMultiHitCount;
-				if (bAllCandidatesBoundaryDegenerate)
+				if (CandidatePlateCount > 2)
+				{
+					++Metrics.ThirdPlateIntrusionCount;
+					if (bAllCandidatesBoundaryDegenerate)
+					{
+						++Metrics.ThirdPlateBoundaryDegenerateCount;
+						if (OutProjectionBuffers != nullptr && OutProjectionBuffers->OverlapClasses.IsValidIndex(Sample.Id))
+						{
+							OutProjectionBuffers->OverlapClasses[Sample.Id] = static_cast<uint8>(EStage0OverlapClass::ThirdPlateBoundary);
+						}
+					}
+					else
+					{
+						++Metrics.ThirdPlateNonDegenerateCount;
+						if (OutProjectionBuffers != nullptr && OutProjectionBuffers->OverlapClasses.IsValidIndex(Sample.Id))
+						{
+							OutProjectionBuffers->OverlapClasses[Sample.Id] = static_cast<uint8>(EStage0OverlapClass::ThirdPlateNonDegenerate);
+						}
+					}
+				}
+				else if (bAllCandidatesBoundaryDegenerate)
 				{
 					++Metrics.BoundaryDegenerateOverlapCount;
+					if (OutProjectionBuffers != nullptr && OutProjectionBuffers->OverlapClasses.IsValidIndex(Sample.Id))
+					{
+						OutProjectionBuffers->OverlapClasses[Sample.Id] = static_cast<uint8>(EStage0OverlapClass::BoundaryDegenerate);
+					}
 				}
 				else
 				{
 					++Metrics.NonDegenerateOverlapCount;
+					if (OutProjectionBuffers != nullptr && OutProjectionBuffers->OverlapClasses.IsValidIndex(Sample.Id))
+					{
+						OutProjectionBuffers->OverlapClasses[Sample.Id] = static_cast<uint8>(EStage0OverlapClass::NonDegenerate);
+					}
 				}
 			}
-			if (CandidatePlateSet.Num() > 2)
+
+			if (OutProjectionBuffers != nullptr && OutProjectionBuffers->BoundaryMask.IsValidIndex(Sample.Id))
 			{
-				++Metrics.ThirdPlateIntrusionCount;
+				OutProjectionBuffers->BoundaryMask[Sample.Id] = bAnyCandidateBoundaryDegenerate ? 1 : 0;
 			}
 
-			TArray<int32> CandidatePlateIds = CandidatePlateSet.Array();
-			CandidatePlateIds.Sort();
-			int32 ResolvedPlateId = CandidatePlateIds[0];
-			if (CandidatePlateSet.Contains(Sample.PlateId))
+			int32 ResolvedPlateId = LowestSetBitIndex(CandidatePlateMask);
+			if (Sample.PlateId >= 0 && Sample.PlateId < 64 && (CandidatePlateMask & (1ull << Sample.PlateId)) != 0)
 			{
 				ResolvedPlateId = Sample.PlateId;
+			}
+
+			if (OutProjectionBuffers != nullptr && OutProjectionBuffers->ResolvedPlateIds.IsValidIndex(Sample.Id))
+			{
+				OutProjectionBuffers->ResolvedPlateIds[Sample.Id] = ResolvedPlateId;
 			}
 
 			if (State.Plates.IsValidIndex(ResolvedPlateId) && State.Plates[ResolvedPlateId].bContinental)
 			{
 				ProjectedContinentalArea += Sample.AreaWeight;
+				if (OutProjectionBuffers != nullptr && OutProjectionBuffers->ContinentalMask.IsValidIndex(Sample.Id))
+				{
+					OutProjectionBuffers->ContinentalMask[Sample.Id] = 1;
+				}
 			}
 		}
 
@@ -750,6 +775,10 @@ namespace CarrierLab
 		HashMix(Hash, static_cast<uint64>(Metrics.BoundaryDegenerateOverlapCount));
 		HashMix(Hash, static_cast<uint64>(Metrics.NonDegenerateOverlapCount));
 		HashMix(Hash, static_cast<uint64>(Metrics.ThirdPlateIntrusionCount));
+		HashMix(Hash, static_cast<uint64>(Metrics.ThirdPlateBoundaryDegenerateCount));
+		HashMix(Hash, static_cast<uint64>(Metrics.ThirdPlateNonDegenerateCount));
+		HashMix(Hash, static_cast<uint64>(Metrics.RayCandidateCount));
+		HashMix(Hash, static_cast<uint64>(Metrics.RayTriangleTestCount));
 		HashMixDouble(Hash, Metrics.AuthoritativeContinentalAreaFraction);
 		HashMixDouble(Hash, Metrics.ProjectedContinentalAreaFraction);
 
