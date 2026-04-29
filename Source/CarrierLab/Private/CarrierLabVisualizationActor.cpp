@@ -109,6 +109,22 @@ namespace
 		return INDEX_NONE;
 	}
 
+	void HashMix(uint64& Hash, const uint64 Value)
+	{
+		Hash ^= Value;
+		Hash *= 1099511628211ull;
+	}
+
+	void HashMixDouble(uint64& Hash, const double Value)
+	{
+		HashMix(Hash, static_cast<uint64>(FMath::RoundToInt64(Value * 1000000000.0)));
+	}
+
+	FString HashToString(const uint64 Hash)
+	{
+		return FString::Printf(TEXT("%016llx"), static_cast<unsigned long long>(Hash));
+	}
+
 	bool IntersectRayWithTriangle(
 		const FVector3d& RayDirection,
 		const FVector3d& A,
@@ -459,6 +475,108 @@ namespace
 		return FVector3d::DotProduct(VelocityB - VelocityA, ToB);
 	}
 
+	TArray<int32> UniqueCandidatePlates(const TArray<FCarrierLabVizCandidate>& Candidates)
+	{
+		TArray<int32> PlateIds;
+		for (const FCarrierLabVizCandidate& Candidate : Candidates)
+		{
+			PlateIds.AddUnique(Candidate.PlateId);
+		}
+		PlateIds.Sort();
+		return PlateIds;
+	}
+
+	bool IsSeparatingKinematics(const FVector3d& Position, const TArray<FCarrierLabVisualizationMotion>& Motions)
+	{
+		int32 BestA = INDEX_NONE;
+		int32 BestB = INDEX_NONE;
+		double DotA = -TNumericLimits<double>::Max();
+		double DotB = -TNumericLimits<double>::Max();
+		for (int32 PlateId = 0; PlateId < Motions.Num(); ++PlateId)
+		{
+			const double Dot = FVector3d::DotProduct(Position, Motions[PlateId].CurrentCenter);
+			if (Dot > DotA)
+			{
+				DotB = DotA;
+				BestB = BestA;
+				DotA = Dot;
+				BestA = PlateId;
+			}
+			else if (Dot > DotB)
+			{
+				DotB = Dot;
+				BestB = PlateId;
+			}
+		}
+		return SignedPairSeparationVelocityForPlatePair(Position, Motions, BestA, BestB) > 0.0;
+	}
+
+	int32 ChooseSyntheticSubductionCandidatePlate(
+		const CarrierLab::FSphereSample& Sample,
+		const TArray<FCarrierLabVizCandidate>& Candidates,
+		const TArray<FCarrierLabVisualizationMotion>& Motions)
+	{
+		const TArray<int32> PlateIds = UniqueCandidatePlates(Candidates);
+		if (PlateIds.Num() <= 1 || IsSeparatingKinematics(Sample.UnitPosition, Motions))
+		{
+			return ChooseNearestCandidatePlate(Sample, Candidates, Motions);
+		}
+
+		const int32 LowerIdSubductingPlate = PlateIds[0];
+		TArray<FCarrierLabVizCandidate> RemainingCandidates;
+		for (const FCarrierLabVizCandidate& Candidate : Candidates)
+		{
+			if (Candidate.PlateId != LowerIdSubductingPlate)
+			{
+				RemainingCandidates.Add(Candidate);
+			}
+		}
+		return RemainingCandidates.IsEmpty()
+			? ChooseNearestCandidatePlate(Sample, Candidates, Motions)
+			: ChooseNearestCandidatePlate(Sample, RemainingCandidates, Motions);
+	}
+
+	int32 ChooseRandomSeededCandidatePlate(
+		const CarrierLab::FSphereSample& Sample,
+		const TArray<FCarrierLabVizCandidate>& Candidates,
+		const int32 TieBreakSeed,
+		const int32 Step,
+		const int32 EventId)
+	{
+		const TArray<int32> PlateIds = UniqueCandidatePlates(Candidates);
+		if (PlateIds.IsEmpty())
+		{
+			return INDEX_NONE;
+		}
+		uint64 Hash = 1469598103934665603ull;
+		HashMix(Hash, static_cast<uint64>(TieBreakSeed + 1));
+		HashMix(Hash, static_cast<uint64>(Sample.Id + 1));
+		HashMix(Hash, static_cast<uint64>(Step + 1));
+		HashMix(Hash, static_cast<uint64>(EventId + 1));
+		return PlateIds[static_cast<int32>(Hash % static_cast<uint64>(PlateIds.Num()))];
+	}
+
+	int32 ChooseCandidatePlateByPolicy(
+		const CarrierLab::FSphereSample& Sample,
+		const TArray<FCarrierLabVizCandidate>& Candidates,
+		const TArray<FCarrierLabVisualizationMotion>& Motions,
+		const ECarrierLabMultiHitPolicy Policy,
+		const int32 TieBreakSeed,
+		const int32 Step,
+		const int32 EventId)
+	{
+		switch (Policy)
+		{
+		case ECarrierLabMultiHitPolicy::SyntheticSubduction:
+			return ChooseSyntheticSubductionCandidatePlate(Sample, Candidates, Motions);
+		case ECarrierLabMultiHitPolicy::RandomSeeded:
+			return ChooseRandomSeededCandidatePlate(Sample, Candidates, TieBreakSeed, Step, EventId);
+		case ECarrierLabMultiHitPolicy::Centroid:
+		default:
+			return ChooseNearestCandidatePlate(Sample, Candidates, Motions);
+		}
+	}
+
 	FLinearColor PlateColor(const int32 PlateId)
 	{
 		if (PlateId == INDEX_NONE)
@@ -486,6 +604,19 @@ namespace
 	FVector4f ToVector4f(const FLinearColor& Color)
 	{
 		return FVector4f(Color.R, Color.G, Color.B, Color.A);
+	}
+
+	FLinearColor DriftColor(const double ErrorKm)
+	{
+		if (ErrorKm < 0.0)
+		{
+			return FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+		}
+		const double Alpha = FMath::Clamp(ErrorKm / 1.0e-3, 0.0, 1.0);
+		return FMath::Lerp(
+			FLinearColor(0.08f, 0.20f, 0.36f, 1.0f),
+			FLinearColor(1.0f, 0.10f, 0.02f, 1.0f),
+			static_cast<float>(Alpha));
 	}
 }
 
@@ -568,6 +699,7 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	CurrentMetrics = FCarrierLabVisualizationMetrics();
 	RenderPlateIds.SetNum(State.Samples.Num());
 	RenderContinentalFractions.SetNum(State.Samples.Num());
+	DriftErrorKmBySample.SetNum(State.Samples.Num());
 	MissMask.SetNum(State.Samples.Num());
 	OverlapMask.SetNum(State.Samples.Num());
 	BoundaryMask.SetNum(State.Samples.Num());
@@ -595,13 +727,36 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 
 	bInitialized = true;
 	StepAccumulator = 0.0;
+	CurrentMetrics.NextResampleStep = GetNaturalCadenceSteps();
+	CaptureDriftReference();
 	ProjectCurrentCarrier();
 	return true;
+}
+
+bool ACarrierLabVisualizationActor::ResetCarrier()
+{
+	bPlaying = false;
+	return InitializeCarrier();
 }
 
 void ACarrierLabVisualizationActor::TogglePlay()
 {
 	bPlaying = !bPlaying;
+}
+
+void ACarrierLabVisualizationActor::SetPlaying(const bool bNewPlaying)
+{
+	bPlaying = bNewPlaying;
+}
+
+int32 ACarrierLabVisualizationActor::GetNaturalCadenceSteps() const
+{
+	constexpr double ResamplingMMaxMa = 128.0;
+	constexpr double ResamplingMMinMa = 32.0;
+	constexpr double V0MmPerYear = 100.0;
+	const double Alpha = FMath::Min(1.0, VelocityMmPerYear / V0MmPerYear);
+	const double CadenceMa = (1.0 - Alpha) * ResamplingMMaxMa + Alpha * ResamplingMMinMa;
+	return FMath::Max(1, FMath::RoundToInt(CadenceMa / DeltaTimeMa));
 }
 
 void ACarrierLabVisualizationActor::StepOnce()
@@ -669,7 +824,9 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 			continue;
 		}
 
-		const int32 ResolvedPlateId = PlateHitCount == 1 ? LowestSetBitIndex(PlateMask) : ChooseNearestCandidatePlate(Sample, Candidates, Motions);
+		const int32 ResolvedPlateId = PlateHitCount == 1
+			? LowestSetBitIndex(PlateMask)
+			: ChooseCandidatePlateByPolicy(Sample, Candidates, Motions, MultiHitPolicy, RandomTieBreakSeed, CurrentMetrics.Step, CurrentMetrics.EventCount + 1);
 		const FCarrierLabVizCandidate* Chosen = Candidates.FindByPredicate([ResolvedPlateId](const FCarrierLabVizCandidate& Candidate)
 		{
 			return Candidate.PlateId == ResolvedPlateId;
@@ -714,6 +871,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 
 	++CurrentMetrics.EventCount;
 	const int32 EventCount = CurrentMetrics.EventCount;
+	CaptureDriftReference();
 	ProjectCurrentCarrier();
 	CurrentMetrics.EventCount = EventCount;
 	CurrentMetrics.LastGapFillCount = GapFillCount;
@@ -727,6 +885,15 @@ void ACarrierLabVisualizationActor::SetVisualizationLayer(const ECarrierLabVisua
 	if (bInitialized)
 	{
 		RebuildRenderMesh();
+	}
+}
+
+void ACarrierLabVisualizationActor::SetMultiHitPolicy(const ECarrierLabMultiHitPolicy NewPolicy)
+{
+	MultiHitPolicy = NewPolicy;
+	if (bInitialized)
+	{
+		ProjectCurrentCarrier();
 	}
 }
 
@@ -797,6 +964,78 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 		Motion.CurrentCenter = NormalizeOrFallback(RotateVector(Motion.CurrentCenter, Motion.Axis, Motion.AngularSpeedRadiansPerStep), Motion.CurrentCenter);
 	}
 	++CurrentMetrics.Step;
+	const int32 Cadence = GetNaturalCadenceSteps();
+	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
+}
+
+void ACarrierLabVisualizationActor::CaptureDriftReference()
+{
+	DriftReferencePositions.Reset(State.Plates.Num());
+	DriftReferencePositions.SetNum(State.Plates.Num());
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		if (!DriftReferencePositions.IsValidIndex(Plate.PlateId))
+		{
+			continue;
+		}
+		TArray<FVector3d>& Positions = DriftReferencePositions[Plate.PlateId];
+		Positions.Reset(Plate.Vertices.Num());
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			Positions.Add(Vertex.UnitPosition);
+		}
+	}
+	DriftReferenceStep = CurrentMetrics.Step;
+}
+
+void ACarrierLabVisualizationActor::ComputeDriftMetrics()
+{
+	DriftErrorKmBySample.Init(-1.0, State.Samples.Num());
+	CurrentMetrics.DriftErrorMeanKm = 0.0;
+	CurrentMetrics.DriftErrorP95Km = 0.0;
+
+	TArray<double> ErrorsKm;
+	double ErrorSumKm = 0.0;
+	const int32 RelativeStep = FMath::Max(0, CurrentMetrics.Step - DriftReferenceStep);
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		if (!DriftReferencePositions.IsValidIndex(Plate.PlateId) || !Motions.IsValidIndex(Plate.PlateId))
+		{
+			continue;
+		}
+		const TArray<FVector3d>& ReferencePositions = DriftReferencePositions[Plate.PlateId];
+		const FCarrierLabVisualizationMotion& Motion = Motions[Plate.PlateId];
+		for (int32 LocalVertexId = 0; LocalVertexId < Plate.Vertices.Num(); ++LocalVertexId)
+		{
+			if (!ReferencePositions.IsValidIndex(LocalVertexId))
+			{
+				continue;
+			}
+			const CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[LocalVertexId];
+			const FVector3d Expected = NormalizeOrFallback(
+				RotateVector(ReferencePositions[LocalVertexId], Motion.Axis, Motion.AngularSpeedRadiansPerStep * static_cast<double>(RelativeStep)),
+				ReferencePositions[LocalVertexId]);
+			const double ErrorKm = FMath::Acos(FMath::Clamp(FVector3d::DotProduct(Expected, Vertex.UnitPosition), -1.0, 1.0)) * EarthRadiusKm;
+			if (!FMath::IsFinite(ErrorKm))
+			{
+				++CurrentMetrics.NaNOrInfCount;
+				continue;
+			}
+			ErrorSumKm += ErrorKm;
+			ErrorsKm.Add(ErrorKm);
+			if (DriftErrorKmBySample.IsValidIndex(Vertex.GlobalSampleId))
+			{
+				DriftErrorKmBySample[Vertex.GlobalSampleId] = FMath::Max(DriftErrorKmBySample[Vertex.GlobalSampleId], ErrorKm);
+			}
+		}
+	}
+
+	if (!ErrorsKm.IsEmpty())
+	{
+		ErrorsKm.Sort();
+		CurrentMetrics.DriftErrorMeanKm = ErrorSumKm / static_cast<double>(ErrorsKm.Num());
+		CurrentMetrics.DriftErrorP95Km = ErrorsKm[FMath::Clamp(static_cast<int32>(FMath::FloorToDouble(0.95 * (ErrorsKm.Num() - 1))), 0, ErrorsKm.Num() - 1)];
+	}
 }
 
 void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
@@ -812,9 +1051,13 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	CurrentMetrics.RawMissCount = 0;
 	CurrentMetrics.RawMultiHitCount = 0;
 	CurrentMetrics.BoundaryHitCount = 0;
+	CurrentMetrics.NaNOrInfCount = 0;
+	const int32 Cadence = GetNaturalCadenceSteps();
+	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
 
 	RenderPlateIds.Init(INDEX_NONE, State.Samples.Num());
 	RenderContinentalFractions.Init(0.0, State.Samples.Num());
+	DriftErrorKmBySample.Init(-1.0, State.Samples.Num());
 	MissMask.Init(0, State.Samples.Num());
 	OverlapMask.Init(0, State.Samples.Num());
 	BoundaryMask.Init(0, State.Samples.Num());
@@ -835,6 +1078,10 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	{
 		TotalArea += Sample.AreaWeight;
 		AuthoritativeContinentalArea += Sample.AreaWeight * Sample.ContinentalFraction;
+		if (!FMath::IsFinite(Sample.UnitPosition.X) || !FMath::IsFinite(Sample.UnitPosition.Y) || !FMath::IsFinite(Sample.UnitPosition.Z))
+		{
+			++CurrentMetrics.NaNOrInfCount;
+		}
 
 		uint64 PlateMask = 0;
 		bool bAnyBoundary = false;
@@ -858,7 +1105,9 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 			OverlapMask[Sample.Id] = 1;
 		}
 
-		const int32 ResolvedPlateId = PlateHitCount == 1 ? LowestSetBitIndex(PlateMask) : ChooseNearestCandidatePlate(Sample, Candidates, Motions);
+		const int32 ResolvedPlateId = PlateHitCount == 1
+			? LowestSetBitIndex(PlateMask)
+			: ChooseCandidatePlateByPolicy(Sample, Candidates, Motions, MultiHitPolicy, RandomTieBreakSeed, CurrentMetrics.Step, CurrentMetrics.EventCount);
 		const FCarrierLabVizCandidate* Chosen = Candidates.FindByPredicate([ResolvedPlateId](const FCarrierLabVizCandidate& Candidate)
 		{
 			return Candidate.PlateId == ResolvedPlateId;
@@ -873,8 +1122,32 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 
 	CurrentMetrics.AuthoritativeCAF = TotalArea > UE_DOUBLE_SMALL_NUMBER ? AuthoritativeContinentalArea / TotalArea : 0.0;
 	CurrentMetrics.ProjectedCAF = TotalArea > UE_DOUBLE_SMALL_NUMBER ? ProjectedContinentalArea / TotalArea : 0.0;
+	ComputeDriftMetrics();
 	CurrentMetrics.ProjectionSeconds = FPlatformTime::Seconds() - StartSeconds;
+	UpdateLastHash();
 	RebuildRenderMesh();
+}
+
+void ACarrierLabVisualizationActor::UpdateLastHash()
+{
+	uint64 Hash = 1469598103934665603ull;
+	HashMix(Hash, static_cast<uint64>(CurrentMetrics.Step + 1));
+	HashMix(Hash, static_cast<uint64>(CurrentMetrics.EventCount + 1));
+	HashMix(Hash, static_cast<uint64>(CurrentMetrics.RawMissCount + 1));
+	HashMix(Hash, static_cast<uint64>(CurrentMetrics.RawMultiHitCount + 1));
+	HashMixDouble(Hash, CurrentMetrics.AuthoritativeCAF);
+	HashMixDouble(Hash, CurrentMetrics.ProjectedCAF);
+	HashMixDouble(Hash, CurrentMetrics.DriftErrorMeanKm);
+	HashMixDouble(Hash, CurrentMetrics.DriftErrorP95Km);
+	for (int32 Index = 0; Index < RenderPlateIds.Num(); ++Index)
+	{
+		HashMix(Hash, static_cast<uint64>(RenderPlateIds[Index] + 1));
+		HashMixDouble(Hash, RenderContinentalFractions.IsValidIndex(Index) ? RenderContinentalFractions[Index] : 0.0);
+		HashMix(Hash, MissMask.IsValidIndex(Index) ? MissMask[Index] : 0);
+		HashMix(Hash, OverlapMask.IsValidIndex(Index) ? OverlapMask[Index] : 0);
+		HashMix(Hash, BoundaryMask.IsValidIndex(Index) ? BoundaryMask[Index] : 0);
+	}
+	CurrentMetrics.LastHash = HashToString(Hash);
 }
 
 void ACarrierLabVisualizationActor::RebuildRenderMesh()
@@ -914,6 +1187,8 @@ void ACarrierLabVisualizationActor::RebuildRenderMesh()
 			return BoundaryMask.IsValidIndex(SampleId) && BoundaryMask[SampleId] != 0
 				? FLinearColor(0.95f, 0.95f, 0.90f, 1.0f)
 				: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+		case ECarrierLabVisualizationLayer::DriftError:
+			return DriftColor(DriftErrorKmBySample.IsValidIndex(SampleId) ? DriftErrorKmBySample[SampleId] : -1.0);
 		case ECarrierLabVisualizationLayer::PlateId:
 		default:
 			return PlateColor(RenderPlateIds.IsValidIndex(SampleId) ? RenderPlateIds[SampleId] : INDEX_NONE);
@@ -963,16 +1238,20 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	case ECarrierLabVisualizationLayer::BoundaryMask:
 		LayerName = TEXT("boundary mask");
 		break;
+	case ECarrierLabVisualizationLayer::DriftError:
+		LayerName = TEXT("drift error");
+		break;
 	case ECarrierLabVisualizationLayer::PlateId:
 	default:
 		break;
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary=%d gap_fill=%d nonsep_gap=%d\nAuthCAF=%.6f ProjCAF=%.6f projection=%.3fs mesh=%.3fs\nSpace play/pause | . step | R resample | 1-5 layers"),
+		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs mesh=%.3fs\nSpace play/pause | . step | R resample | 1-5 layers"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
+		CurrentMetrics.NextResampleStep,
 		CurrentMetrics.EventCount,
 		CurrentMetrics.SampleCount,
 		CurrentMetrics.PlateCount,
@@ -981,8 +1260,12 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.BoundaryHitCount,
 		CurrentMetrics.LastGapFillCount,
 		CurrentMetrics.LastNonSeparatingGapFillCount,
+		CurrentMetrics.NaNOrInfCount,
 		CurrentMetrics.AuthoritativeCAF,
 		CurrentMetrics.ProjectedCAF,
+		CurrentMetrics.DriftErrorMeanKm,
+		CurrentMetrics.DriftErrorP95Km,
+		*CurrentMetrics.LastHash,
 		CurrentMetrics.ProjectionSeconds,
 		CurrentMetrics.MeshUpdateSeconds);
 }

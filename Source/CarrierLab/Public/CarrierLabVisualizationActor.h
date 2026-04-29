@@ -16,7 +16,16 @@ enum class ECarrierLabVisualizationLayer : uint8
 	ContinentalFraction UMETA(DisplayName = "Continental Fraction"),
 	MissMask UMETA(DisplayName = "Miss Mask"),
 	OverlapMask UMETA(DisplayName = "Overlap Mask"),
-	BoundaryMask UMETA(DisplayName = "Boundary Mask")
+	BoundaryMask UMETA(DisplayName = "Boundary Mask"),
+	DriftError UMETA(DisplayName = "Drift Error")
+};
+
+UENUM(BlueprintType)
+enum class ECarrierLabMultiHitPolicy : uint8
+{
+	Centroid UMETA(DisplayName = "Centroid"),
+	SyntheticSubduction UMETA(DisplayName = "Synthetic Subduction"),
+	RandomSeeded UMETA(DisplayName = "Random Seeded")
 };
 
 USTRUCT(BlueprintType)
@@ -29,6 +38,9 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 EventCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	int32 NextResampleStep = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 SampleCount = 0;
@@ -46,6 +58,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 BoundaryHitCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	int32 NaNOrInfCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 LastGapFillCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
@@ -58,10 +73,19 @@ struct FCarrierLabVisualizationMetrics
 	double ProjectedCAF = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double DriftErrorMeanKm = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double DriftErrorP95Km = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double ProjectionSeconds = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double MeshUpdateSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	FString LastHash;
 };
 
 struct FCarrierLabVisualizationMotion
@@ -110,6 +134,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
 	ECarrierLabVisualizationLayer VisualizationLayer = ECarrierLabVisualizationLayer::PlateId;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Policy")
+	ECarrierLabMultiHitPolicy MultiHitPolicy = ECarrierLabMultiHitPolicy::Centroid;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Policy")
+	int32 RandomTieBreakSeed = 915042;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
 	bool bAutoInitialize = true;
 
@@ -128,8 +158,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Visualization")
 	bool InitializeCarrier();
 
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Visualization")
+	bool ResetCarrier();
+
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void TogglePlay();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void SetPlaying(bool bNewPlaying);
+
+	UFUNCTION(BlueprintPure, Category = "CarrierLab|Controls")
+	bool IsPlaying() const { return bPlaying; }
+
+	UFUNCTION(BlueprintPure, Category = "CarrierLab|Visualization")
+	bool IsCarrierInitialized() const { return bInitialized; }
+
+	UFUNCTION(BlueprintPure, Category = "CarrierLab|Metrics")
+	int32 GetNaturalCadenceSteps() const;
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void StepOnce();
@@ -139,6 +184,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void SetVisualizationLayer(ECarrierLabVisualizationLayer NewLayer);
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void SetMultiHitPolicy(ECarrierLabMultiHitPolicy NewPolicy);
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowPlateIdLayer();
@@ -167,10 +215,17 @@ private:
 	TArray<FCarrierLabVisualizationMotion> Motions;
 	TArray<int32> RenderPlateIds;
 	TArray<double> RenderContinentalFractions;
+	TArray<double> DriftErrorKmBySample;
+	TArray<TArray<FVector3d>> DriftReferencePositions;
 	TArray<uint8> MissMask;
 	TArray<uint8> OverlapMask;
 	TArray<uint8> BoundaryMask;
 	double StepAccumulator = 0.0;
+	int32 DriftReferenceStep = 0;
 	bool bInitialized = false;
 	bool bPlaying = false;
+
+	void CaptureDriftReference();
+	void ComputeDriftMetrics();
+	void UpdateLastHash();
 };
