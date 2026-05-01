@@ -877,7 +877,8 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	CurrentMetrics.EventCount = EventCount;
 	CurrentMetrics.LastGapFillCount = GapFillCount;
 	CurrentMetrics.LastNonSeparatingGapFillCount = NonSeparatingGapFillCount;
-	CurrentMetrics.ProjectionSeconds += FPlatformTime::Seconds() - StartSeconds;
+	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
 }
 
 void ACarrierLabVisualizationActor::SetVisualizationLayer(const ECarrierLabVisualizationLayer NewLayer)
@@ -1094,6 +1095,13 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	CurrentMetrics.BoundaryHitCount = 0;
 	CurrentMetrics.BoundaryVertexCount = 0;
 	CurrentMetrics.NaNOrInfCount = 0;
+	CurrentMetrics.BvhBuildSeconds = 0.0;
+	CurrentMetrics.ProjectionQuerySeconds = 0.0;
+	CurrentMetrics.DriftMetricsSeconds = 0.0;
+	CurrentMetrics.BoundaryMaskSeconds = 0.0;
+	CurrentMetrics.HashSeconds = 0.0;
+	CurrentMetrics.ResampleEventSeconds = 0.0;
+	CurrentMetrics.MeshUpdateSeconds = 0.0;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
 
@@ -1107,12 +1115,15 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 
 	TArray<FCarrierLabVizPlateMesh> PlateMeshes;
 	FString MeshError;
+	const double BvhStartSeconds = FPlatformTime::Seconds();
 	if (!BuildPlateRayMeshes(State, PlateMeshes, MeshError))
 	{
 		UE_LOG(LogTemp, Error, TEXT("CarrierLab visualization projection failed: %s"), *MeshError);
 		return;
 	}
+	CurrentMetrics.BvhBuildSeconds = FPlatformTime::Seconds() - BvhStartSeconds;
 
+	const double QueryStartSeconds = FPlatformTime::Seconds();
 	double TotalArea = 0.0;
 	double AuthoritativeContinentalArea = 0.0;
 	double ProjectedContinentalArea = 0.0;
@@ -1162,13 +1173,20 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 		RenderContinentalFractions[Sample.Id] = Fraction;
 		ProjectedContinentalArea += Sample.AreaWeight * Fraction;
 	}
+	CurrentMetrics.ProjectionQuerySeconds = FPlatformTime::Seconds() - QueryStartSeconds;
 
 	CurrentMetrics.AuthoritativeCAF = TotalArea > UE_DOUBLE_SMALL_NUMBER ? AuthoritativeContinentalArea / TotalArea : 0.0;
 	CurrentMetrics.ProjectedCAF = TotalArea > UE_DOUBLE_SMALL_NUMBER ? ProjectedContinentalArea / TotalArea : 0.0;
+	const double DriftStartSeconds = FPlatformTime::Seconds();
 	ComputeDriftMetrics();
+	CurrentMetrics.DriftMetricsSeconds = FPlatformTime::Seconds() - DriftStartSeconds;
+	const double BoundaryStartSeconds = FPlatformTime::Seconds();
 	ComputePlateBoundaryMask();
+	CurrentMetrics.BoundaryMaskSeconds = FPlatformTime::Seconds() - BoundaryStartSeconds;
 	CurrentMetrics.ProjectionSeconds = FPlatformTime::Seconds() - StartSeconds;
+	const double HashStartSeconds = FPlatformTime::Seconds();
 	UpdateLastHash();
+	CurrentMetrics.HashSeconds = FPlatformTime::Seconds() - HashStartSeconds;
 	RebuildRenderMesh();
 }
 
@@ -1292,7 +1310,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs mesh=%.3fs\nSpace play/pause | . step | R resample | 1-5 layers"),
+		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-5 layers"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -1313,7 +1331,13 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.DriftErrorP95Km,
 		*CurrentMetrics.LastHash,
 		CurrentMetrics.ProjectionSeconds,
-		CurrentMetrics.MeshUpdateSeconds);
+		CurrentMetrics.BvhBuildSeconds,
+		CurrentMetrics.ProjectionQuerySeconds,
+		CurrentMetrics.DriftMetricsSeconds,
+		CurrentMetrics.BoundaryMaskSeconds,
+		CurrentMetrics.HashSeconds,
+		CurrentMetrics.MeshUpdateSeconds,
+		CurrentMetrics.ResampleEventSeconds);
 }
 
 void ACarrierLabVisualizationActor::ShowHud() const

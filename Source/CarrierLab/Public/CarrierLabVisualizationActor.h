@@ -85,6 +85,24 @@ struct FCarrierLabVisualizationMetrics
 	double ProjectionSeconds = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double BvhBuildSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double ProjectionQuerySeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double DriftMetricsSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double BoundaryMaskSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double HashSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double ResampleEventSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double MeshUpdateSeconds = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
