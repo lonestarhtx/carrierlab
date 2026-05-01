@@ -243,6 +243,116 @@ namespace
 		return true;
 	}
 
+	bool BuildProjectionRayMeshTopology(const CarrierLab::FCarrierState& State, FCarrierLabVizProjectionMesh& OutProjectionMesh, FString& OutError)
+	{
+		OutProjectionMesh = FCarrierLabVizProjectionMesh();
+		OutProjectionMesh.Mesh.EnableTriangleGroups();
+		OutProjectionMesh.PlateVertexOffsets.Init(INDEX_NONE, State.Plates.Num());
+		OutProjectionMesh.PlateCount = State.Plates.Num();
+
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			if (!OutProjectionMesh.PlateVertexOffsets.IsValidIndex(Plate.PlateId))
+			{
+				OutError = FString::Printf(TEXT("Invalid plate id %d while building combined projection mesh."), Plate.PlateId);
+				return false;
+			}
+
+			TArray<int32> LocalToMeshVertex;
+			LocalToMeshVertex.SetNum(Plate.Vertices.Num());
+			OutProjectionMesh.PlateVertexOffsets[Plate.PlateId] = OutProjectionMesh.Mesh.MaxVertexID();
+			for (int32 LocalVertexId = 0; LocalVertexId < Plate.Vertices.Num(); ++LocalVertexId)
+			{
+				LocalToMeshVertex[LocalVertexId] = OutProjectionMesh.Mesh.AppendVertex(Plate.Vertices[LocalVertexId].UnitPosition);
+			}
+
+			for (int32 LocalTriangleId = 0; LocalTriangleId < Plate.LocalTriangles.Num(); ++LocalTriangleId)
+			{
+				const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+				if (!LocalToMeshVertex.IsValidIndex(Triangle.A) ||
+					!LocalToMeshVertex.IsValidIndex(Triangle.B) ||
+					!LocalToMeshVertex.IsValidIndex(Triangle.C))
+				{
+					OutError = FString::Printf(TEXT("Combined projection mesh rejected plate %d local triangle %d with invalid vertex ids."), Plate.PlateId, LocalTriangleId);
+					return false;
+				}
+
+				const int32 MeshTriangleId = OutProjectionMesh.Mesh.AppendTriangle(
+					LocalToMeshVertex[Triangle.A],
+					LocalToMeshVertex[Triangle.B],
+					LocalToMeshVertex[Triangle.C],
+					0);
+				if (MeshTriangleId < 0)
+				{
+					OutError = FString::Printf(TEXT("FDynamicMesh3 rejected combined projection plate %d local triangle %d."), Plate.PlateId, LocalTriangleId);
+					return false;
+				}
+
+				if (!OutProjectionMesh.TriangleRefsByMeshTriangleId.IsValidIndex(MeshTriangleId))
+				{
+					OutProjectionMesh.TriangleRefsByMeshTriangleId.SetNum(MeshTriangleId + 1);
+				}
+				OutProjectionMesh.TriangleRefsByMeshTriangleId[MeshTriangleId].PlateId = Plate.PlateId;
+				OutProjectionMesh.TriangleRefsByMeshTriangleId[MeshTriangleId].LocalTriangleId = LocalTriangleId;
+			}
+		}
+
+		OutProjectionMesh.Tree = MakeUnique<FDynamicMeshAABBTree3>(&OutProjectionMesh.Mesh, false);
+		return true;
+	}
+
+	bool RefreshProjectionRayMeshVerticesAndTree(const CarrierLab::FCarrierState& State, FCarrierLabVizProjectionMesh& ProjectionMesh, FString& OutError)
+	{
+		if (ProjectionMesh.PlateCount != State.Plates.Num() || ProjectionMesh.PlateVertexOffsets.Num() != State.Plates.Num())
+		{
+			OutError = TEXT("Combined projection mesh plate count does not match carrier plate count.");
+			return false;
+		}
+
+		int32 ExpectedTriangleCount = 0;
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			ExpectedTriangleCount += Plate.LocalTriangles.Num();
+			if (!ProjectionMesh.PlateVertexOffsets.IsValidIndex(Plate.PlateId))
+			{
+				OutError = FString::Printf(TEXT("Invalid plate id %d while refreshing combined projection mesh."), Plate.PlateId);
+				return false;
+			}
+
+			const int32 VertexOffset = ProjectionMesh.PlateVertexOffsets[Plate.PlateId];
+			if (VertexOffset < 0 || VertexOffset + Plate.Vertices.Num() > ProjectionMesh.Mesh.MaxVertexID())
+			{
+				OutError = FString::Printf(TEXT("Combined projection mesh vertex span for plate %d no longer matches carrier topology."), Plate.PlateId);
+				return false;
+			}
+
+			for (int32 LocalVertexId = 0; LocalVertexId < Plate.Vertices.Num(); ++LocalVertexId)
+			{
+				const int32 MeshVertexId = VertexOffset + LocalVertexId;
+				if (!ProjectionMesh.Mesh.IsVertex(MeshVertexId))
+				{
+					OutError = FString::Printf(TEXT("Combined projection mesh missing plate %d local vertex %d."), Plate.PlateId, LocalVertexId);
+					return false;
+				}
+				ProjectionMesh.Mesh.SetVertex(MeshVertexId, Plate.Vertices[LocalVertexId].UnitPosition, false);
+			}
+		}
+
+		if (ProjectionMesh.Mesh.TriangleCount() != ExpectedTriangleCount ||
+			ProjectionMesh.TriangleRefsByMeshTriangleId.Num() < ProjectionMesh.Mesh.MaxTriangleID())
+		{
+			OutError = TEXT("Combined projection mesh triangle metadata no longer matches carrier topology.");
+			return false;
+		}
+
+		if (!ProjectionMesh.Tree.IsValid())
+		{
+			ProjectionMesh.Tree = MakeUnique<FDynamicMeshAABBTree3>(&ProjectionMesh.Mesh, false);
+		}
+		ProjectionMesh.Tree->Build();
+		return true;
+	}
+
 	double InterpolateContinentalFraction(const CarrierLab::FCarrierPlate& Plate, const FCarrierLabVizCandidate& Candidate)
 	{
 		if (!Plate.LocalTriangles.IsValidIndex(Candidate.LocalTriangleId))
@@ -351,6 +461,110 @@ namespace
 				}
 			}
 		}
+	}
+
+	void QuerySampleCandidates(
+		const CarrierLab::FCarrierState& State,
+		const FCarrierLabVizProjectionMesh& ProjectionMesh,
+		const CarrierLab::FSphereSample& Sample,
+		TArray<FCarrierLabVizCandidate>& Candidates,
+		uint64& PlateMask,
+		bool& bAnyBoundary)
+	{
+		Candidates.Reset();
+		PlateMask = 0;
+		bAnyBoundary = false;
+
+		if (!ProjectionMesh.Tree.IsValid())
+		{
+			return;
+		}
+
+		IMeshSpatial::FQueryOptions QueryOptions(2.0 + 1.0e-6);
+		TArray<MeshIntersection::FHitIntersectionResult> Hits;
+		const FRay3d Ray(FVector3d::Zero(), Sample.UnitPosition);
+		ProjectionMesh.Tree->FindAllHitTriangles(Ray, Hits, QueryOptions);
+		for (const MeshIntersection::FHitIntersectionResult& Hit : Hits)
+		{
+			if (Hit.Distance <= 0.0 || Hit.Distance > 2.0 + 1.0e-6 || !ProjectionMesh.TriangleRefsByMeshTriangleId.IsValidIndex(Hit.TriangleId))
+			{
+				continue;
+			}
+
+			const FCarrierLabVizProjectionTriangleRef& TriangleRef = ProjectionMesh.TriangleRefsByMeshTriangleId[Hit.TriangleId];
+			if (!State.Plates.IsValidIndex(TriangleRef.PlateId) ||
+				!State.Plates[TriangleRef.PlateId].LocalTriangles.IsValidIndex(TriangleRef.LocalTriangleId))
+			{
+				continue;
+			}
+
+			FCarrierLabVizCandidate Candidate;
+			Candidate.PlateId = TriangleRef.PlateId;
+			Candidate.LocalTriangleId = TriangleRef.LocalTriangleId;
+			Candidate.Bary = Hit.BaryCoords;
+			Candidate.Distance = Hit.Distance;
+			Candidate.bBoundary = IsBoundaryHit(Hit.BaryCoords);
+			bAnyBoundary = bAnyBoundary || Candidate.bBoundary;
+			PlateMask |= (1ull << static_cast<uint64>(TriangleRef.PlateId));
+			Candidates.Add(Candidate);
+		}
+
+		if (Candidates.IsEmpty())
+		{
+			double NearestDistSqr = TNumericLimits<double>::Max();
+			const int32 NearestTriangleId = ProjectionMesh.Tree->FindNearestTriangle(Sample.UnitPosition, NearestDistSqr, IMeshSpatial::FQueryOptions(1.0e-8));
+			if (ProjectionMesh.TriangleRefsByMeshTriangleId.IsValidIndex(NearestTriangleId) && NearestDistSqr <= 1.0e-16)
+			{
+				const FCarrierLabVizProjectionTriangleRef& TriangleRef = ProjectionMesh.TriangleRefsByMeshTriangleId[NearestTriangleId];
+				if (State.Plates.IsValidIndex(TriangleRef.PlateId) && State.Plates[TriangleRef.PlateId].LocalTriangles.IsValidIndex(TriangleRef.LocalTriangleId))
+				{
+					const CarrierLab::FCarrierPlate& Plate = State.Plates[TriangleRef.PlateId];
+					const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[TriangleRef.LocalTriangleId];
+					FVector3d Bary = FVector3d(1.0, 0.0, 0.0);
+					if (Plate.Vertices.IsValidIndex(Triangle.A) &&
+						Plate.Vertices.IsValidIndex(Triangle.B) &&
+						Plate.Vertices.IsValidIndex(Triangle.C))
+					{
+						if (!IntersectRayWithTriangle(
+							Sample.UnitPosition,
+							Plate.Vertices[Triangle.A].UnitPosition,
+							Plate.Vertices[Triangle.B].UnitPosition,
+							Plate.Vertices[Triangle.C].UnitPosition,
+							Bary))
+						{
+							const double DotA = FVector3d::DotProduct(Sample.UnitPosition, Plate.Vertices[Triangle.A].UnitPosition);
+							const double DotB = FVector3d::DotProduct(Sample.UnitPosition, Plate.Vertices[Triangle.B].UnitPosition);
+							const double DotC = FVector3d::DotProduct(Sample.UnitPosition, Plate.Vertices[Triangle.C].UnitPosition);
+							Bary = DotB >= DotA && DotB >= DotC ? FVector3d(0.0, 1.0, 0.0) :
+								(DotC >= DotA && DotC >= DotB ? FVector3d(0.0, 0.0, 1.0) : FVector3d(1.0, 0.0, 0.0));
+						}
+					}
+
+					FCarrierLabVizCandidate Candidate;
+					Candidate.PlateId = TriangleRef.PlateId;
+					Candidate.LocalTriangleId = TriangleRef.LocalTriangleId;
+					Candidate.Bary = Bary;
+					Candidate.Distance = 1.0;
+					Candidate.bBoundary = true;
+					bAnyBoundary = true;
+					PlateMask |= (1ull << static_cast<uint64>(TriangleRef.PlateId));
+					Candidates.Add(Candidate);
+				}
+			}
+		}
+
+		Candidates.Sort([](const FCarrierLabVizCandidate& Left, const FCarrierLabVizCandidate& Right)
+		{
+			if (Left.PlateId != Right.PlateId)
+			{
+				return Left.PlateId < Right.PlateId;
+			}
+			if (Left.LocalTriangleId != Right.LocalTriangleId)
+			{
+				return Left.LocalTriangleId < Right.LocalTriangleId;
+			}
+			return Left.Distance < Right.Distance;
+		});
 	}
 
 	int32 ChooseNearestCandidatePlate(
@@ -768,6 +982,8 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	bInitialized = true;
 	bPlateRayMeshTopologyDirty = true;
 	PlateRayMeshes.Reset();
+	bProjectionRayMeshTopologyDirty = true;
+	ProjectionRayMesh = FCarrierLabVizProjectionMesh();
 	bRenderMeshTopologyDirty = true;
 	CachedRenderMeshSampleCount = 0;
 	CachedRenderMeshTriangleCount = 0;
@@ -809,6 +1025,31 @@ bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 	return RefreshPlateRayMeshVerticesAndTrees(State, PlateRayMeshes, OutError);
 }
 
+bool ACarrierLabVisualizationActor::RefreshProjectionRayMesh(FString& OutError)
+{
+	if (bProjectionRayMeshTopologyDirty)
+	{
+		if (!BuildProjectionRayMeshTopology(State, ProjectionRayMesh, OutError))
+		{
+			return false;
+		}
+		bProjectionRayMeshTopologyDirty = false;
+	}
+
+	if (RefreshProjectionRayMeshVerticesAndTree(State, ProjectionRayMesh, OutError))
+	{
+		return true;
+	}
+
+	bProjectionRayMeshTopologyDirty = true;
+	if (!BuildProjectionRayMeshTopology(State, ProjectionRayMesh, OutError))
+	{
+		return false;
+	}
+	bProjectionRayMeshTopologyDirty = false;
+	return RefreshProjectionRayMeshVerticesAndTree(State, ProjectionRayMesh, OutError);
+}
+
 void ACarrierLabVisualizationActor::TogglePlay()
 {
 	bPlaying = !bPlaying;
@@ -848,7 +1089,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 
 	const double StartSeconds = FPlatformTime::Seconds();
 	FString MeshError;
-	if (!RefreshPlateRayMeshes(MeshError))
+	if (!RefreshProjectionRayMesh(MeshError))
 	{
 		UE_LOG(LogTemp, Error, TEXT("CarrierLab visualization resample failed: %s"), *MeshError);
 		return;
@@ -867,7 +1108,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	{
 		uint64 PlateMask = 0;
 		bool bAnyBoundary = false;
-		QuerySampleCandidates(State, PlateRayMeshes, Sample, Candidates, PlateMask, bAnyBoundary);
+		QuerySampleCandidates(State, ProjectionRayMesh, Sample, Candidates, PlateMask, bAnyBoundary);
 		const int32 PlateHitCount = CountBits64(PlateMask);
 		if (PlateHitCount == 0)
 		{
@@ -918,6 +1159,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 
 	CarrierLab::FCarrierLabStage0::RebuildPlateLocalStateFromSamples(State);
 	bPlateRayMeshTopologyDirty = true;
+	bProjectionRayMeshTopologyDirty = true;
 	for (FCarrierLabVisualizationMotion& Motion : Motions)
 	{
 		Motion.CurrentCenter = FVector3d::ZeroVector;
@@ -1184,7 +1426,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 
 	FString MeshError;
 	const double BvhStartSeconds = FPlatformTime::Seconds();
-	if (!RefreshPlateRayMeshes(MeshError))
+	if (!RefreshProjectionRayMesh(MeshError))
 	{
 		UE_LOG(LogTemp, Error, TEXT("CarrierLab visualization projection failed: %s"), *MeshError);
 		return;
@@ -1207,7 +1449,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 
 		uint64 PlateMask = 0;
 		bool bAnyBoundary = false;
-		QuerySampleCandidates(State, PlateRayMeshes, Sample, Candidates, PlateMask, bAnyBoundary);
+		QuerySampleCandidates(State, ProjectionRayMesh, Sample, Candidates, PlateMask, bAnyBoundary);
 		const int32 PlateHitCount = CountBits64(PlateMask);
 		BoundaryMask[Sample.Id] = bAnyBoundary ? 1 : 0;
 		if (bAnyBoundary)

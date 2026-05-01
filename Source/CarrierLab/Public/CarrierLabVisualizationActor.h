@@ -126,6 +126,21 @@ struct FCarrierLabVizPlateMesh
 	int32 PlateId = INDEX_NONE;
 };
 
+struct FCarrierLabVizProjectionTriangleRef
+{
+	int32 PlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+};
+
+struct FCarrierLabVizProjectionMesh
+{
+	UE::Geometry::FDynamicMesh3 Mesh;
+	TUniquePtr<UE::Geometry::FDynamicMeshAABBTree3> Tree;
+	TArray<FCarrierLabVizProjectionTriangleRef> TriangleRefsByMeshTriangleId;
+	TArray<int32> PlateVertexOffsets;
+	int32 PlateCount = 0;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -239,6 +254,7 @@ private:
 	void AdvanceOneStep();
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
+	bool RefreshProjectionRayMesh(FString& OutError);
 	void RebuildRenderMesh();
 	bool BuildRenderMeshTopology();
 	FLinearColor ColorForSample(int32 SampleId) const;
@@ -248,6 +264,7 @@ private:
 	CarrierLab::FCarrierState State;
 	TArray<FCarrierLabVisualizationMotion> Motions;
 	TArray<FCarrierLabVizPlateMesh> PlateRayMeshes;
+	FCarrierLabVizProjectionMesh ProjectionRayMesh;
 	TArray<int32> RenderPlateIds;
 	TArray<double> RenderContinentalFractions;
 	TArray<double> DriftErrorKmBySample;
@@ -261,6 +278,7 @@ private:
 	double StepAccumulator = 0.0;
 	int32 DriftReferenceStep = 0;
 	bool bPlateRayMeshTopologyDirty = true;
+	bool bProjectionRayMeshTopologyDirty = true;
 	bool bRenderMeshTopologyDirty = true;
 	bool bInitialized = false;
 	bool bPlaying = false;
