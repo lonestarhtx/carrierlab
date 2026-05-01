@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "CarrierLabCarrier.h"
+#include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMesh/DynamicMeshAABBTree3.h"
 #include "GameFramework/Actor.h"
 #include "CarrierLabVisualizationActor.generated.h"
 
@@ -114,6 +116,14 @@ struct FCarrierLabVisualizationMotion
 	FVector3d Axis = FVector3d::UnitZ();
 	FVector3d CurrentCenter = FVector3d::UnitZ();
 	double AngularSpeedRadiansPerStep = 0.0;
+};
+
+struct FCarrierLabVizPlateMesh
+{
+	UE::Geometry::FDynamicMesh3 Mesh;
+	TUniquePtr<UE::Geometry::FDynamicMeshAABBTree3> Tree;
+	TMap<int32, int32> MeshTriangleIdToLocalTriangleId;
+	int32 PlateId = INDEX_NONE;
 };
 
 UCLASS(Blueprintable)
@@ -228,6 +238,7 @@ private:
 	void BindInputControls();
 	void AdvanceOneStep();
 	void ProjectCurrentCarrier();
+	bool RefreshPlateRayMeshes(FString& OutError);
 	void RebuildRenderMesh();
 	bool BuildRenderMeshTopology();
 	FLinearColor ColorForSample(int32 SampleId) const;
@@ -236,6 +247,7 @@ private:
 
 	CarrierLab::FCarrierState State;
 	TArray<FCarrierLabVisualizationMotion> Motions;
+	TArray<FCarrierLabVizPlateMesh> PlateRayMeshes;
 	TArray<int32> RenderPlateIds;
 	TArray<double> RenderContinentalFractions;
 	TArray<double> DriftErrorKmBySample;
@@ -248,6 +260,7 @@ private:
 	int32 CachedRenderMeshTriangleCount = 0;
 	double StepAccumulator = 0.0;
 	int32 DriftReferenceStep = 0;
+	bool bPlateRayMeshTopologyDirty = true;
 	bool bRenderMeshTopologyDirty = true;
 	bool bInitialized = false;
 	bool bPlaying = false;

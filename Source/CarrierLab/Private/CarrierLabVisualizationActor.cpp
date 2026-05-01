@@ -38,13 +38,6 @@ namespace
 		bool bBoundary = false;
 	};
 
-	struct FCarrierLabVizPlateMesh
-	{
-		FDynamicMesh3 Mesh;
-		TUniquePtr<FDynamicMeshAABBTree3> Tree;
-		TMap<int32, int32> MeshTriangleIdToLocalTriangleId;
-	};
-
 	struct FCarrierLabVizBoundaryPoint
 	{
 		int32 PlateId = INDEX_NONE;
@@ -170,7 +163,7 @@ namespace
 		return true;
 	}
 
-	bool BuildPlateRayMeshes(const CarrierLab::FCarrierState& State, TArray<FCarrierLabVizPlateMesh>& OutPlateMeshes, FString& OutError)
+	bool BuildPlateRayMeshTopology(const CarrierLab::FCarrierState& State, TArray<FCarrierLabVizPlateMesh>& OutPlateMeshes, FString& OutError)
 	{
 		OutPlateMeshes.Reset(State.Plates.Num());
 		OutPlateMeshes.SetNum(State.Plates.Num());
@@ -183,6 +176,7 @@ namespace
 			}
 
 			FCarrierLabVizPlateMesh& PlateMesh = OutPlateMeshes[Plate.PlateId];
+			PlateMesh.PlateId = Plate.PlateId;
 			PlateMesh.Mesh.EnableTriangleGroups();
 			for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
 			{
@@ -199,7 +193,52 @@ namespace
 				}
 				PlateMesh.MeshTriangleIdToLocalTriangleId.Add(MeshTriangleId, LocalTriangleId);
 			}
-			PlateMesh.Tree = MakeUnique<FDynamicMeshAABBTree3>(&PlateMesh.Mesh, true);
+			PlateMesh.Tree = MakeUnique<FDynamicMeshAABBTree3>(&PlateMesh.Mesh, false);
+		}
+		return true;
+	}
+
+	bool RefreshPlateRayMeshVerticesAndTrees(const CarrierLab::FCarrierState& State, TArray<FCarrierLabVizPlateMesh>& PlateMeshes, FString& OutError)
+	{
+		if (PlateMeshes.Num() != State.Plates.Num())
+		{
+			OutError = TEXT("Cached visualization plate mesh count does not match carrier plate count.");
+			return false;
+		}
+
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			if (!PlateMeshes.IsValidIndex(Plate.PlateId))
+			{
+				OutError = FString::Printf(TEXT("Invalid plate id %d while refreshing visualization ray meshes."), Plate.PlateId);
+				return false;
+			}
+
+			FCarrierLabVizPlateMesh& PlateMesh = PlateMeshes[Plate.PlateId];
+			if (PlateMesh.PlateId != Plate.PlateId ||
+				PlateMesh.Mesh.VertexCount() != Plate.Vertices.Num() ||
+				PlateMesh.Mesh.TriangleCount() != Plate.LocalTriangles.Num() ||
+				PlateMesh.MeshTriangleIdToLocalTriangleId.Num() != Plate.LocalTriangles.Num())
+			{
+				OutError = FString::Printf(TEXT("Cached visualization plate %d topology no longer matches carrier topology."), Plate.PlateId);
+				return false;
+			}
+
+			for (int32 VertexId = 0; VertexId < Plate.Vertices.Num(); ++VertexId)
+			{
+				if (!PlateMesh.Mesh.IsVertex(VertexId))
+				{
+					OutError = FString::Printf(TEXT("Cached visualization plate %d missing local vertex %d."), Plate.PlateId, VertexId);
+					return false;
+				}
+				PlateMesh.Mesh.SetVertex(VertexId, Plate.Vertices[VertexId].UnitPosition, false);
+			}
+
+			if (!PlateMesh.Tree.IsValid())
+			{
+				PlateMesh.Tree = MakeUnique<FDynamicMeshAABBTree3>(&PlateMesh.Mesh, false);
+			}
+			PlateMesh.Tree->Build();
 		}
 		return true;
 	}
@@ -727,6 +766,8 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	}
 
 	bInitialized = true;
+	bPlateRayMeshTopologyDirty = true;
+	PlateRayMeshes.Reset();
 	bRenderMeshTopologyDirty = true;
 	CachedRenderMeshSampleCount = 0;
 	CachedRenderMeshTriangleCount = 0;
@@ -741,6 +782,31 @@ bool ACarrierLabVisualizationActor::ResetCarrier()
 {
 	bPlaying = false;
 	return InitializeCarrier();
+}
+
+bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
+{
+	if (bPlateRayMeshTopologyDirty)
+	{
+		if (!BuildPlateRayMeshTopology(State, PlateRayMeshes, OutError))
+		{
+			return false;
+		}
+		bPlateRayMeshTopologyDirty = false;
+	}
+
+	if (RefreshPlateRayMeshVerticesAndTrees(State, PlateRayMeshes, OutError))
+	{
+		return true;
+	}
+
+	bPlateRayMeshTopologyDirty = true;
+	if (!BuildPlateRayMeshTopology(State, PlateRayMeshes, OutError))
+	{
+		return false;
+	}
+	bPlateRayMeshTopologyDirty = false;
+	return RefreshPlateRayMeshVerticesAndTrees(State, PlateRayMeshes, OutError);
 }
 
 void ACarrierLabVisualizationActor::TogglePlay()
@@ -781,9 +847,8 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	}
 
 	const double StartSeconds = FPlatformTime::Seconds();
-	TArray<FCarrierLabVizPlateMesh> PlateMeshes;
 	FString MeshError;
-	if (!BuildPlateRayMeshes(State, PlateMeshes, MeshError))
+	if (!RefreshPlateRayMeshes(MeshError))
 	{
 		UE_LOG(LogTemp, Error, TEXT("CarrierLab visualization resample failed: %s"), *MeshError);
 		return;
@@ -802,7 +867,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	{
 		uint64 PlateMask = 0;
 		bool bAnyBoundary = false;
-		QuerySampleCandidates(State, PlateMeshes, Sample, Candidates, PlateMask, bAnyBoundary);
+		QuerySampleCandidates(State, PlateRayMeshes, Sample, Candidates, PlateMask, bAnyBoundary);
 		const int32 PlateHitCount = CountBits64(PlateMask);
 		if (PlateHitCount == 0)
 		{
@@ -852,6 +917,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	}
 
 	CarrierLab::FCarrierLabStage0::RebuildPlateLocalStateFromSamples(State);
+	bPlateRayMeshTopologyDirty = true;
 	for (FCarrierLabVisualizationMotion& Motion : Motions)
 	{
 		Motion.CurrentCenter = FVector3d::ZeroVector;
@@ -1116,10 +1182,9 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	BoundaryMask.Init(0, State.Samples.Num());
 	PlateBoundaryMask.Init(0, State.Samples.Num());
 
-	TArray<FCarrierLabVizPlateMesh> PlateMeshes;
 	FString MeshError;
 	const double BvhStartSeconds = FPlatformTime::Seconds();
-	if (!BuildPlateRayMeshes(State, PlateMeshes, MeshError))
+	if (!RefreshPlateRayMeshes(MeshError))
 	{
 		UE_LOG(LogTemp, Error, TEXT("CarrierLab visualization projection failed: %s"), *MeshError);
 		return;
@@ -1142,7 +1207,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 
 		uint64 PlateMask = 0;
 		bool bAnyBoundary = false;
-		QuerySampleCandidates(State, PlateMeshes, Sample, Candidates, PlateMask, bAnyBoundary);
+		QuerySampleCandidates(State, PlateRayMeshes, Sample, Candidates, PlateMask, bAnyBoundary);
 		const int32 PlateHitCount = CountBits64(PlateMask);
 		BoundaryMask[Sample.Id] = bAnyBoundary ? 1 : 0;
 		if (bAnyBoundary)
