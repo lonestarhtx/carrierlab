@@ -109,6 +109,9 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	FString LastHash;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	FString StateHash;
 };
 
 struct FCarrierLabVisualizationMotion

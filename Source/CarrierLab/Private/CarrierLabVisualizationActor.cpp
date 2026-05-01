@@ -1529,25 +1529,68 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 
 void ACarrierLabVisualizationActor::UpdateLastHash()
 {
-	uint64 Hash = 1469598103934665603ull;
-	HashMix(Hash, static_cast<uint64>(CurrentMetrics.Step + 1));
-	HashMix(Hash, static_cast<uint64>(CurrentMetrics.EventCount + 1));
-	HashMix(Hash, static_cast<uint64>(CurrentMetrics.RawMissCount + 1));
-	HashMix(Hash, static_cast<uint64>(CurrentMetrics.RawMultiHitCount + 1));
-	HashMixDouble(Hash, CurrentMetrics.AuthoritativeCAF);
-	HashMixDouble(Hash, CurrentMetrics.ProjectedCAF);
-	HashMixDouble(Hash, CurrentMetrics.DriftErrorMeanKm);
-	HashMixDouble(Hash, CurrentMetrics.DriftErrorP95Km);
+	uint64 ProjectionHash = 1469598103934665603ull;
+	HashMix(ProjectionHash, static_cast<uint64>(CurrentMetrics.Step + 1));
+	HashMix(ProjectionHash, static_cast<uint64>(CurrentMetrics.EventCount + 1));
+	HashMix(ProjectionHash, static_cast<uint64>(CurrentMetrics.RawMissCount + 1));
+	HashMix(ProjectionHash, static_cast<uint64>(CurrentMetrics.RawMultiHitCount + 1));
+	HashMixDouble(ProjectionHash, CurrentMetrics.AuthoritativeCAF);
+	HashMixDouble(ProjectionHash, CurrentMetrics.ProjectedCAF);
+	HashMixDouble(ProjectionHash, CurrentMetrics.DriftErrorMeanKm);
+	HashMixDouble(ProjectionHash, CurrentMetrics.DriftErrorP95Km);
 	for (int32 Index = 0; Index < RenderPlateIds.Num(); ++Index)
 	{
-		HashMix(Hash, static_cast<uint64>(RenderPlateIds[Index] + 1));
-		HashMixDouble(Hash, RenderContinentalFractions.IsValidIndex(Index) ? RenderContinentalFractions[Index] : 0.0);
-		HashMix(Hash, MissMask.IsValidIndex(Index) ? MissMask[Index] : 0);
-		HashMix(Hash, OverlapMask.IsValidIndex(Index) ? OverlapMask[Index] : 0);
-		HashMix(Hash, BoundaryMask.IsValidIndex(Index) ? BoundaryMask[Index] : 0);
-		HashMix(Hash, PlateBoundaryMask.IsValidIndex(Index) ? PlateBoundaryMask[Index] : 0);
+		HashMix(ProjectionHash, static_cast<uint64>(RenderPlateIds[Index] + 1));
+		HashMixDouble(ProjectionHash, RenderContinentalFractions.IsValidIndex(Index) ? RenderContinentalFractions[Index] : 0.0);
+		HashMix(ProjectionHash, MissMask.IsValidIndex(Index) ? MissMask[Index] : 0);
+		HashMix(ProjectionHash, OverlapMask.IsValidIndex(Index) ? OverlapMask[Index] : 0);
+		HashMix(ProjectionHash, BoundaryMask.IsValidIndex(Index) ? BoundaryMask[Index] : 0);
+		HashMix(ProjectionHash, PlateBoundaryMask.IsValidIndex(Index) ? PlateBoundaryMask[Index] : 0);
 	}
-	CurrentMetrics.LastHash = HashToString(Hash);
+	CurrentMetrics.LastHash = HashToString(ProjectionHash);
+
+	uint64 StateHash = 1469598103934665603ull;
+	HashMix(StateHash, static_cast<uint64>(CurrentMetrics.Step + 1));
+	HashMix(StateHash, static_cast<uint64>(CurrentMetrics.EventCount + 1));
+	HashMix(StateHash, static_cast<uint64>(State.Samples.Num() + 1));
+	HashMix(StateHash, static_cast<uint64>(State.Plates.Num() + 1));
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		HashMix(StateHash, static_cast<uint64>(Sample.Id + 1));
+		HashMix(StateHash, static_cast<uint64>(Sample.PlateId + 1));
+		HashMixDouble(StateHash, Sample.UnitPosition.X);
+		HashMixDouble(StateHash, Sample.UnitPosition.Y);
+		HashMixDouble(StateHash, Sample.UnitPosition.Z);
+		HashMixDouble(StateHash, Sample.AreaWeight);
+		HashMixDouble(StateHash, Sample.ContinentalFraction);
+	}
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		HashMix(StateHash, static_cast<uint64>(Plate.PlateId + 1));
+		HashMixDouble(StateHash, Plate.InitialCenter.X);
+		HashMixDouble(StateHash, Plate.InitialCenter.Y);
+		HashMixDouble(StateHash, Plate.InitialCenter.Z);
+		HashMix(StateHash, Plate.bContinental ? 1 : 0);
+		HashMix(StateHash, static_cast<uint64>(Plate.Vertices.Num() + 1));
+		HashMix(StateHash, static_cast<uint64>(Plate.LocalTriangles.Num() + 1));
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			HashMix(StateHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
+			HashMixDouble(StateHash, Vertex.UnitPosition.X);
+			HashMixDouble(StateHash, Vertex.UnitPosition.Y);
+			HashMixDouble(StateHash, Vertex.UnitPosition.Z);
+			HashMixDouble(StateHash, Vertex.AreaWeight);
+			HashMixDouble(StateHash, Vertex.ContinentalFraction);
+		}
+		for (const CarrierLab::FCarrierPlateTriangle& Triangle : Plate.LocalTriangles)
+		{
+			HashMix(StateHash, static_cast<uint64>(Triangle.SourceTriangleId + 1));
+			HashMix(StateHash, static_cast<uint64>(Triangle.A + 1));
+			HashMix(StateHash, static_cast<uint64>(Triangle.B + 1));
+			HashMix(StateHash, static_cast<uint64>(Triangle.C + 1));
+		}
+	}
+	CurrentMetrics.StateHash = HashToString(StateHash);
 }
 
 FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId) const
