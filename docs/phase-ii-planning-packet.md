@@ -24,6 +24,12 @@ process-coupled. Longer Stage 2 runs would mostly amplify that same equilibrium.
 The next useful experiment is therefore a subduction prototype that supplies the
 triangle-filter state the thesis resampling algorithm expects.
 
+One practical issue is now part of the Phase II entry surface: the interactive
+actor demonstrates the desired carrier feel, but the 250k projection/update path
+is too slow for paper-scale work. Phase II Slice 0 therefore includes a
+baseline performance audit and output-preserving acceleration of the Phase I
+carrier kernel before any subduction process state lands.
+
 ## Phase II Goal
 
 Determine whether explicit, deterministic subduction process state can replace
@@ -46,6 +52,11 @@ The success condition is narrow:
 - Centroid/random tie-breaks remain comparison controls only.
 - No terrain beauty, uplift, slab pull, rifting, erosion, or game integration.
 - No Aurous V6/V9/Prototype A/B/C/D/E port.
+- No optimization may use prior resolved global sample ownership as a cache,
+  hint, or authority input.
+- Optimization acceptance is hash-gated: the same seed must produce identical
+  projection and carrier-state hashes before and after each optimization commit.
+  A hash divergence rejects the optimization regardless of speedup.
 - Every slice ends with a written checkpoint and explicit go/no-go.
 
 ## Review Questions

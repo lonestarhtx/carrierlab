@@ -3,9 +3,11 @@
 Status: draft for user review. Each slice ends with a checkpoint note and
 requires explicit go/no-go before the next slice begins.
 
-## Slice 0: Spec Audit And No-Mutation Harness
+## Slice 0: Spec Audit, No-Mutation Harness, And Baseline Performance
 
-Goal: create the Phase II test surface without adding subduction behavior.
+Goal: create the Phase II test surface without adding subduction behavior, while
+making the accepted Phase I carrier baseline fast enough to support Phase II
+experiments at paper-scale resolutions.
 
 Work:
 
@@ -18,6 +20,18 @@ Work:
   material deltas, and process hashes.
 - Add source-hygiene scan for forbidden authority terms in Phase II source
   files.
+- Add timing breakdown instrumentation for the actor and harness:
+  projection query, BVH build/refit, boundary search, resampling event,
+  drift metrics, hashing, render mesh/color update, and HUD/update overhead.
+- Optimize the Phase I baseline as output-preserving acceleration, in separate
+  commits:
+  1. timing instrumentation only
+  2. persistent actor render mesh/color update
+  3. cached plate topology with rebuild/refit only when topology changes
+  4. combined projection BVH with `{plate_id, local_triangle_id}` metadata
+  5. deterministic parallel per-sample ray loop
+- Forbid "last resolved plate" or prior global sample ownership caches. These
+  are ownership-persistence heuristics, not acceleration.
 
 Exit gate:
 
@@ -25,6 +39,14 @@ Exit gate:
 - Metrics match the Stage 1.5 baseline within documented tolerance.
 - Same-seed replay hashes match for carrier state, projection output, and empty
   Phase II event logs.
+- Each optimization commit preserves identical projection and state hashes for
+  the same seed before and after the change. Any hash divergence rejects that
+  optimization even if it is faster.
+- The Slice 0 checkpoint reports 60k, 100k, 250k, and 500k before/after timing
+  rows, separating kernel time from actor render/HUD time.
+- 250k kernel time targets the paper Table 2 envelope: approximately
+  `<= 1.2s/step`; actor total has a separate responsiveness target of roughly
+  `<= 1.5s/step`.
 - No production mutation path exists yet.
 
 Checkpoint artifact:
