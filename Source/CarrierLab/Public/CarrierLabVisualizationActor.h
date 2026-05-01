@@ -144,6 +144,58 @@ struct FCarrierLabVizProjectionMesh
 	int32 PlateCount = 0;
 };
 
+enum class ECarrierLabPhaseIIMotionFixture : uint8
+{
+	Default,
+	Zero,
+	ForcedConvergence,
+	ForcedDivergence,
+	TripleJunction
+};
+
+enum class ECarrierLabPhaseIIContactClass : uint8
+{
+	Divergent,
+	Convergent,
+	TransformLowMargin,
+	ThirdPlate
+};
+
+struct FCarrierLabPhaseIIContactRecord
+{
+	int32 ContactId = INDEX_NONE;
+	int32 Step = 0;
+	int32 SampleId = INDEX_NONE;
+	int32 PlateA = INDEX_NONE;
+	int32 PlateB = INDEX_NONE;
+	int32 PlateALocalTriangleId = INDEX_NONE;
+	int32 PlateBLocalTriangleId = INDEX_NONE;
+	FVector3d EvidenceUnitPosition = FVector3d::UnitZ();
+	double SignedConvergenceVelocity = 0.0;
+	double VelocityMargin = 0.0;
+	bool bBoundaryEvidence = false;
+	bool bThirdPlate = false;
+	ECarrierLabPhaseIIContactClass ContactClass = ECarrierLabPhaseIIContactClass::TransformLowMargin;
+};
+
+struct FCarrierLabPhaseIIContactMetrics
+{
+	int32 Step = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 RawEvidenceSampleCount = 0;
+	int32 ContactRecordCount = 0;
+	int32 ConvergentContactCount = 0;
+	int32 DivergentContactCount = 0;
+	int32 TransformLowMarginContactCount = 0;
+	int32 ThirdPlateContactCount = 0;
+	int32 SubductionCandidateCount = 0;
+	int32 BoundaryEvidenceCount = 0;
+	int32 NaNOrInfCount = 0;
+	double ContactDetectionSeconds = 0.0;
+	FString ContactLogHash;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -251,6 +303,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowBoundaryMaskLayer();
+
+	void ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture Fixture);
+	bool DetectPhaseIIContacts(TArray<FCarrierLabPhaseIIContactRecord>& OutContacts, FCarrierLabPhaseIIContactMetrics& OutMetrics);
+	bool GetPhaseIIMotion(int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const;
+	double ComputePhaseIIPairSignedConvergenceVelocity(int32 PlateA, int32 PlateB) const;
 
 private:
 	void BindInputControls();

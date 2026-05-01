@@ -26,6 +26,7 @@ namespace
 	constexpr double EarthRadiusKm = 6371.0;
 	constexpr double DeltaTimeMa = 2.0;
 	constexpr double BoundaryBarycentricEpsilon = 1.0e-7;
+	constexpr double PhaseIIContactVelocityMargin = 1.0e-6;
 	constexpr int32 BoundaryLonBins = 72;
 	constexpr int32 BoundaryLatBins = 36;
 	constexpr int32 BoundarySearchRadiusBins = 2;
@@ -729,6 +730,118 @@ namespace
 		return FVector3d::DotProduct(VelocityB - VelocityA, ToB);
 	}
 
+	const FCarrierLabVizCandidate* FindCandidateForPlate(const TArray<FCarrierLabVizCandidate>& Candidates, const int32 PlateId)
+	{
+		for (const FCarrierLabVizCandidate& Candidate : Candidates)
+		{
+			if (Candidate.PlateId == PlateId)
+			{
+				return &Candidate;
+			}
+		}
+		return nullptr;
+	}
+
+	void ConfigureDefaultMotions(
+		const CarrierLab::FCarrierState& State,
+		const double VelocityMmPerYear,
+		TArray<FCarrierLabVisualizationMotion>& OutMotions)
+	{
+		OutMotions.Reset(State.Plates.Num());
+		OutMotions.SetNum(State.Plates.Num());
+		const double AngularSpeed = AngularSpeedRadiansPerStep(VelocityMmPerYear);
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			const FVector3d SeedVector = NormalizeOrFallback(
+				FVector3d(
+					FMath::Sin(static_cast<double>(Plate.PlateId + 1) * 12.9898),
+					FMath::Sin(static_cast<double>(Plate.PlateId + 1) * 78.233),
+					FMath::Sin(static_cast<double>(Plate.PlateId + 1) * 37.719)),
+				FVector3d::UnitZ());
+			FVector3d Axis = FVector3d::CrossProduct(Plate.InitialCenter, SeedVector);
+			if (Axis.SquaredLength() <= UE_SMALL_NUMBER)
+			{
+				Axis = FVector3d::CrossProduct(Plate.InitialCenter, FVector3d::UnitX());
+			}
+			OutMotions[Plate.PlateId].Axis = NormalizeOrFallback(Axis, FVector3d::UnitZ());
+			OutMotions[Plate.PlateId].AngularSpeedRadiansPerStep = AngularSpeed;
+			OutMotions[Plate.PlateId].CurrentCenter = Plate.InitialCenter;
+		}
+	}
+
+	void ConfigureZeroMotions(
+		const CarrierLab::FCarrierState& State,
+		TArray<FCarrierLabVisualizationMotion>& OutMotions)
+	{
+		OutMotions.Reset(State.Plates.Num());
+		OutMotions.SetNum(State.Plates.Num());
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			OutMotions[Plate.PlateId].Axis = FVector3d::UnitZ();
+			OutMotions[Plate.PlateId].AngularSpeedRadiansPerStep = 0.0;
+			OutMotions[Plate.PlateId].CurrentCenter = Plate.InitialCenter;
+		}
+	}
+
+	void ConfigureForcedPairMotions(
+		const CarrierLab::FCarrierState& State,
+		const double VelocityMmPerYear,
+		const bool bConvergent,
+		TArray<FCarrierLabVisualizationMotion>& OutMotions)
+	{
+		ConfigureZeroMotions(State, OutMotions);
+		if (State.Plates.Num() < 2)
+		{
+			return;
+		}
+
+		const double AngularSpeed = AngularSpeedRadiansPerStep(VelocityMmPerYear) * 1.8;
+		for (int32 PlateId = 0; PlateId < 2; ++PlateId)
+		{
+			const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+			const FVector3d OtherCenter = State.Plates[1 - PlateId].InitialCenter;
+			FVector3d Direction = OtherCenter - FVector3d::DotProduct(OtherCenter, Plate.InitialCenter) * Plate.InitialCenter;
+			if (!bConvergent)
+			{
+				Direction *= -1.0;
+			}
+			const FVector3d Axis = FVector3d::CrossProduct(Plate.InitialCenter, Direction);
+			OutMotions[PlateId].Axis = NormalizeOrFallback(Axis, FVector3d::UnitZ());
+			OutMotions[PlateId].AngularSpeedRadiansPerStep = AngularSpeed;
+			OutMotions[PlateId].CurrentCenter = Plate.InitialCenter;
+		}
+	}
+
+	void ConfigureTripleJunctionMotions(
+		const CarrierLab::FCarrierState& State,
+		const double VelocityMmPerYear,
+		TArray<FCarrierLabVisualizationMotion>& OutMotions)
+	{
+		ConfigureZeroMotions(State, OutMotions);
+		if (State.Plates.Num() < 3)
+		{
+			return;
+		}
+
+		const FVector3d Target = NormalizeOrFallback(
+			State.Plates[0].InitialCenter + State.Plates[1].InitialCenter + State.Plates[2].InitialCenter,
+			State.Plates[0].InitialCenter);
+		const double AngularSpeed = AngularSpeedRadiansPerStep(VelocityMmPerYear) * 2.25;
+		for (int32 PlateId = 0; PlateId < 3; ++PlateId)
+		{
+			const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+			FVector3d Direction = Target - FVector3d::DotProduct(Target, Plate.InitialCenter) * Plate.InitialCenter;
+			if (Direction.SquaredLength() <= UE_SMALL_NUMBER)
+			{
+				Direction = State.Plates[(PlateId + 1) % 3].InitialCenter - FVector3d::DotProduct(State.Plates[(PlateId + 1) % 3].InitialCenter, Plate.InitialCenter) * Plate.InitialCenter;
+			}
+			const FVector3d Axis = FVector3d::CrossProduct(Plate.InitialCenter, Direction);
+			OutMotions[PlateId].Axis = NormalizeOrFallback(Axis, FVector3d::UnitZ());
+			OutMotions[PlateId].AngularSpeedRadiansPerStep = AngularSpeed;
+			OutMotions[PlateId].CurrentCenter = Plate.InitialCenter;
+		}
+	}
+
 	TArray<int32> UniqueCandidatePlates(const TArray<FCarrierLabVizCandidate>& Candidates)
 	{
 		TArray<int32> PlateIds;
@@ -959,26 +1072,7 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	BoundaryMask.SetNum(State.Samples.Num());
 	PlateBoundaryMask.SetNum(State.Samples.Num());
 
-	Motions.Reset(State.Plates.Num());
-	Motions.SetNum(State.Plates.Num());
-	const double AngularSpeed = AngularSpeedRadiansPerStep(VelocityMmPerYear);
-	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
-	{
-		const FVector3d SeedVector = NormalizeOrFallback(
-			FVector3d(
-				FMath::Sin(static_cast<double>(Plate.PlateId + 1) * 12.9898),
-				FMath::Sin(static_cast<double>(Plate.PlateId + 1) * 78.233),
-				FMath::Sin(static_cast<double>(Plate.PlateId + 1) * 37.719)),
-			FVector3d::UnitZ());
-		FVector3d Axis = FVector3d::CrossProduct(Plate.InitialCenter, SeedVector);
-		if (Axis.SquaredLength() <= UE_SMALL_NUMBER)
-		{
-			Axis = FVector3d::CrossProduct(Plate.InitialCenter, FVector3d::UnitX());
-		}
-		Motions[Plate.PlateId].Axis = NormalizeOrFallback(Axis, FVector3d::UnitZ());
-		Motions[Plate.PlateId].AngularSpeedRadiansPerStep = AngularSpeed;
-		Motions[Plate.PlateId].CurrentCenter = Plate.InitialCenter;
-	}
+	ConfigureDefaultMotions(State, VelocityMmPerYear, Motions);
 
 	bInitialized = true;
 	bPlateRayMeshTopologyDirty = true;
@@ -999,6 +1093,194 @@ bool ACarrierLabVisualizationActor::ResetCarrier()
 {
 	bPlaying = false;
 	return InitializeCarrier();
+}
+
+void ACarrierLabVisualizationActor::ConfigurePhaseIIMotionFixture(const ECarrierLabPhaseIIMotionFixture Fixture)
+{
+	if (!bInitialized)
+	{
+		return;
+	}
+
+	switch (Fixture)
+	{
+	case ECarrierLabPhaseIIMotionFixture::Zero:
+		ConfigureZeroMotions(State, Motions);
+		break;
+	case ECarrierLabPhaseIIMotionFixture::ForcedConvergence:
+		ConfigureForcedPairMotions(State, VelocityMmPerYear, true, Motions);
+		break;
+	case ECarrierLabPhaseIIMotionFixture::ForcedDivergence:
+		ConfigureForcedPairMotions(State, VelocityMmPerYear, false, Motions);
+		break;
+	case ECarrierLabPhaseIIMotionFixture::TripleJunction:
+		ConfigureTripleJunctionMotions(State, VelocityMmPerYear, Motions);
+		break;
+	case ECarrierLabPhaseIIMotionFixture::Default:
+	default:
+		ConfigureDefaultMotions(State, VelocityMmPerYear, Motions);
+		break;
+	}
+
+	CaptureDriftReference();
+}
+
+bool ACarrierLabVisualizationActor::DetectPhaseIIContacts(TArray<FCarrierLabPhaseIIContactRecord>& OutContacts, FCarrierLabPhaseIIContactMetrics& OutMetrics)
+{
+	OutContacts.Reset();
+	OutMetrics = FCarrierLabPhaseIIContactMetrics();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+
+	const double StartSeconds = FPlatformTime::Seconds();
+	FString MeshError;
+	if (!RefreshProjectionRayMesh(MeshError))
+	{
+		UE_LOG(LogTemp, Error, TEXT("CarrierLab Phase II contact detection failed: %s"), *MeshError);
+		return false;
+	}
+
+	OutMetrics.Step = CurrentMetrics.Step;
+	OutMetrics.SampleCount = State.Samples.Num();
+	OutMetrics.PlateCount = State.Plates.Num();
+
+	TArray<FCarrierLabVizCandidate> Candidates;
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (!FMath::IsFinite(Sample.UnitPosition.X) ||
+			!FMath::IsFinite(Sample.UnitPosition.Y) ||
+			!FMath::IsFinite(Sample.UnitPosition.Z))
+		{
+			++OutMetrics.NaNOrInfCount;
+			continue;
+		}
+
+		uint64 PlateMask = 0;
+		bool bAnyBoundary = false;
+		QuerySampleCandidates(State, ProjectionRayMesh, Sample, Candidates, PlateMask, bAnyBoundary);
+		const TArray<int32> PlateIds = UniqueCandidatePlates(Candidates);
+		if (PlateIds.Num() < 2)
+		{
+			continue;
+		}
+
+		++OutMetrics.RawEvidenceSampleCount;
+		const bool bThirdPlate = PlateIds.Num() >= 3;
+		for (int32 AIndex = 0; AIndex < PlateIds.Num(); ++AIndex)
+		{
+			for (int32 BIndex = AIndex + 1; BIndex < PlateIds.Num(); ++BIndex)
+			{
+				const int32 PlateA = PlateIds[AIndex];
+				const int32 PlateB = PlateIds[BIndex];
+				const FCarrierLabVizCandidate* CandidateA = FindCandidateForPlate(Candidates, PlateA);
+				const FCarrierLabVizCandidate* CandidateB = FindCandidateForPlate(Candidates, PlateB);
+
+				FCarrierLabPhaseIIContactRecord Record;
+				Record.ContactId = OutContacts.Num();
+				Record.Step = CurrentMetrics.Step;
+				Record.SampleId = Sample.Id;
+				Record.PlateA = PlateA;
+				Record.PlateB = PlateB;
+				Record.PlateALocalTriangleId = CandidateA != nullptr ? CandidateA->LocalTriangleId : INDEX_NONE;
+				Record.PlateBLocalTriangleId = CandidateB != nullptr ? CandidateB->LocalTriangleId : INDEX_NONE;
+				Record.EvidenceUnitPosition = Sample.UnitPosition;
+				Record.SignedConvergenceVelocity = -SignedPairSeparationVelocityForPlatePair(Sample.UnitPosition, Motions, PlateA, PlateB);
+				Record.VelocityMargin = PhaseIIContactVelocityMargin;
+				Record.bBoundaryEvidence = bAnyBoundary ||
+					(CandidateA != nullptr && CandidateA->bBoundary) ||
+					(CandidateB != nullptr && CandidateB->bBoundary);
+				Record.bThirdPlate = bThirdPlate;
+				const bool bBoundaryOnlyDegeneracy =
+					Record.bBoundaryEvidence &&
+					CandidateA != nullptr &&
+					CandidateB != nullptr &&
+					CandidateA->bBoundary &&
+					CandidateB->bBoundary;
+
+				if (bThirdPlate)
+				{
+					Record.ContactClass = ECarrierLabPhaseIIContactClass::ThirdPlate;
+					++OutMetrics.ThirdPlateContactCount;
+				}
+				else if (bBoundaryOnlyDegeneracy)
+				{
+					Record.ContactClass = ECarrierLabPhaseIIContactClass::TransformLowMargin;
+					++OutMetrics.TransformLowMarginContactCount;
+				}
+				else if (Record.SignedConvergenceVelocity > PhaseIIContactVelocityMargin)
+				{
+					Record.ContactClass = ECarrierLabPhaseIIContactClass::Convergent;
+					++OutMetrics.ConvergentContactCount;
+					++OutMetrics.SubductionCandidateCount;
+				}
+				else if (Record.SignedConvergenceVelocity < -PhaseIIContactVelocityMargin)
+				{
+					Record.ContactClass = ECarrierLabPhaseIIContactClass::Divergent;
+					++OutMetrics.DivergentContactCount;
+				}
+				else
+				{
+					Record.ContactClass = ECarrierLabPhaseIIContactClass::TransformLowMargin;
+					++OutMetrics.TransformLowMarginContactCount;
+				}
+
+				if (Record.bBoundaryEvidence)
+				{
+					++OutMetrics.BoundaryEvidenceCount;
+				}
+				OutContacts.Add(Record);
+			}
+		}
+	}
+
+	OutMetrics.ContactRecordCount = OutContacts.Num();
+	uint64 ContactHash = 1469598103934665603ull;
+	HashMix(ContactHash, static_cast<uint64>(OutMetrics.Step + 1));
+	HashMix(ContactHash, static_cast<uint64>(OutMetrics.SampleCount + 1));
+	HashMix(ContactHash, static_cast<uint64>(OutMetrics.PlateCount + 1));
+	for (const FCarrierLabPhaseIIContactRecord& Record : OutContacts)
+	{
+		HashMix(ContactHash, static_cast<uint64>(Record.ContactId + 1));
+		HashMix(ContactHash, static_cast<uint64>(Record.Step + 1));
+		HashMix(ContactHash, static_cast<uint64>(Record.SampleId + 1));
+		HashMix(ContactHash, static_cast<uint64>(Record.PlateA + 1));
+		HashMix(ContactHash, static_cast<uint64>(Record.PlateB + 1));
+		HashMix(ContactHash, static_cast<uint64>(Record.PlateALocalTriangleId + 1));
+		HashMix(ContactHash, static_cast<uint64>(Record.PlateBLocalTriangleId + 1));
+		HashMixDouble(ContactHash, Record.EvidenceUnitPosition.X);
+		HashMixDouble(ContactHash, Record.EvidenceUnitPosition.Y);
+		HashMixDouble(ContactHash, Record.EvidenceUnitPosition.Z);
+		HashMixDouble(ContactHash, Record.SignedConvergenceVelocity);
+		HashMixDouble(ContactHash, Record.VelocityMargin);
+		HashMix(ContactHash, Record.bBoundaryEvidence ? 1 : 0);
+		HashMix(ContactHash, Record.bThirdPlate ? 1 : 0);
+		HashMix(ContactHash, static_cast<uint64>(Record.ContactClass) + 1);
+	}
+	OutMetrics.ContactLogHash = HashToString(ContactHash);
+	OutMetrics.ContactDetectionSeconds = FPlatformTime::Seconds() - StartSeconds;
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::GetPhaseIIMotion(const int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const
+{
+	if (!Motions.IsValidIndex(PlateId))
+	{
+		return false;
+	}
+	OutMotion = Motions[PlateId];
+	return true;
+}
+
+double ACarrierLabVisualizationActor::ComputePhaseIIPairSignedConvergenceVelocity(const int32 PlateA, const int32 PlateB) const
+{
+	if (!Motions.IsValidIndex(PlateA) || !Motions.IsValidIndex(PlateB))
+	{
+		return 0.0;
+	}
+	const FVector3d Evidence = NormalizeOrFallback(Motions[PlateA].CurrentCenter + Motions[PlateB].CurrentCenter, Motions[PlateA].CurrentCenter);
+	return -SignedPairSeparationVelocityForPlatePair(Evidence, Motions, PlateA, PlateB);
 }
 
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
