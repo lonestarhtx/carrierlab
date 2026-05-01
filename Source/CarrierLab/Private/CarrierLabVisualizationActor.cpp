@@ -703,6 +703,7 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	MissMask.SetNum(State.Samples.Num());
 	OverlapMask.SetNum(State.Samples.Num());
 	BoundaryMask.SetNum(State.Samples.Num());
+	PlateBoundaryMask.SetNum(State.Samples.Num());
 
 	Motions.Reset(State.Plates.Num());
 	Motions.SetNum(State.Plates.Num());
@@ -1038,6 +1039,46 @@ void ACarrierLabVisualizationActor::ComputeDriftMetrics()
 	}
 }
 
+void ACarrierLabVisualizationActor::ComputePlateBoundaryMask()
+{
+	PlateBoundaryMask.Init(0, State.Samples.Num());
+	CurrentMetrics.BoundaryVertexCount = 0;
+
+	for (const CarrierLab::FSphereTriangle& Triangle : State.Triangles)
+	{
+		if (!RenderPlateIds.IsValidIndex(Triangle.A) ||
+			!RenderPlateIds.IsValidIndex(Triangle.B) ||
+			!RenderPlateIds.IsValidIndex(Triangle.C))
+		{
+			continue;
+		}
+
+		const int32 PlateA = RenderPlateIds[Triangle.A];
+		const int32 PlateB = RenderPlateIds[Triangle.B];
+		const int32 PlateC = RenderPlateIds[Triangle.C];
+		if (PlateA == PlateB && PlateB == PlateC)
+		{
+			continue;
+		}
+
+		if (PlateBoundaryMask.IsValidIndex(Triangle.A) && PlateBoundaryMask[Triangle.A] == 0)
+		{
+			PlateBoundaryMask[Triangle.A] = 1;
+			++CurrentMetrics.BoundaryVertexCount;
+		}
+		if (PlateBoundaryMask.IsValidIndex(Triangle.B) && PlateBoundaryMask[Triangle.B] == 0)
+		{
+			PlateBoundaryMask[Triangle.B] = 1;
+			++CurrentMetrics.BoundaryVertexCount;
+		}
+		if (PlateBoundaryMask.IsValidIndex(Triangle.C) && PlateBoundaryMask[Triangle.C] == 0)
+		{
+			PlateBoundaryMask[Triangle.C] = 1;
+			++CurrentMetrics.BoundaryVertexCount;
+		}
+	}
+}
+
 void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 {
 	if (!bInitialized)
@@ -1051,6 +1092,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	CurrentMetrics.RawMissCount = 0;
 	CurrentMetrics.RawMultiHitCount = 0;
 	CurrentMetrics.BoundaryHitCount = 0;
+	CurrentMetrics.BoundaryVertexCount = 0;
 	CurrentMetrics.NaNOrInfCount = 0;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
@@ -1061,6 +1103,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	MissMask.Init(0, State.Samples.Num());
 	OverlapMask.Init(0, State.Samples.Num());
 	BoundaryMask.Init(0, State.Samples.Num());
+	PlateBoundaryMask.Init(0, State.Samples.Num());
 
 	TArray<FCarrierLabVizPlateMesh> PlateMeshes;
 	FString MeshError;
@@ -1123,6 +1166,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	CurrentMetrics.AuthoritativeCAF = TotalArea > UE_DOUBLE_SMALL_NUMBER ? AuthoritativeContinentalArea / TotalArea : 0.0;
 	CurrentMetrics.ProjectedCAF = TotalArea > UE_DOUBLE_SMALL_NUMBER ? ProjectedContinentalArea / TotalArea : 0.0;
 	ComputeDriftMetrics();
+	ComputePlateBoundaryMask();
 	CurrentMetrics.ProjectionSeconds = FPlatformTime::Seconds() - StartSeconds;
 	UpdateLastHash();
 	RebuildRenderMesh();
@@ -1146,6 +1190,7 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		HashMix(Hash, MissMask.IsValidIndex(Index) ? MissMask[Index] : 0);
 		HashMix(Hash, OverlapMask.IsValidIndex(Index) ? OverlapMask[Index] : 0);
 		HashMix(Hash, BoundaryMask.IsValidIndex(Index) ? BoundaryMask[Index] : 0);
+		HashMix(Hash, PlateBoundaryMask.IsValidIndex(Index) ? PlateBoundaryMask[Index] : 0);
 	}
 	CurrentMetrics.LastHash = HashToString(Hash);
 }
@@ -1184,7 +1229,7 @@ void ACarrierLabVisualizationActor::RebuildRenderMesh()
 				? FLinearColor(1.0f, 0.46f, 0.05f, 1.0f)
 				: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
 		case ECarrierLabVisualizationLayer::BoundaryMask:
-			return BoundaryMask.IsValidIndex(SampleId) && BoundaryMask[SampleId] != 0
+			return PlateBoundaryMask.IsValidIndex(SampleId) && PlateBoundaryMask[SampleId] != 0
 				? FLinearColor(0.95f, 0.95f, 0.90f, 1.0f)
 				: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
 		case ECarrierLabVisualizationLayer::DriftError:
@@ -1247,7 +1292,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs mesh=%.3fs\nSpace play/pause | . step | R resample | 1-5 layers"),
+		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs mesh=%.3fs\nSpace play/pause | . step | R resample | 1-5 layers"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -1257,6 +1302,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.PlateCount,
 		CurrentMetrics.RawMissCount,
 		CurrentMetrics.RawMultiHitCount,
+		CurrentMetrics.BoundaryVertexCount,
 		CurrentMetrics.BoundaryHitCount,
 		CurrentMetrics.LastGapFillCount,
 		CurrentMetrics.LastNonSeparatingGapFillCount,

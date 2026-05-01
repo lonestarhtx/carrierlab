@@ -58,6 +58,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 BoundaryHitCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	int32 BoundaryVertexCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 NaNOrInfCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
@@ -220,6 +223,7 @@ private:
 	TArray<uint8> MissMask;
 	TArray<uint8> OverlapMask;
 	TArray<uint8> BoundaryMask;
+	TArray<uint8> PlateBoundaryMask;
 	double StepAccumulator = 0.0;
 	int32 DriftReferenceStep = 0;
 	bool bInitialized = false;
@@ -227,5 +231,6 @@ private:
 
 	void CaptureDriftReference();
 	void ComputeDriftMetrics();
+	void ComputePlateBoundaryMask();
 	void UpdateLastHash();
 };
