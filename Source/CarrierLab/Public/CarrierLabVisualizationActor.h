@@ -229,6 +229,8 @@ private:
 	void AdvanceOneStep();
 	void ProjectCurrentCarrier();
 	void RebuildRenderMesh();
+	bool BuildRenderMeshTopology();
+	FLinearColor ColorForSample(int32 SampleId) const;
 	void ShowHud() const;
 	FString BuildHudText() const;
 
@@ -242,8 +244,11 @@ private:
 	TArray<uint8> OverlapMask;
 	TArray<uint8> BoundaryMask;
 	TArray<uint8> PlateBoundaryMask;
+	int32 CachedRenderMeshSampleCount = 0;
+	int32 CachedRenderMeshTriangleCount = 0;
 	double StepAccumulator = 0.0;
 	int32 DriftReferenceStep = 0;
+	bool bRenderMeshTopologyDirty = true;
 	bool bInitialized = false;
 	bool bPlaying = false;
 

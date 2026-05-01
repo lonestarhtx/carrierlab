@@ -727,6 +727,9 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	}
 
 	bInitialized = true;
+	bRenderMeshTopologyDirty = true;
+	CachedRenderMeshSampleCount = 0;
+	CachedRenderMeshTriangleCount = 0;
 	StepAccumulator = 0.0;
 	CurrentMetrics.NextResampleStep = GetNaturalCadenceSteps();
 	CaptureDriftReference();
@@ -1213,14 +1216,39 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 	CurrentMetrics.LastHash = HashToString(Hash);
 }
 
-void ACarrierLabVisualizationActor::RebuildRenderMesh()
+FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId) const
+{
+	switch (VisualizationLayer)
+	{
+	case ECarrierLabVisualizationLayer::ContinentalFraction:
+		return ContinentalColor(RenderContinentalFractions.IsValidIndex(SampleId) ? RenderContinentalFractions[SampleId] : 0.0);
+	case ECarrierLabVisualizationLayer::MissMask:
+		return MissMask.IsValidIndex(SampleId) && MissMask[SampleId] != 0
+			? FLinearColor(0.95f, 0.05f, 0.04f, 1.0f)
+			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+	case ECarrierLabVisualizationLayer::OverlapMask:
+		return OverlapMask.IsValidIndex(SampleId) && OverlapMask[SampleId] != 0
+			? FLinearColor(1.0f, 0.46f, 0.05f, 1.0f)
+			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+	case ECarrierLabVisualizationLayer::BoundaryMask:
+		return PlateBoundaryMask.IsValidIndex(SampleId) && PlateBoundaryMask[SampleId] != 0
+			? FLinearColor(0.95f, 0.95f, 0.90f, 1.0f)
+			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+	case ECarrierLabVisualizationLayer::DriftError:
+		return DriftColor(DriftErrorKmBySample.IsValidIndex(SampleId) ? DriftErrorKmBySample[SampleId] : -1.0);
+	case ECarrierLabVisualizationLayer::PlateId:
+	default:
+		return PlateColor(RenderPlateIds.IsValidIndex(SampleId) ? RenderPlateIds[SampleId] : INDEX_NONE);
+	}
+}
+
+bool ACarrierLabVisualizationActor::BuildRenderMeshTopology()
 {
 	if (!MeshComponent || State.Samples.IsEmpty() || State.Triangles.IsEmpty())
 	{
-		return;
+		return false;
 	}
 
-	const double StartSeconds = FPlatformTime::Seconds();
 	FDynamicMesh3 Mesh;
 	Mesh.EnableTriangleGroups();
 	Mesh.EnableAttributes();
@@ -1231,32 +1259,6 @@ void ACarrierLabVisualizationActor::RebuildRenderMesh()
 	{
 		Mesh.AppendVertex(Sample.UnitPosition * SphereRadius);
 	}
-
-	auto ColorForSample = [this](const int32 SampleId)
-	{
-		switch (VisualizationLayer)
-		{
-		case ECarrierLabVisualizationLayer::ContinentalFraction:
-			return ContinentalColor(RenderContinentalFractions.IsValidIndex(SampleId) ? RenderContinentalFractions[SampleId] : 0.0);
-		case ECarrierLabVisualizationLayer::MissMask:
-			return MissMask.IsValidIndex(SampleId) && MissMask[SampleId] != 0
-				? FLinearColor(0.95f, 0.05f, 0.04f, 1.0f)
-				: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
-		case ECarrierLabVisualizationLayer::OverlapMask:
-			return OverlapMask.IsValidIndex(SampleId) && OverlapMask[SampleId] != 0
-				? FLinearColor(1.0f, 0.46f, 0.05f, 1.0f)
-				: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
-		case ECarrierLabVisualizationLayer::BoundaryMask:
-			return PlateBoundaryMask.IsValidIndex(SampleId) && PlateBoundaryMask[SampleId] != 0
-				? FLinearColor(0.95f, 0.95f, 0.90f, 1.0f)
-				: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
-		case ECarrierLabVisualizationLayer::DriftError:
-			return DriftColor(DriftErrorKmBySample.IsValidIndex(SampleId) ? DriftErrorKmBySample[SampleId] : -1.0);
-		case ECarrierLabVisualizationLayer::PlateId:
-		default:
-			return PlateColor(RenderPlateIds.IsValidIndex(SampleId) ? RenderPlateIds[SampleId] : INDEX_NONE);
-		}
-	};
 
 	for (const CarrierLab::FSphereTriangle& Triangle : State.Triangles)
 	{
@@ -1276,6 +1278,65 @@ void ACarrierLabVisualizationActor::RebuildRenderMesh()
 	}
 
 	MeshComponent->SetMesh(MoveTemp(Mesh));
+	CachedRenderMeshSampleCount = State.Samples.Num();
+	CachedRenderMeshTriangleCount = State.Triangles.Num();
+	bRenderMeshTopologyDirty = false;
+	return true;
+}
+
+void ACarrierLabVisualizationActor::RebuildRenderMesh()
+{
+	if (!MeshComponent || State.Samples.IsEmpty() || State.Triangles.IsEmpty())
+	{
+		return;
+	}
+
+	const double StartSeconds = FPlatformTime::Seconds();
+	bool bColorsUpdated = false;
+	const bool bNeedsTopologyBuild =
+		bRenderMeshTopologyDirty ||
+		CachedRenderMeshSampleCount != State.Samples.Num() ||
+		CachedRenderMeshTriangleCount != State.Triangles.Num();
+
+	if (bNeedsTopologyBuild)
+	{
+		bColorsUpdated = BuildRenderMeshTopology();
+	}
+	else
+	{
+		MeshComponent->EditMesh([this, &bColorsUpdated](FDynamicMesh3& Mesh)
+		{
+			if (Mesh.VertexCount() != State.Samples.Num() || Mesh.TriangleCount() != State.Triangles.Num() || Mesh.Attributes() == nullptr)
+			{
+				bRenderMeshTopologyDirty = true;
+				return;
+			}
+
+			FDynamicMeshColorOverlay* Colors = Mesh.Attributes()->PrimaryColors();
+			if (Colors == nullptr)
+			{
+				bRenderMeshTopologyDirty = true;
+				return;
+			}
+
+			for (const int32 ElementId : Colors->ElementIndicesItr())
+			{
+				const int32 ParentVertex = Colors->GetParentVertex(ElementId);
+				Colors->SetElement(ElementId, ToVector4f(ColorForSample(ParentVertex)));
+			}
+			bColorsUpdated = true;
+		}, EDynamicMeshComponentRenderUpdateMode::NoUpdate);
+
+		if (bColorsUpdated)
+		{
+			MeshComponent->FastNotifyColorsUpdated();
+		}
+		else if (bRenderMeshTopologyDirty)
+		{
+			bColorsUpdated = BuildRenderMeshTopology();
+		}
+	}
+
 	MeshComponent->SetColorOverrideMode(EDynamicMeshComponentColorOverrideMode::VertexColors);
 	MeshComponent->SetVertexColorSpaceTransformMode(EDynamicMeshVertexColorTransformMode::NoTransform);
 	MeshComponent->SetTwoSided(true);
