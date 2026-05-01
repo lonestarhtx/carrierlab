@@ -4,6 +4,7 @@
 
 #include "Components/DynamicMeshComponent.h"
 #include "Components/InputComponent.h"
+#include "Async/ParallelFor.h"
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAABBTree3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
@@ -1437,41 +1438,51 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	double TotalArea = 0.0;
 	double AuthoritativeContinentalArea = 0.0;
 	double ProjectedContinentalArea = 0.0;
-	TArray<FCarrierLabVizCandidate> Candidates;
-	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	TArray<double> AuthoritativeAreaBySample;
+	TArray<double> ProjectedAreaBySample;
+	TArray<uint8> NaNOrInfMask;
+	AuthoritativeAreaBySample.Init(0.0, State.Samples.Num());
+	ProjectedAreaBySample.Init(0.0, State.Samples.Num());
+	NaNOrInfMask.Init(0, State.Samples.Num());
+	const ECarrierLabMultiHitPolicy ProjectionPolicy = MultiHitPolicy;
+	const int32 ProjectionTieBreakSeed = RandomTieBreakSeed;
+	const int32 ProjectionStep = CurrentMetrics.Step;
+	const int32 ProjectionEventCount = CurrentMetrics.EventCount;
+	ParallelFor(State.Samples.Num(), [this, &AuthoritativeAreaBySample, &ProjectedAreaBySample, &NaNOrInfMask, ProjectionPolicy, ProjectionTieBreakSeed, ProjectionStep, ProjectionEventCount](int32 SampleIndex)
 	{
-		TotalArea += Sample.AreaWeight;
-		AuthoritativeContinentalArea += Sample.AreaWeight * Sample.ContinentalFraction;
-		if (!FMath::IsFinite(Sample.UnitPosition.X) || !FMath::IsFinite(Sample.UnitPosition.Y) || !FMath::IsFinite(Sample.UnitPosition.Z))
+		const CarrierLab::FSphereSample& Sample = State.Samples[SampleIndex];
+		const int32 OutputIndex = Sample.Id;
+		if (!RenderPlateIds.IsValidIndex(OutputIndex))
 		{
-			++CurrentMetrics.NaNOrInfCount;
+			return;
 		}
 
+		AuthoritativeAreaBySample[OutputIndex] = Sample.AreaWeight * Sample.ContinentalFraction;
+		if (!FMath::IsFinite(Sample.UnitPosition.X) || !FMath::IsFinite(Sample.UnitPosition.Y) || !FMath::IsFinite(Sample.UnitPosition.Z))
+		{
+			NaNOrInfMask[OutputIndex] = 1;
+		}
+
+		TArray<FCarrierLabVizCandidate> Candidates;
 		uint64 PlateMask = 0;
 		bool bAnyBoundary = false;
 		QuerySampleCandidates(State, ProjectionRayMesh, Sample, Candidates, PlateMask, bAnyBoundary);
 		const int32 PlateHitCount = CountBits64(PlateMask);
-		BoundaryMask[Sample.Id] = bAnyBoundary ? 1 : 0;
-		if (bAnyBoundary)
-		{
-			++CurrentMetrics.BoundaryHitCount;
-		}
+		BoundaryMask[OutputIndex] = bAnyBoundary ? 1 : 0;
 
 		if (PlateHitCount == 0)
 		{
-			++CurrentMetrics.RawMissCount;
-			MissMask[Sample.Id] = 1;
-			continue;
+			MissMask[OutputIndex] = 1;
+			return;
 		}
 		if (PlateHitCount > 1)
 		{
-			++CurrentMetrics.RawMultiHitCount;
-			OverlapMask[Sample.Id] = 1;
+			OverlapMask[OutputIndex] = 1;
 		}
 
 		const int32 ResolvedPlateId = PlateHitCount == 1
 			? LowestSetBitIndex(PlateMask)
-			: ChooseCandidatePlateByPolicy(Sample, Candidates, Motions, MultiHitPolicy, RandomTieBreakSeed, CurrentMetrics.Step, CurrentMetrics.EventCount);
+			: ChooseCandidatePlateByPolicy(Sample, Candidates, Motions, ProjectionPolicy, ProjectionTieBreakSeed, ProjectionStep, ProjectionEventCount);
 		const FCarrierLabVizCandidate* Chosen = Candidates.FindByPredicate([ResolvedPlateId](const FCarrierLabVizCandidate& Candidate)
 		{
 			return Candidate.PlateId == ResolvedPlateId;
@@ -1479,9 +1490,25 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 		const double Fraction = (Chosen != nullptr && State.Plates.IsValidIndex(ResolvedPlateId))
 			? InterpolateContinentalFraction(State.Plates[ResolvedPlateId], *Chosen)
 			: 0.0;
-		RenderPlateIds[Sample.Id] = ResolvedPlateId;
-		RenderContinentalFractions[Sample.Id] = Fraction;
-		ProjectedContinentalArea += Sample.AreaWeight * Fraction;
+		RenderPlateIds[OutputIndex] = ResolvedPlateId;
+		RenderContinentalFractions[OutputIndex] = Fraction;
+		ProjectedAreaBySample[OutputIndex] = Sample.AreaWeight * Fraction;
+	});
+
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		const int32 OutputIndex = Sample.Id;
+		TotalArea += Sample.AreaWeight;
+		if (!AuthoritativeAreaBySample.IsValidIndex(OutputIndex))
+		{
+			continue;
+		}
+		AuthoritativeContinentalArea += AuthoritativeAreaBySample[OutputIndex];
+		ProjectedContinentalArea += ProjectedAreaBySample[OutputIndex];
+		CurrentMetrics.NaNOrInfCount += NaNOrInfMask[OutputIndex] != 0 ? 1 : 0;
+		CurrentMetrics.BoundaryHitCount += BoundaryMask[OutputIndex] != 0 ? 1 : 0;
+		CurrentMetrics.RawMissCount += MissMask[OutputIndex] != 0 ? 1 : 0;
+		CurrentMetrics.RawMultiHitCount += OverlapMask[OutputIndex] != 0 ? 1 : 0;
 	}
 	CurrentMetrics.ProjectionQuerySeconds = FPlatformTime::Seconds() - QueryStartSeconds;
 
