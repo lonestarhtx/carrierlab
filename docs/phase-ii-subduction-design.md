@@ -52,6 +52,9 @@ area-fill, anchored material, or global-sample authority?
 - A triangle is filtered only when a `Subducting` triangle-process label exists.
 - `Ambiguous`, `CollisionCandidate`, and `ThirdPlateIntrusion` are reportable
   states, not silent fallbacks.
+- `Ambiguous` polarity applies only to genuine two-plate contacts. Third-plate
+  intrusion is outside the Slice 2 two-plate polarity model and cannot emit
+  `Subducting` or `Overriding` labels.
 - Centroid and random policies remain comparison controls and are never the
   primary Phase II resolution path.
 
@@ -69,6 +72,7 @@ Names may evolve in code, but the separations are binding.
 - confidence/margin
 - source step and event window
 - third-plate intrusion flag
+- label eligibility: two-plate-labelable or third-plate-out-of-scope
 
 `FCarrierTriangleProcessLabel`
 
@@ -124,7 +128,7 @@ Classification:
 - divergent contact: separating motion; never subduction
 - transform/low-margin contact: signed velocity near zero; report as ambiguous
 - third-plate contact: three or more non-boundary plates participate; report
-  separately
+  separately and mark as non-labeling for Slice 2
 
 The signed velocity calculation must be tested with mirrored forced-convergence
 and forced-divergence fixtures. Magnitude-only or absolute-dot classification is
@@ -142,6 +146,9 @@ polarity policy is therefore conservative:
   unless a fixture supplies it.
 - If both sides are continental, classify as collision-candidate or ambiguous;
   do not invent subduction.
+- If the contact is third-plate intrusion, do not assign two-plate polarity.
+  Record it as outside the Slice 2 polarity model. It is not `Ambiguous`
+  polarity, and it must not produce subducting or overriding triangle labels.
 - Test fixtures may provide explicit polarity to prove the filter path.
 
 This keeps "subduction label exists" distinct from "carrier picked a convenient
@@ -155,6 +162,10 @@ Rules:
 
 - Label only triangles within a bounded distance from contact evidence.
 - Record source contact id and reason for every label.
+- Emit triangle labels only from non-third-plate contacts. Third-plate evidence
+  remains contact evidence only until a later approved triple-junction model
+  exists.
+- Every emitted triangle label must trace to exactly one labelable contact id.
 - Filter area must scale with boundary length, not with overlap area.
 - Broad masks are a failure unless a later approved physical process explicitly
   creates them.
@@ -167,7 +178,8 @@ Phase II integrates at the existing thesis hook:
 
 1. Project each global TDS sample by ray-from-origin triangle queries.
 2. For each raw candidate, reject the candidate only if its plate-local triangle
-   has a `Subducting` process label active for the current resampling event.
+   has a `Subducting` process label from a non-third-plate contact active for
+   the current resampling event.
 3. If one candidate remains, barycentrically transfer material.
 4. If zero candidates remain because all candidates were filtered, report
    `filter-exhausted`; do not silently gap-fill.
@@ -192,6 +204,11 @@ are:
 - Authoritative CAF changes only through named material events.
 - Per-plate area deltas reconcile with filter/material event records.
 - Third-plate intrusion is never folded into ordinary two-plate subduction.
+- Third-plate contacts emit no `Subducting` or `Overriding` triangle labels in
+  Slice 2.
+- Same plate pairs may contain both convergent and divergent evidence at
+  different locations. Filtering decisions must be keyed by local contact id and
+  triangle evidence, never by a global plate-pair convergence flag.
 
 ## Diagnostics
 
@@ -203,6 +220,7 @@ Every Phase II checkpoint must include:
 - unresolved-overlap mask
 - ambiguous-contact mask
 - third-plate-contact mask
+- third-plate-out-of-scope contact count
 - authoritative CAF and projected CAF time series
 - per-plate area and material delta table
 - event log with contact id, triangle id, plate pair, polarity, signed velocity,

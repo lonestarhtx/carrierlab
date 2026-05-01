@@ -88,10 +88,15 @@ Work:
 - Implement conservative polarity:
   oceanic-under-continental, fixture-specified where provided, ambiguous for
   same-material contacts without an approved proxy.
+- Treat third-plate contacts as non-labeling evidence outside the Slice 2
+  two-plate polarity model. They are not ambiguous polarity and may not emit
+  `Subducting` or `Overriding` labels.
 - Label local triangles near contacts as subducting, overriding,
   collision-candidate, or ambiguous.
 - Record source contact id, local triangle id, source global triangle id,
   signed velocity margin, distance from contact, and label reason.
+- Record an explicit third-plate-out-of-scope count for third-plate evidence
+  left unlabeled.
 - Export contact and label overlays.
 
 Exit gate:
@@ -99,10 +104,12 @@ Exit gate:
 - Fixture polarity labels the expected under plate.
 - Polarity-swap fixture swaps the filtered plate.
 - Same-material contacts remain ambiguous unless fixture polarity is enabled.
+- Third-plate contacts remain unlabeled or explicitly out-of-scope; any
+  third-plate-derived `Subducting` or `Overriding` label is a failure.
 - Filter candidate area is bounded relative to boundary length.
 - No labels appear in zero-motion, divergence, or single-plate controls.
-- Every triangle label is traceable to exactly one contact or an explicit
-  ambiguity record.
+- Every triangle label is traceable to exactly one non-third-plate contact or
+  an explicit two-plate ambiguity record.
 
 Checkpoint artifact:
 
@@ -120,6 +127,10 @@ Work:
 - Report pre-filter candidates, filtered candidates, post-filter candidates,
   unresolved multi-hit samples, and filter-exhausted samples.
 - Run cadence-faithful 60k before any long-window stress case.
+- Add a same-pair mixed-signal fixture where one plate pair produces both
+  convergent and divergent evidence at different locations on the sphere.
+  Filtering must follow local contact ids and triangle labels, not a global
+  plate-pair convergence decision.
 
 Exit gate:
 
@@ -128,6 +139,8 @@ Exit gate:
 - Forced-convergence fixture filters the expected under-plate triangles.
 - Forced-divergence fixture still uses gap handling and produces no subduction
   labels.
+- Same-pair mixed-signal fixture filters only locally labeled convergent
+  evidence and leaves divergent evidence unfiltered for gap/resampling logic.
 - Authoritative CAF changes only through named material events.
 - Same-seed replay reproduces contacts, labels, filter decisions, and
   post-resampling state hashes.
@@ -193,6 +206,10 @@ Pause the slice and write an investigation checkpoint if any of these appear:
 - centroid/random policy remains in the primary convergent-resolution path
 - determinism breaks
 - third-plate intrusion is folded into ordinary two-plate subduction
+- third-plate intrusion emits `Subducting` or `Overriding` labels before an
+  approved triple-junction model exists
+- filtering is keyed by global plate-pair convergence rather than local contact
+  evidence
 - CAF or material changes occur without a named material event
 - triangle filtering becomes a broad area-fill mask
 - sign-aware convergence controls produce symmetric divergence/convergence

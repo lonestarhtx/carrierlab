@@ -136,8 +136,10 @@ Detection:
 
 - keep third-plate intrusion as its own class
 - export third-plate contact masks
-- forbid two-plate labels when three non-boundary candidates are present unless
-  an explicit disambiguation rule is approved
+- forbid `Subducting` or `Overriding` labels when three non-boundary candidates
+  are present unless an explicit triple-junction model is approved
+- report third-plate-out-of-scope counts separately from ambiguous two-plate
+  polarity
 
 ## 8. Material Looks Conserved Only In Aggregate
 
@@ -176,6 +178,32 @@ Detection:
 - report timing slices for projection, contact detection, triangle labeling,
   filtering, resampling, hashing, and export
 - run 60k profiling before escalating to 100k/250k
+
+## 10. Same-Pair Mixed Signal Is Collapsed Into A Global Plate-Pair Flag
+
+Symptom: a plate pair is treated as globally convergent or globally divergent,
+so labels or filters apply in the wrong region on the closed sphere.
+
+Likely cause: the implementation keys filtering by plate pair alone instead of
+by local contact evidence and plate-local triangle ids. Slice 1's
+forced-divergence caveat shows why this matters: the same pair can have a
+separating fixture point while other regions become convergent as motion
+accumulates.
+
+Evidence:
+
+- divergent evidence from a pair receives subduction labels because the pair has
+  convergent contacts elsewhere
+- same-pair contact ids with opposite signs feed the same filter decision
+- reversing fixture motion changes global pair status but not local label
+  locality
+
+Detection:
+
+- add a same-pair mixed-signal fixture in Slice 3
+- require filter decisions to cite local contact ids and plate-local triangle
+  labels, not only plate pair ids
+- report convergent and divergent evidence counts for each top plate pair
 
 ## Required Negative Controls
 
