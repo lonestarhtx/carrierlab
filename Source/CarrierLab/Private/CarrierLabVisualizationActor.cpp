@@ -3485,6 +3485,48 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB6NeighborPropagationAudit(FCarri
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIB7HashClosureAudit(FCarrierLabPhaseIIIB7HashClosureAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIB7HashClosureAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.SampleCount = State.Samples.Num();
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.MatrixPairCount = State.ConvergenceSubductionMatrixPairKeys.Num();
+	OutAudit.MatrixRayTestCount = State.ConvergenceSubductionMatrixRayTestCount;
+	OutAudit.MatrixHitCount = State.ConvergenceSubductionMatrixHitCount;
+	OutAudit.MatrixBoundaryHitCount = State.ConvergenceSubductionMatrixBoundaryHitCount;
+	OutAudit.MatrixNonConvergentHitCount = State.ConvergenceSubductionMatrixNonConvergentHitCount;
+	OutAudit.PolarityDecisionCount = State.ConvergenceSubductionPolarityDecisions.Num();
+	OutAudit.TriangleHitCount = State.ConvergenceSubductionTriangleHits.Num();
+	OutAudit.PropagationSeedHitCount = State.ConvergenceNeighborPropagationSeedCount;
+	OutAudit.PropagationAddedCount = State.ConvergenceNeighborPropagationAddedCount;
+	OutAudit.PropagationDuplicateCount = State.ConvergenceNeighborPropagationDuplicateCount;
+	OutAudit.PropagationDistanceRejectedCount = State.ConvergenceNeighborPropagationDistanceRejectedCount;
+	OutAudit.PropagationInvalidCount = State.ConvergenceNeighborPropagationInvalidCount;
+	OutAudit.ProjectionHash = CurrentMetrics.LastHash;
+	OutAudit.StateHash = CurrentMetrics.StateHash;
+	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+	OutAudit.MetricsConvergenceTrackingHash = CurrentMetrics.ConvergenceTrackingHash;
+	OutAudit.ComputedConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
+	OutAudit.bMetricsHashMatchesComputed =
+		OutAudit.MetricsConvergenceTrackingHash == OutAudit.ComputedConvergenceTrackingHash;
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		OutAudit.ActiveTriangleCount += Plate.ActiveBoundaryTriangles.Num();
+		OutAudit.DistanceRecordCount += Plate.ActiveBoundaryTriangleDistancesKm.Num();
+	}
+
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())

@@ -625,6 +625,35 @@ struct FCarrierLabPhaseIIIB6NeighborPropagationAudit
 	FString ConvergenceTrackingHash;
 };
 
+struct FCarrierLabPhaseIIIB7HashClosureAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	int32 ActiveTriangleCount = 0;
+	int32 DistanceRecordCount = 0;
+	int32 MatrixPairCount = 0;
+	int32 MatrixRayTestCount = 0;
+	int32 MatrixHitCount = 0;
+	int32 MatrixBoundaryHitCount = 0;
+	int32 MatrixNonConvergentHitCount = 0;
+	int32 PolarityDecisionCount = 0;
+	int32 TriangleHitCount = 0;
+	int32 PropagationSeedHitCount = 0;
+	int32 PropagationAddedCount = 0;
+	int32 PropagationDuplicateCount = 0;
+	int32 PropagationDistanceRejectedCount = 0;
+	int32 PropagationInvalidCount = 0;
+	FString ProjectionHash;
+	FString StateHash;
+	FString CrustStateHash;
+	FString MetricsConvergenceTrackingHash;
+	FString ComputedConvergenceTrackingHash;
+	bool bMetricsHashMatchesComputed = false;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -795,6 +824,7 @@ public:
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
 	bool GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseIIIB4PolarityAudit& OutAudit) const;
 	bool GetPhaseIIIB6NeighborPropagationAudit(FCarrierLabPhaseIIIB6NeighborPropagationAudit& OutAudit) const;
+	bool GetPhaseIIIB7HashClosureAudit(FCarrierLabPhaseIIIB7HashClosureAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
 	bool SeedPhaseIIIB6SingleConvergentTriangleForTest(
