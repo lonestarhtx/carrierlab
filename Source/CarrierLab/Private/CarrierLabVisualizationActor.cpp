@@ -1499,6 +1499,362 @@ bool ACarrierLabVisualizationActor::BuildPhaseIITriangleLabels(
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
+	const TArray<FCarrierLabPhaseIITriangleLabelRecord>& Labels,
+	TArray<FCarrierLabPhaseIIFilterDecisionRecord>& OutDecisions,
+	FCarrierLabPhaseIIResamplingFilterMetrics& OutMetrics)
+{
+	OutDecisions.Reset();
+	OutMetrics = FCarrierLabPhaseIIResamplingFilterMetrics();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+
+	const double EventStartSeconds = FPlatformTime::Seconds();
+	ProjectCurrentCarrier();
+	OutMetrics.EventId = CurrentMetrics.EventCount + 1;
+	OutMetrics.Step = CurrentMetrics.Step;
+	OutMetrics.SampleCount = State.Samples.Num();
+	OutMetrics.AuthoritativeCAFBefore = CurrentMetrics.AuthoritativeCAF;
+	OutMetrics.ProjectedCAFBefore = CurrentMetrics.ProjectedCAF;
+	OutMetrics.ProjectionHashBefore = CurrentMetrics.LastHash;
+	OutMetrics.StateHashBefore = CurrentMetrics.StateHash;
+
+	auto TriangleKey = [](const int32 PlateId, const int32 LocalTriangleId) -> uint64
+	{
+		return (static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) | static_cast<uint32>(LocalTriangleId);
+	};
+
+	TMap<uint64, const FCarrierLabPhaseIITriangleLabelRecord*> SubductingLabelsByTriangle;
+	for (const FCarrierLabPhaseIITriangleLabelRecord& Label : Labels)
+	{
+		if (Label.bFromThirdPlateContact)
+		{
+			++OutMetrics.ThirdPlateLabelInputCount;
+			continue;
+		}
+		if (Label.Label == ECarrierLabPhaseIITriangleLabel::Ambiguous ||
+			Label.Label == ECarrierLabPhaseIITriangleLabel::CollisionCandidate)
+		{
+			++OutMetrics.AmbiguousLabelInputCount;
+			continue;
+		}
+		if (Label.Label != ECarrierLabPhaseIITriangleLabel::Subducting ||
+			Label.PlateId == INDEX_NONE ||
+			Label.LocalTriangleId == INDEX_NONE)
+		{
+			continue;
+		}
+
+		++OutMetrics.SubductingLabelInputCount;
+		const uint64 Key = TriangleKey(Label.PlateId, Label.LocalTriangleId);
+		const FCarrierLabPhaseIITriangleLabelRecord** Existing = SubductingLabelsByTriangle.Find(Key);
+		if (Existing == nullptr || (*Existing != nullptr && Label.LabelId < (*Existing)->LabelId))
+		{
+			SubductingLabelsByTriangle.Add(Key, &Label);
+		}
+	}
+
+	FString MeshError;
+	if (!RefreshProjectionRayMesh(MeshError))
+	{
+		UE_LOG(LogTemp, Error, TEXT("CarrierLab Phase II filtered resample failed: %s"), *MeshError);
+		return false;
+	}
+
+	const double FilterStartSeconds = FPlatformTime::Seconds();
+	const FCarrierLabVizBoundaryIndex BoundaryIndex = BuildBoundaryIndex(State);
+	TArray<double> AreaBefore;
+	TArray<double> AreaAfter;
+	AreaBefore.Init(0.0, State.Plates.Num());
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (AreaBefore.IsValidIndex(Sample.PlateId))
+		{
+			AreaBefore[Sample.PlateId] += Sample.AreaWeight;
+		}
+	}
+
+	TArray<int32> NewPlateIds;
+	TArray<double> NewFractions;
+	NewPlateIds.SetNum(State.Samples.Num());
+	NewFractions.SetNum(State.Samples.Num());
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		NewPlateIds[Sample.Id] = Sample.PlateId;
+		NewFractions[Sample.Id] = Sample.ContinentalFraction;
+	}
+
+	TSet<int32> SamplesWithFilteredCandidates;
+	TArray<FCarrierLabVizCandidate> Candidates;
+	TArray<FCarrierLabVizCandidate> RemainingCandidates;
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		uint64 RawPlateMask = 0;
+		bool bAnyBoundary = false;
+		QuerySampleCandidates(State, ProjectionRayMesh, Sample, Candidates, RawPlateMask, bAnyBoundary);
+		const int32 RawPlateCount = CountBits64(RawPlateMask);
+		if (RawPlateCount == 0)
+		{
+			++OutMetrics.RawMissSampleCount;
+			FCarrierLabVizBoundaryPoint Q1;
+			FCarrierLabVizBoundaryPoint Q2;
+			if (FindNearestBoundaryPair(BoundaryIndex, Sample.UnitPosition, Q1, Q2))
+			{
+				const FVector3d RidgePoint = NormalizeOrFallback(Q1.UnitPosition + Q2.UnitPosition, Sample.UnitPosition);
+				const double SignedVelocity = SignedPairSeparationVelocityForPlatePair(RidgePoint, Motions, Q1.PlateId, Q2.PlateId);
+				++OutMetrics.GapFillCount;
+				if (SignedVelocity <= 0.0)
+				{
+					++OutMetrics.NonSeparatingGapFillCount;
+				}
+				NewPlateIds[Sample.Id] = Q1.PlateId;
+				NewFractions[Sample.Id] = FMath::Clamp(0.5 * (Q1.ContinentalFraction + Q2.ContinentalFraction), 0.0, 1.0);
+
+				FCarrierLabPhaseIIFilterDecisionRecord& Decision = OutDecisions.AddDefaulted_GetRef();
+				Decision.DecisionId = OutDecisions.Num() - 1;
+				Decision.EventId = OutMetrics.EventId;
+				Decision.Step = OutMetrics.Step;
+				Decision.SampleId = Sample.Id;
+				Decision.ResolvedPlateId = Q1.PlateId;
+				Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::GapFill;
+			}
+			continue;
+		}
+
+		if (RawPlateCount > 1)
+		{
+			++OutMetrics.RawMultiHitSampleCount;
+			if (RawPlateCount >= 3)
+			{
+				++OutMetrics.RawThirdPlateSampleCount;
+			}
+		}
+
+		uint64 PostPlateMask = 0;
+		int32 FilteredCandidateCount = 0;
+		RemainingCandidates.Reset(Candidates.Num());
+		for (const FCarrierLabVizCandidate& Candidate : Candidates)
+		{
+			const FCarrierLabPhaseIITriangleLabelRecord* const* LabelPtr = SubductingLabelsByTriangle.Find(TriangleKey(Candidate.PlateId, Candidate.LocalTriangleId));
+			if (LabelPtr != nullptr && *LabelPtr != nullptr)
+			{
+				++FilteredCandidateCount;
+				++OutMetrics.FilteredCandidateCount;
+				SamplesWithFilteredCandidates.Add(Sample.Id);
+				const FCarrierLabPhaseIITriangleLabelRecord& Label = **LabelPtr;
+				if (Label.bFromThirdPlateContact)
+				{
+					++OutMetrics.DecisionsFromThirdPlateLabelCount;
+				}
+
+				FCarrierLabPhaseIIFilterDecisionRecord& Decision = OutDecisions.AddDefaulted_GetRef();
+				Decision.DecisionId = OutDecisions.Num() - 1;
+				Decision.EventId = OutMetrics.EventId;
+				Decision.Step = OutMetrics.Step;
+				Decision.SampleId = Sample.Id;
+				Decision.RawCandidateCount = Candidates.Num();
+				Decision.RawPlateCount = RawPlateCount;
+				Decision.FilteredCandidateCount = FilteredCandidateCount;
+				Decision.FilteredPlateId = Candidate.PlateId;
+				Decision.FilteredLocalTriangleId = Candidate.LocalTriangleId;
+				Decision.SourceContactId = Label.ContactId;
+				Decision.SourceLabelId = Label.LabelId;
+				Decision.bBoundaryEvidence = bAnyBoundary || Candidate.bBoundary;
+				Decision.bThirdPlateEvidence = RawPlateCount >= 3;
+				Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::CandidateFiltered;
+				continue;
+			}
+
+			RemainingCandidates.Add(Candidate);
+			PostPlateMask |= (1ull << static_cast<uint64>(Candidate.PlateId));
+		}
+
+		const int32 PostPlateCount = CountBits64(PostPlateMask);
+		if (PostPlateCount == 0)
+		{
+			++OutMetrics.FilterExhaustedSampleCount;
+			FCarrierLabPhaseIIFilterDecisionRecord& Decision = OutDecisions.AddDefaulted_GetRef();
+			Decision.DecisionId = OutDecisions.Num() - 1;
+			Decision.EventId = OutMetrics.EventId;
+			Decision.Step = OutMetrics.Step;
+			Decision.SampleId = Sample.Id;
+			Decision.RawCandidateCount = Candidates.Num();
+			Decision.RawPlateCount = RawPlateCount;
+			Decision.FilteredCandidateCount = FilteredCandidateCount;
+			Decision.PostFilterCandidateCount = RemainingCandidates.Num();
+			Decision.PostFilterPlateCount = PostPlateCount;
+			Decision.ResolvedPlateId = Sample.PlateId;
+			Decision.bBoundaryEvidence = bAnyBoundary;
+			Decision.bThirdPlateEvidence = RawPlateCount >= 3;
+			Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::FilterExhausted;
+			continue;
+		}
+
+		if (PostPlateCount > 1)
+		{
+			++OutMetrics.PostFilterMultiHitSampleCount;
+			++OutMetrics.UnresolvedMultiHitSampleCount;
+			if (!bAnyBoundary)
+			{
+				++OutMetrics.PostFilterNonBoundaryMultiHitSampleCount;
+			}
+
+			FCarrierLabPhaseIIFilterDecisionRecord& Decision = OutDecisions.AddDefaulted_GetRef();
+			Decision.DecisionId = OutDecisions.Num() - 1;
+			Decision.EventId = OutMetrics.EventId;
+			Decision.Step = OutMetrics.Step;
+			Decision.SampleId = Sample.Id;
+			Decision.RawCandidateCount = Candidates.Num();
+			Decision.RawPlateCount = RawPlateCount;
+			Decision.FilteredCandidateCount = FilteredCandidateCount;
+			Decision.PostFilterCandidateCount = RemainingCandidates.Num();
+			Decision.PostFilterPlateCount = PostPlateCount;
+			Decision.ResolvedPlateId = Sample.PlateId;
+			Decision.bBoundaryEvidence = bAnyBoundary;
+			Decision.bThirdPlateEvidence = RawPlateCount >= 3;
+			Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::UnresolvedMultiHit;
+			continue;
+		}
+
+		++OutMetrics.PostFilterSingleHitSampleCount;
+		const int32 ResolvedPlateId = LowestSetBitIndex(PostPlateMask);
+		const FCarrierLabVizCandidate* Chosen = RemainingCandidates.FindByPredicate([ResolvedPlateId](const FCarrierLabVizCandidate& Candidate)
+		{
+			return Candidate.PlateId == ResolvedPlateId;
+		});
+		NewPlateIds[Sample.Id] = ResolvedPlateId;
+		NewFractions[Sample.Id] = (Chosen != nullptr && State.Plates.IsValidIndex(ResolvedPlateId))
+			? InterpolateContinentalFraction(State.Plates[ResolvedPlateId], *Chosen)
+			: Sample.ContinentalFraction;
+
+		if (FilteredCandidateCount > 0)
+		{
+			FCarrierLabPhaseIIFilterDecisionRecord& Decision = OutDecisions.AddDefaulted_GetRef();
+			Decision.DecisionId = OutDecisions.Num() - 1;
+			Decision.EventId = OutMetrics.EventId;
+			Decision.Step = OutMetrics.Step;
+			Decision.SampleId = Sample.Id;
+			Decision.RawCandidateCount = Candidates.Num();
+			Decision.RawPlateCount = RawPlateCount;
+			Decision.FilteredCandidateCount = FilteredCandidateCount;
+			Decision.PostFilterCandidateCount = RemainingCandidates.Num();
+			Decision.PostFilterPlateCount = PostPlateCount;
+			Decision.ResolvedPlateId = ResolvedPlateId;
+			Decision.bBoundaryEvidence = bAnyBoundary;
+			Decision.bThirdPlateEvidence = RawPlateCount >= 3;
+			Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+		}
+	}
+	OutMetrics.FilteredSampleCount = SamplesWithFilteredCandidates.Num();
+	OutMetrics.FilterSeconds = FPlatformTime::Seconds() - FilterStartSeconds;
+
+	for (CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (NewPlateIds.IsValidIndex(Sample.Id) && NewPlateIds[Sample.Id] != INDEX_NONE)
+		{
+			Sample.PlateId = NewPlateIds[Sample.Id];
+			Sample.ContinentalFraction = FMath::Clamp(NewFractions[Sample.Id], 0.0, 1.0);
+			Sample.bContinental = Sample.ContinentalFraction >= 0.5;
+		}
+	}
+
+	CarrierLab::FCarrierLabStage0::RebuildPlateLocalStateFromSamples(State);
+	bPlateRayMeshTopologyDirty = true;
+	bProjectionRayMeshTopologyDirty = true;
+	for (FCarrierLabVisualizationMotion& Motion : Motions)
+	{
+		Motion.CurrentCenter = FVector3d::ZeroVector;
+	}
+	TArray<int32> Counts;
+	Counts.Init(0, Motions.Num());
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (Motions.IsValidIndex(Sample.PlateId))
+		{
+			Motions[Sample.PlateId].CurrentCenter += Sample.UnitPosition;
+			++Counts[Sample.PlateId];
+		}
+	}
+	for (int32 PlateId = 0; PlateId < Motions.Num(); ++PlateId)
+	{
+		Motions[PlateId].CurrentCenter = NormalizeOrFallback(
+			Motions[PlateId].CurrentCenter,
+			State.Plates.IsValidIndex(PlateId) ? State.Plates[PlateId].InitialCenter : FVector3d::UnitZ());
+	}
+
+	AreaAfter.Init(0.0, State.Plates.Num());
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (AreaAfter.IsValidIndex(Sample.PlateId))
+		{
+			AreaAfter[Sample.PlateId] += Sample.AreaWeight;
+		}
+	}
+	for (int32 PlateId = 0; PlateId < AreaBefore.Num() && PlateId < AreaAfter.Num(); ++PlateId)
+	{
+		const double DeltaPercent = AreaBefore[PlateId] > UE_DOUBLE_SMALL_NUMBER
+			? 100.0 * FMath::Abs(AreaAfter[PlateId] - AreaBefore[PlateId]) / AreaBefore[PlateId]
+			: 0.0;
+		if (DeltaPercent > OutMetrics.MaxPlateAreaDeltaPercent)
+		{
+			OutMetrics.MaxPlateAreaDeltaPercent = DeltaPercent;
+			OutMetrics.MaxPlateAreaDeltaPlateId = PlateId;
+		}
+	}
+
+	++CurrentMetrics.EventCount;
+	const int32 EventCount = CurrentMetrics.EventCount;
+	CaptureDriftReference();
+	ProjectCurrentCarrier();
+	CurrentMetrics.EventCount = EventCount;
+	CurrentMetrics.LastGapFillCount = OutMetrics.GapFillCount;
+	CurrentMetrics.LastNonSeparatingGapFillCount = OutMetrics.NonSeparatingGapFillCount;
+	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - EventStartSeconds;
+	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
+
+	OutMetrics.AuthoritativeCAFAfter = CurrentMetrics.AuthoritativeCAF;
+	OutMetrics.ProjectedCAFAfter = CurrentMetrics.ProjectedCAF;
+	OutMetrics.ProjectionHashAfter = CurrentMetrics.LastHash;
+	OutMetrics.StateHashAfter = CurrentMetrics.StateHash;
+	OutMetrics.ResampleEventSeconds = CurrentMetrics.ResampleEventSeconds;
+
+	uint64 DecisionHash = 1469598103934665603ull;
+	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.EventId + 1));
+	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.Step + 1));
+	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.SampleCount + 1));
+	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.FilteredCandidateCount + 1));
+	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.UnresolvedMultiHitSampleCount + 1));
+	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.FilterExhaustedSampleCount + 1));
+	HashMixDouble(DecisionHash, OutMetrics.AuthoritativeCAFBefore);
+	HashMixDouble(DecisionHash, OutMetrics.AuthoritativeCAFAfter);
+	HashMixDouble(DecisionHash, OutMetrics.ProjectedCAFBefore);
+	HashMixDouble(DecisionHash, OutMetrics.ProjectedCAFAfter);
+	for (const FCarrierLabPhaseIIFilterDecisionRecord& Decision : OutDecisions)
+	{
+		HashMix(DecisionHash, static_cast<uint64>(Decision.DecisionId + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.EventId + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.Step + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.SampleId + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.RawCandidateCount + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.RawPlateCount + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.FilteredCandidateCount + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.PostFilterCandidateCount + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.PostFilterPlateCount + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.ResolvedPlateId + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.FilteredPlateId + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.FilteredLocalTriangleId + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.SourceContactId + 1));
+		HashMix(DecisionHash, static_cast<uint64>(Decision.SourceLabelId + 1));
+		HashMix(DecisionHash, Decision.bBoundaryEvidence ? 1ull : 0ull);
+		HashMix(DecisionHash, Decision.bThirdPlateEvidence ? 1ull : 0ull);
+		HashMix(DecisionHash, static_cast<uint64>(Decision.DecisionClass) + 1);
+	}
+	OutMetrics.FilterDecisionHash = HashToString(DecisionHash);
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::GetPhaseIIMotion(const int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const
 {
 	if (!Motions.IsValidIndex(PlateId))

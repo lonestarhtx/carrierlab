@@ -265,6 +265,73 @@ struct FCarrierLabPhaseIITriangleLabelMetrics
 	FString TriangleLabelHash;
 };
 
+enum class ECarrierLabPhaseIIFilterDecisionClass : uint8
+{
+	CandidateFiltered,
+	ResolvedSingle,
+	GapFill,
+	UnresolvedMultiHit,
+	FilterExhausted
+};
+
+struct FCarrierLabPhaseIIFilterDecisionRecord
+{
+	int32 DecisionId = INDEX_NONE;
+	int32 EventId = 0;
+	int32 Step = 0;
+	int32 SampleId = INDEX_NONE;
+	int32 RawCandidateCount = 0;
+	int32 RawPlateCount = 0;
+	int32 FilteredCandidateCount = 0;
+	int32 PostFilterCandidateCount = 0;
+	int32 PostFilterPlateCount = 0;
+	int32 ResolvedPlateId = INDEX_NONE;
+	int32 FilteredPlateId = INDEX_NONE;
+	int32 FilteredLocalTriangleId = INDEX_NONE;
+	int32 SourceContactId = INDEX_NONE;
+	int32 SourceLabelId = INDEX_NONE;
+	bool bBoundaryEvidence = false;
+	bool bThirdPlateEvidence = false;
+	ECarrierLabPhaseIIFilterDecisionClass DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+};
+
+struct FCarrierLabPhaseIIResamplingFilterMetrics
+{
+	int32 EventId = 0;
+	int32 Step = 0;
+	int32 SampleCount = 0;
+	int32 RawMultiHitSampleCount = 0;
+	int32 RawMissSampleCount = 0;
+	int32 RawThirdPlateSampleCount = 0;
+	int32 SubductingLabelInputCount = 0;
+	int32 AmbiguousLabelInputCount = 0;
+	int32 ThirdPlateLabelInputCount = 0;
+	int32 FilteredCandidateCount = 0;
+	int32 FilteredSampleCount = 0;
+	int32 PostFilterSingleHitSampleCount = 0;
+	int32 PostFilterMultiHitSampleCount = 0;
+	int32 PostFilterNonBoundaryMultiHitSampleCount = 0;
+	int32 UnresolvedMultiHitSampleCount = 0;
+	int32 FilterExhaustedSampleCount = 0;
+	int32 GapFillCount = 0;
+	int32 NonSeparatingGapFillCount = 0;
+	int32 UnexpectedFilteredPlateCount = 0;
+	int32 DecisionsFromThirdPlateLabelCount = 0;
+	double AuthoritativeCAFBefore = 0.0;
+	double AuthoritativeCAFAfter = 0.0;
+	double ProjectedCAFBefore = 0.0;
+	double ProjectedCAFAfter = 0.0;
+	double MaxPlateAreaDeltaPercent = 0.0;
+	int32 MaxPlateAreaDeltaPlateId = INDEX_NONE;
+	double FilterSeconds = 0.0;
+	double ResampleEventSeconds = 0.0;
+	FString ProjectionHashBefore;
+	FString ProjectionHashAfter;
+	FString StateHashBefore;
+	FString StateHashAfter;
+	FString FilterDecisionHash;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -380,6 +447,10 @@ public:
 		const FCarrierLabPhaseIITriangleLabelConfig& Config,
 		TArray<FCarrierLabPhaseIITriangleLabelRecord>& OutLabels,
 		FCarrierLabPhaseIITriangleLabelMetrics& OutMetrics) const;
+	bool ApplyPhaseIIResamplingFilterEvent(
+		const TArray<FCarrierLabPhaseIITriangleLabelRecord>& Labels,
+		TArray<FCarrierLabPhaseIIFilterDecisionRecord>& OutDecisions,
+		FCarrierLabPhaseIIResamplingFilterMetrics& OutMetrics);
 	bool GetPhaseIIMotion(int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const;
 	double ComputePhaseIIPairSignedConvergenceVelocity(int32 PlateA, int32 PlateB) const;
 
