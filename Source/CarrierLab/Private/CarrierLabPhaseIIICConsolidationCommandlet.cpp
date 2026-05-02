@@ -15,6 +15,9 @@ namespace
 	constexpr int32 BaselinePlates = 40;
 	constexpr int32 BaselineSeed = 42;
 	constexpr int32 BaselineSteps = 32;
+	constexpr int32 MixedSignalSamples = 60000;
+	constexpr int32 MixedSignalPlates = 2;
+	constexpr int32 LocalDiscriminatorMaxSteps = 80;
 	constexpr int32 FixtureSamples = 10000;
 	constexpr int32 FixturePlates = 2;
 	constexpr double VelocityMmPerYear = 66.6666666667;
@@ -175,8 +178,35 @@ namespace
 		int32 Replay = 0;
 		bool bCompleted = false;
 		double Seconds = 0.0;
+		FCarrierLabPhaseIIContactMetrics ContactMetrics;
+		FCarrierLabPhaseIITriangleLabelMetrics LabelMetrics;
 		FCarrierLabPhaseIIResamplingFilterMetrics FilterMetrics;
 		FCarrierLabPhaseIIMaterialLedgerMetrics LedgerMetrics;
+		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+	};
+
+	struct FIIIBSignatureResult
+	{
+		int32 Replay = 0;
+		FString FixtureName;
+		int32 StepCount = 0;
+		bool bCompleted = false;
+		double Seconds = 0.0;
+		double PairSignedConvergenceVelocity = 0.0;
+		FCarrierLabPhaseIIIB1TrackingAudit TrackingAudit;
+		FCarrierLabPhaseIIIB2DistanceAudit DistanceAudit;
+		FCarrierLabPhaseIIIB3SubductionMatrixAudit MatrixAudit;
+		FCarrierLabPhaseIIIB4PolarityAudit PolarityAudit;
+		FCarrierLabPhaseIIIB6NeighborPropagationAudit PropagationAudit;
+		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+		FString ActiveListComponentHash;
+		FString DistanceComponentHash;
+		FString MatrixEvidenceComponentHash;
+		FString PolarityComponentHash;
+		FString PropagationComponentHash;
+		FString ClosureComponentHash;
+		FString Slice55ComponentHash;
+		FString IndependentSignatureHash;
 	};
 
 	struct FIIICReplayResult
@@ -234,18 +264,392 @@ namespace
 		TArray<FCarrierLabPhaseIITriangleLabelRecord> Labels;
 		TArray<FCarrierLabPhaseIIFilterDecisionRecord> Decisions;
 		FCarrierLabPhaseIITriangleLabelConfig LabelConfig;
-		FCarrierLabPhaseIIContactMetrics ContactMetrics;
-		FCarrierLabPhaseIITriangleLabelMetrics LabelMetrics;
 		const bool bOk =
-			Actor->DetectPhaseIIContacts(Contacts, ContactMetrics) &&
-			Actor->BuildPhaseIITriangleLabels(Contacts, LabelConfig, Labels, LabelMetrics) &&
-			Actor->ApplyPhaseIIResamplingFilterEvent(Labels, Decisions, OutResult.FilterMetrics, nullptr, &OutResult.LedgerMetrics);
+			Actor->DetectPhaseIIContacts(Contacts, OutResult.ContactMetrics) &&
+			Actor->BuildPhaseIITriangleLabels(Contacts, LabelConfig, Labels, OutResult.LabelMetrics) &&
+			Actor->ApplyPhaseIIResamplingFilterEvent(Labels, Decisions, OutResult.FilterMetrics, nullptr, &OutResult.LedgerMetrics) &&
+			Actor->GetPhaseIIIB7HashClosureAudit(OutResult.ClosureAudit);
 
 		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
 		OutResult.bCompleted = bOk;
 		Actor->Destroy();
 		CollectGarbage(RF_NoFlags);
 		return bOk;
+	}
+
+	void HashMixEvidence(uint64& Hash, const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence)
+	{
+		HashMix(Hash, static_cast<uint64>(Evidence.EvidenceId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.ContactId + 1));
+		HashMix(Hash, Evidence.PairKey + 1ull);
+		HashMix(Hash, static_cast<uint64>(Evidence.PlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.OtherPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.LocalTriangleId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.OtherLocalTriangleId + 1));
+		HashMixDouble(Hash, Evidence.SignedConvergenceVelocity);
+		HashMix(Hash, Evidence.bAccepted ? 1ull : 0ull);
+	}
+
+	FString ComputeActiveListComponentHash(const FCarrierLabPhaseIIIB1TrackingAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-active-list-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SourceBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MissingBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonBoundaryActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DuplicateActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.InvalidActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EmptyActivePlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		return HashToString(Hash);
+	}
+
+	FString ComputeDistanceComponentHash(const FCarrierLabPhaseIIIB2DistanceAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-distance-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SourceBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MissingDistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonFiniteDistanceCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NegativeDistanceCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OverThresholdActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceCulledTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EmptyActivePlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMixDouble(Hash, Audit.DistanceThresholdKm);
+		HashMixDouble(Hash, Audit.MinDistanceKm);
+		HashMixDouble(Hash, Audit.MeanDistanceKm);
+		HashMixDouble(Hash, Audit.MaxDistanceKm);
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeLocalTriangleId + 1));
+		HashMixDouble(Hash, Audit.ProbeDistanceKm);
+		HashMixDouble(Hash, Audit.ProbeStepDistanceKm);
+		return HashToString(Hash);
+	}
+
+	FString ComputeMatrixEvidenceComponentHash(const FCarrierLabPhaseIIIB3SubductionMatrixAudit& Audit, const double PairSignedVelocity)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-matrix-evidence-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.InvalidMatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SelfMatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.RayTestCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.HitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.BoundaryHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonConvergentHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.AcceptedLocalPositiveHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.RejectedLocalNonPositiveHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateA + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateB + 1));
+		HashMixDouble(Hash, PairSignedVelocity);
+		HashMixDouble(Hash, Audit.ProbeSignedConvergenceVelocity);
+		HashMixString(Hash, Audit.MatrixEvidenceHash);
+		HashMix(Hash, static_cast<uint64>(Audit.AcceptedEvidence.Num() + 1));
+		for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : Audit.AcceptedEvidence)
+		{
+			HashMixEvidence(Hash, Evidence);
+		}
+		HashMix(Hash, static_cast<uint64>(Audit.RejectedEvidence.Num() + 1));
+		for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : Audit.RejectedEvidence)
+		{
+			HashMixEvidence(Hash, Evidence);
+		}
+		return HashToString(Hash);
+	}
+
+	FString ComputePolarityComponentHash(const FCarrierLabPhaseIIIB4PolarityAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-polarity-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OceanicUnderContinentalCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.CollisionCandidateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OceanOceanDeferredCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OlderOceanicUnderYoungerOceanicCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.InvalidDecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MissingDecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SubductionPolarityCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateA + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateB + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeUnderPlate + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeOverPlate + 1));
+		HashMixDouble(Hash, Audit.ProbePlateAContinentalFraction);
+		HashMixDouble(Hash, Audit.ProbePlateBContinentalFraction);
+		HashMixDouble(Hash, Audit.ProbePlateAOceanicAge);
+		HashMixDouble(Hash, Audit.ProbePlateBOceanicAge);
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeDecisionClass) + 1ull);
+		HashMix(Hash, static_cast<uint64>(Audit.Decisions.Num() + 1));
+		for (const FCarrierLabPhaseIIIB4PolarityDecisionAudit& Decision : Audit.Decisions)
+		{
+			HashMix(Hash, Decision.PairKey + 1ull);
+			HashMix(Hash, static_cast<uint64>(Decision.PlateA + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.PlateB + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.UnderPlate + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.OverPlate + 1));
+			HashMixDouble(Hash, Decision.PlateAContinentalFraction);
+			HashMixDouble(Hash, Decision.PlateBContinentalFraction);
+			HashMixDouble(Hash, Decision.PlateAOceanicAge);
+			HashMixDouble(Hash, Decision.PlateBOceanicAge);
+			HashMix(Hash, static_cast<uint64>(Decision.DecisionClass) + 1ull);
+		}
+		return HashToString(Hash);
+	}
+
+	FString ComputePropagationComponentHash(const FCarrierLabPhaseIIIB6NeighborPropagationAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-propagation-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.TotalPlateLocalTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonBoundaryActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OverThresholdActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationSeedHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationAddedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDuplicateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDistanceRejectedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationInvalidCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActivePlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MaxActiveTrianglesOnPlate + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeLocalTriangleId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedEvidenceId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedOtherPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedLocalTriangleId + 1));
+		HashMixDouble(Hash, Audit.SeedSignedConvergenceVelocity);
+		HashMixDouble(Hash, Audit.ProbeDistanceKm);
+		HashMixDouble(Hash, Audit.DistanceThresholdKm);
+		HashMixDouble(Hash, Audit.MaxDistanceKm);
+		return HashToString(Hash);
+	}
+
+	FString ComputeClosureComponentHash(const FCarrierLabPhaseIIIB7HashClosureAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-closure-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SampleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixRayTestCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixBoundaryHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixNonConvergentHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PolarityDecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.TriangleHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationSeedHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationAddedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDuplicateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDistanceRejectedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationInvalidCount + 1));
+		HashMixString(Hash, Audit.ProjectionHash);
+		HashMixString(Hash, Audit.StateHash);
+		HashMixString(Hash, Audit.CrustStateHash);
+		HashMixString(Hash, Audit.MetricsConvergenceTrackingHash);
+		HashMixString(Hash, Audit.ComputedConvergenceTrackingHash);
+		HashMix(Hash, Audit.bMetricsHashMatchesComputed ? 1ull : 0ull);
+		return HashToString(Hash);
+	}
+
+	FString ComputeSlice55ComponentHash(const FSlice55BypassResult& A, const FSlice55BypassResult& B)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-slice55-regression-component-v1"));
+		const FSlice55BypassResult* Results[] = { &A, &B };
+		for (const FSlice55BypassResult* Result : Results)
+		{
+			HashMix(Hash, static_cast<uint64>(Result->Replay + 1));
+			HashMix(Hash, Result->bCompleted ? 1ull : 0ull);
+			HashMixString(Hash, Result->ContactMetrics.ContactLogHash);
+			HashMixString(Hash, Result->LabelMetrics.TriangleLabelHash);
+			HashMixString(Hash, Result->FilterMetrics.FilterDecisionHash);
+			HashMixString(Hash, Result->FilterMetrics.StateHashAfter);
+			HashMixString(Hash, Result->LedgerMetrics.MaterialLedgerHash);
+		}
+		HashMixString(Hash, ExpectedSlice55StateHash);
+		HashMixString(Hash, ExpectedSlice55MaterialLedgerHash);
+		return HashToString(Hash);
+	}
+
+	void FinalizeIIIBIndependentSignature(
+		const FSlice55BypassResult& BypassA,
+		const FSlice55BypassResult& BypassB,
+		FIIIBSignatureResult& Result)
+	{
+		Result.ActiveListComponentHash = ComputeActiveListComponentHash(Result.TrackingAudit);
+		Result.DistanceComponentHash = ComputeDistanceComponentHash(Result.DistanceAudit);
+		Result.MatrixEvidenceComponentHash = ComputeMatrixEvidenceComponentHash(Result.MatrixAudit, Result.PairSignedConvergenceVelocity);
+		Result.PolarityComponentHash = ComputePolarityComponentHash(Result.PolarityAudit);
+		Result.PropagationComponentHash = ComputePropagationComponentHash(Result.PropagationAudit);
+		Result.ClosureComponentHash = ComputeClosureComponentHash(Result.ClosureAudit);
+		Result.Slice55ComponentHash = ComputeSlice55ComponentHash(BypassA, BypassB);
+
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-independent-signature-v1"));
+		HashMixString(Hash, Result.FixtureName);
+		HashMix(Hash, static_cast<uint64>(Result.StepCount + 1));
+		HashMixString(Hash, Result.Slice55ComponentHash);
+		HashMixString(Hash, Result.ActiveListComponentHash);
+		HashMixString(Hash, Result.DistanceComponentHash);
+		HashMixString(Hash, Result.MatrixEvidenceComponentHash);
+		HashMixString(Hash, Result.PolarityComponentHash);
+		HashMixString(Hash, Result.PropagationComponentHash);
+		HashMixString(Hash, Result.ClosureComponentHash);
+		Result.IndependentSignatureHash = HashToString(Hash);
+	}
+
+	bool CaptureIIIBSignatureAudits(const ACarrierLabVisualizationActor& Actor, FIIIBSignatureResult& OutResult)
+	{
+		return Actor.GetPhaseIIIB1TrackingAudit(OutResult.TrackingAudit) &&
+			Actor.GetPhaseIIIB2DistanceAudit(OutResult.DistanceAudit) &&
+			Actor.GetPhaseIIIB3SubductionMatrixAudit(OutResult.MatrixAudit) &&
+			Actor.GetPhaseIIIB4PolarityAudit(OutResult.PolarityAudit) &&
+			Actor.GetPhaseIIIB6NeighborPropagationAudit(OutResult.PropagationAudit) &&
+			Actor.GetPhaseIIIB7HashClosureAudit(OutResult.ClosureAudit);
+	}
+
+	bool RunIIIBLocalVsPairSignatureReplay(
+		const int32 Replay,
+		const FSlice55BypassResult& BypassA,
+		const FSlice55BypassResult& BypassB,
+		FIIIBSignatureResult& OutResult)
+	{
+		OutResult = FIIIBSignatureResult();
+		OutResult.Replay = Replay;
+		OutResult.FixtureName = TEXT("local_vs_pair_discriminator");
+		UWorld* World = GetCommandletWorld();
+		if (World == nullptr)
+		{
+			return false;
+		}
+
+		const double StartSeconds = FPlatformTime::Seconds();
+		ACarrierLabVisualizationActor* Actor = SpawnActor(*World, MixedSignalSamples, MixedSignalPlates, 0.50, false, false);
+		if (Actor == nullptr)
+		{
+			return false;
+		}
+		if (!Actor->InitializeCarrier())
+		{
+			Actor->Destroy();
+			return false;
+		}
+		Actor->ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture::ForcedDivergence);
+		if (!Actor->SetPlateContinentalForTest(0, true) ||
+			!Actor->SetPlateContinentalForTest(1, false))
+		{
+			Actor->Destroy();
+			return false;
+		}
+
+		for (int32 Step = 0; Step <= LocalDiscriminatorMaxSteps; ++Step)
+		{
+			if (Step > 0)
+			{
+				Actor->StepOnce();
+			}
+
+			FIIIBSignatureResult Candidate;
+			Candidate.Replay = Replay;
+			Candidate.FixtureName = OutResult.FixtureName;
+			Candidate.StepCount = Step;
+			Candidate.PairSignedConvergenceVelocity = Actor->ComputePhaseIIPairSignedConvergenceVelocity(0, 1);
+			if (!CaptureIIIBSignatureAudits(*Actor, Candidate))
+			{
+				Actor->Destroy();
+				return false;
+			}
+
+			const bool bDiscriminates =
+				Candidate.PairSignedConvergenceVelocity <= 0.0 &&
+				Candidate.MatrixAudit.AcceptedLocalPositiveHitCount > 0 &&
+				Candidate.MatrixAudit.RejectedLocalNonPositiveHitCount > 0 &&
+				Candidate.MatrixAudit.MatrixPairCount == 1 &&
+				Candidate.MatrixAudit.ProbePlateA == 0 &&
+				Candidate.MatrixAudit.ProbePlateB == 1 &&
+				Candidate.PolarityAudit.DecisionCount == 1 &&
+				Candidate.PropagationAudit.PropagationSeedHitCount > 0 &&
+				Candidate.PropagationAudit.PropagationAddedCount > 0 &&
+				Candidate.ClosureAudit.bMetricsHashMatchesComputed;
+			if (bDiscriminates)
+			{
+				FinalizeIIIBIndependentSignature(BypassA, BypassB, Candidate);
+				OutResult = Candidate;
+				OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
+				OutResult.bCompleted = true;
+				break;
+			}
+		}
+
+		Actor->Destroy();
+		CollectGarbage(RF_NoFlags);
+		return OutResult.bCompleted;
+	}
+
+	bool IIIBSignatureReplayStable(const FIIIBSignatureResult& A, const FIIIBSignatureResult& B)
+	{
+		return A.bCompleted && B.bCompleted &&
+			A.FixtureName == B.FixtureName &&
+			A.IndependentSignatureHash == B.IndependentSignatureHash &&
+			A.ActiveListComponentHash == B.ActiveListComponentHash &&
+			A.DistanceComponentHash == B.DistanceComponentHash &&
+			A.MatrixEvidenceComponentHash == B.MatrixEvidenceComponentHash &&
+			A.PolarityComponentHash == B.PolarityComponentHash &&
+			A.PropagationComponentHash == B.PropagationComponentHash &&
+			A.ClosureComponentHash == B.ClosureComponentHash &&
+			A.Slice55ComponentHash == B.Slice55ComponentHash &&
+			A.TrackingAudit.ConvergenceTrackingHash == B.TrackingAudit.ConvergenceTrackingHash &&
+			A.DistanceAudit.ConvergenceTrackingHash == B.DistanceAudit.ConvergenceTrackingHash &&
+			A.MatrixAudit.ConvergenceTrackingHash == B.MatrixAudit.ConvergenceTrackingHash &&
+			A.MatrixAudit.MatrixEvidenceHash == B.MatrixAudit.MatrixEvidenceHash &&
+			A.PolarityAudit.PolarityHash == B.PolarityAudit.PolarityHash &&
+			A.PolarityAudit.ConvergenceTrackingHash == B.PolarityAudit.ConvergenceTrackingHash &&
+			A.PropagationAudit.ConvergenceTrackingHash == B.PropagationAudit.ConvergenceTrackingHash &&
+			A.ClosureAudit.ComputedConvergenceTrackingHash == B.ClosureAudit.ComputedConvergenceTrackingHash;
+	}
+
+	bool IIIBIndependentSignaturePasses(const FIIIBSignatureResult& A, const FIIIBSignatureResult& B)
+	{
+		return IIIBSignatureReplayStable(A, B) &&
+			A.IndependentSignatureHash == ExpectedIIIBIndependentSignature &&
+			B.IndependentSignatureHash == ExpectedIIIBIndependentSignature &&
+			A.PairSignedConvergenceVelocity <= 0.0 &&
+			A.MatrixAudit.AcceptedLocalPositiveHitCount > 0 &&
+			A.MatrixAudit.RejectedLocalNonPositiveHitCount > 0 &&
+			A.MatrixAudit.MatrixPairCount == 1 &&
+			A.PolarityAudit.DecisionCount == 1 &&
+			A.PropagationAudit.PropagationSeedHitCount > 0 &&
+			A.PropagationAudit.PropagationAddedCount > 0;
 	}
 
 	void ComputeLedgerOracle(FIIICReplayResult& Result)
@@ -410,7 +814,23 @@ namespace
 	{
 		return Result.bCompleted &&
 			Result.FilterMetrics.StateHashAfter == ExpectedSlice55StateHash &&
-			Result.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash;
+			Result.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash &&
+			Result.FilterMetrics.ProjectionHashAfter == Result.ClosureAudit.ProjectionHash &&
+			Result.FilterMetrics.StateHashAfter == Result.ClosureAudit.StateHash &&
+			Result.ClosureAudit.bMetricsHashMatchesComputed;
+	}
+
+	bool BypassReplayStable(const FSlice55BypassResult& A, const FSlice55BypassResult& B)
+	{
+		return BypassPasses(A) && BypassPasses(B) &&
+			A.ContactMetrics.ContactLogHash == B.ContactMetrics.ContactLogHash &&
+			A.LabelMetrics.TriangleLabelHash == B.LabelMetrics.TriangleLabelHash &&
+			A.FilterMetrics.FilterDecisionHash == B.FilterMetrics.FilterDecisionHash &&
+			A.FilterMetrics.ProjectionHashAfter == B.FilterMetrics.ProjectionHashAfter &&
+			A.FilterMetrics.StateHashAfter == B.FilterMetrics.StateHashAfter &&
+			A.ClosureAudit.CrustStateHash == B.ClosureAudit.CrustStateHash &&
+			A.ClosureAudit.ComputedConvergenceTrackingHash == B.ClosureAudit.ComputedConvergenceTrackingHash &&
+			A.LedgerMetrics.MaterialLedgerHash == B.LedgerMetrics.MaterialLedgerHash;
 	}
 
 	bool LedgerReconciles(const FIIICReplayResult& Result)
@@ -474,12 +894,49 @@ namespace
 	FString BypassJson(const FSlice55BypassResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"kind\":\"slice55_bypass\",\"replay\":%d,\"completed\":%s,\"state_hash\":%s,\"material_ledger_hash\":%s,\"persistent_mark_inputs\":%d,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"slice55_bypass\",\"replay\":%d,\"completed\":%s,\"contact_hash\":%s,\"label_hash\":%s,\"filter_decision_hash\":%s,\"projection_hash\":%s,\"state_hash\":%s,\"crust_hash\":%s,\"material_ledger_hash\":%s,\"convergence_metrics_hash\":%s,\"convergence_computed_hash\":%s,\"convergence_closure_matches\":%s,\"persistent_mark_inputs\":%d,\"seconds\":%.6f}"),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
+			*JsonString(Result.ContactMetrics.ContactLogHash),
+			*JsonString(Result.LabelMetrics.TriangleLabelHash),
+			*JsonString(Result.FilterMetrics.FilterDecisionHash),
+			*JsonString(Result.FilterMetrics.ProjectionHashAfter),
 			*JsonString(Result.FilterMetrics.StateHashAfter),
+			*JsonString(Result.ClosureAudit.CrustStateHash),
 			*JsonString(Result.LedgerMetrics.MaterialLedgerHash),
+			*JsonString(Result.ClosureAudit.MetricsConvergenceTrackingHash),
+			*JsonString(Result.ClosureAudit.ComputedConvergenceTrackingHash),
+			Result.ClosureAudit.bMetricsHashMatchesComputed ? TEXT("true") : TEXT("false"),
 			Result.FilterMetrics.PersistentSubductingMarkInputCount,
+			Result.Seconds);
+	}
+
+	FString IIIBSignatureJson(const FIIIBSignatureResult& Result)
+	{
+		return FString::Printf(
+			TEXT("{\"kind\":\"iiib_independent_signature_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"step\":%d,\"pair_signed_convergence_velocity\":%.12f,\"accepted_local_positive_hits\":%d,\"rejected_local_non_positive_hits\":%d,\"matrix_pairs\":%d,\"polarity_decisions\":%d,\"propagation_seed_hits\":%d,\"propagation_added\":%d,\"expected_signature\":%s,\"computed_signature\":%s,\"active_component_hash\":%s,\"distance_component_hash\":%s,\"matrix_evidence_component_hash\":%s,\"polarity_component_hash\":%s,\"propagation_component_hash\":%s,\"closure_component_hash\":%s,\"slice55_component_hash\":%s,\"closure_hash\":%s,\"closure_matches\":%s,\"seconds\":%.6f}"),
+			*JsonString(Result.FixtureName),
+			Result.Replay,
+			Result.bCompleted ? TEXT("true") : TEXT("false"),
+			Result.StepCount,
+			Result.PairSignedConvergenceVelocity,
+			Result.MatrixAudit.AcceptedLocalPositiveHitCount,
+			Result.MatrixAudit.RejectedLocalNonPositiveHitCount,
+			Result.MatrixAudit.MatrixPairCount,
+			Result.PolarityAudit.DecisionCount,
+			Result.PropagationAudit.PropagationSeedHitCount,
+			Result.PropagationAudit.PropagationAddedCount,
+			*JsonString(ExpectedIIIBIndependentSignature),
+			*JsonString(Result.IndependentSignatureHash),
+			*JsonString(Result.ActiveListComponentHash),
+			*JsonString(Result.DistanceComponentHash),
+			*JsonString(Result.MatrixEvidenceComponentHash),
+			*JsonString(Result.PolarityComponentHash),
+			*JsonString(Result.PropagationComponentHash),
+			*JsonString(Result.ClosureComponentHash),
+			*JsonString(Result.Slice55ComponentHash),
+			*JsonString(Result.ClosureAudit.ComputedConvergenceTrackingHash),
+			Result.ClosureAudit.bMetricsHashMatchesComputed ? TEXT("true") : TEXT("false"),
 			Result.Seconds);
 	}
 
@@ -523,6 +980,8 @@ namespace
 		const FString& OutputRoot,
 		const FSlice55BypassResult& BypassA,
 		const FSlice55BypassResult& BypassB,
+		const FIIIBSignatureResult& IIIBSignatureA,
+		const FIIIBSignatureResult& IIIBSignatureB,
 		const FIIICReplayResult& ProcessA,
 		const FIIICReplayResult& ProcessB,
 		const FIIICReplayResult& Disabled,
@@ -532,7 +991,7 @@ namespace
 		const FIIICReplayResult& SinglePlate,
 		const FIIICReplayResult& ForcedDivergenceNoSubduction)
 	{
-		const bool bBypassPass = BypassPasses(BypassA) && BypassPasses(BypassB);
+		const bool bBypassPass = BypassReplayStable(BypassA, BypassB);
 		const bool bProcessPass =
 			ProcessLayerPasses(ProcessA) &&
 			ProcessLayerPasses(ProcessB) &&
@@ -554,11 +1013,7 @@ namespace
 			NegativePasses(ZeroMotion) &&
 			NegativePasses(SinglePlate) &&
 			NegativePasses(ForcedDivergenceNoSubduction);
-		const bool bIIIBSignatureGate =
-			ProcessA.ClosureAudit.bMetricsHashMatchesComputed &&
-			Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
-			SlabPullA.ClosureAudit.bMetricsHashMatchesComputed &&
-			FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
+		const bool bIIIBSignatureGate = IIIBIndependentSignaturePasses(IIIBSignatureA, IIIBSignatureB);
 		const bool bAllPass = bBypassPass && bProcessPass && bDisabledPass && bSlabPass && bSlabDifferential && bNegativePass && bIIIBSignatureGate;
 
 		FString Report;
@@ -571,17 +1026,26 @@ namespace
 		Report += TEXT("| Gate | Result | Evidence |\n");
 		Report += TEXT("|---|---|---|\n");
 		Report += FString::Printf(
-			TEXT("| Slice 5.5 bypass | %s | state `%s` / `%s`, material ledger `%s` / `%s` |\n"),
+			TEXT("| Slice 5.5 bypass | %s | projection `%s` / `%s`, state `%s` / `%s`, crust `%s` / `%s`, material `%s` / `%s`, convergence `%s` / `%s` |\n"),
 			*PassFail(bBypassPass),
+			*BypassA.FilterMetrics.ProjectionHashAfter,
+			*BypassB.FilterMetrics.ProjectionHashAfter,
 			*BypassA.FilterMetrics.StateHashAfter,
 			*BypassB.FilterMetrics.StateHashAfter,
+			*BypassA.ClosureAudit.CrustStateHash,
+			*BypassB.ClosureAudit.CrustStateHash,
 			*BypassA.LedgerMetrics.MaterialLedgerHash,
-			*BypassB.LedgerMetrics.MaterialLedgerHash);
+			*BypassB.LedgerMetrics.MaterialLedgerHash,
+			*BypassA.ClosureAudit.ComputedConvergenceTrackingHash,
+			*BypassB.ClosureAudit.ComputedConvergenceTrackingHash);
 		Report += FString::Printf(
-			TEXT("| IIIB independent signature gate | %s | expected regression token `%s`; closure hash recomputation still matches `%s` |\n"),
+			TEXT("| IIIB independent signature gate | %s | computed `%s` / `%s`, expected `%s`; closure `%s` / `%s` |\n"),
 			*PassFail(bIIIBSignatureGate),
+			*IIIBSignatureA.IndependentSignatureHash,
+			*IIIBSignatureB.IndependentSignatureHash,
 			ExpectedIIIBIndependentSignature,
-			*ProcessA.ClosureAudit.ComputedConvergenceTrackingHash);
+			*IIIBSignatureA.ClosureAudit.ComputedConvergenceTrackingHash,
+			*IIIBSignatureB.ClosureAudit.ComputedConvergenceTrackingHash);
 		Report += FString::Printf(
 			TEXT("| Consolidated process layer, slab pull off | %s | marks %d / %d, trench %d / %d, uplift %d / %d, rollup `%s` |\n"),
 			*PassFail(bProcessPass),
@@ -652,6 +1116,31 @@ namespace
 		AddReplayRow(SinglePlate);
 		AddReplayRow(ForcedDivergenceNoSubduction);
 
+		Report += TEXT("\n## IIIB Regression Signature\n\n");
+		Report += TEXT("This is a replay of the IIIB hardening discriminator fixture inside the IIIC consolidation commandlet. It compares the computed IIIB independent signature directly to the accepted `4df40569f5e51e1a` token; closure-hash self-recomputation alone is not sufficient for this gate.\n\n");
+		Report += TEXT("| Replay | Step | Pair sign | Accepted local positives | Rejected local non-positives | Matrix pairs | Decisions | Propagation seeds | Propagation added | Computed signature | Expected signature | Slice 5.5 component | Closure component |\n");
+		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|\n");
+		auto AddIIIBRow = [&Report](const FIIIBSignatureResult& Result)
+		{
+			Report += FString::Printf(
+				TEXT("| %d | %d | %.12f | %d | %d | %d | %d | %d | %d | `%s` | `%s` | `%s` | `%s` |\n"),
+				Result.Replay,
+				Result.StepCount,
+				Result.PairSignedConvergenceVelocity,
+				Result.MatrixAudit.AcceptedLocalPositiveHitCount,
+				Result.MatrixAudit.RejectedLocalNonPositiveHitCount,
+				Result.MatrixAudit.MatrixPairCount,
+				Result.PolarityAudit.DecisionCount,
+				Result.PropagationAudit.PropagationSeedHitCount,
+				Result.PropagationAudit.PropagationAddedCount,
+				*Result.IndependentSignatureHash,
+				ExpectedIIIBIndependentSignature,
+				*Result.Slice55ComponentHash,
+				*Result.ClosureComponentHash);
+		};
+		AddIIIBRow(IIIBSignatureA);
+		AddIIIBRow(IIIBSignatureB);
+
 		Report += TEXT("\n## Sub-Slice Closure\n\n");
 		Report += TEXT("| Slice | Consolidated result |\n");
 		Report += TEXT("|---|---|\n");
@@ -694,6 +1183,11 @@ int32 UCarrierLabPhaseIIICConsolidationCommandlet::Main(const FString& Params)
 	FSlice55BypassResult BypassB;
 	const bool bBypassA = RunSlice55Bypass(0, BypassA);
 	const bool bBypassB = RunSlice55Bypass(1, BypassB);
+
+	FIIIBSignatureResult IIIBSignatureA;
+	FIIIBSignatureResult IIIBSignatureB;
+	const bool bIIIBSignatureA = RunIIIBLocalVsPairSignatureReplay(0, BypassA, BypassB, IIIBSignatureA);
+	const bool bIIIBSignatureB = RunIIIBLocalVsPairSignatureReplay(1, BypassA, BypassB, IIIBSignatureB);
 
 	FIIICReplayResult ProcessA;
 	FIIICReplayResult ProcessB;
@@ -807,6 +1301,8 @@ int32 UCarrierLabPhaseIIICConsolidationCommandlet::Main(const FString& Params)
 	TArray<FString> JsonLines;
 	JsonLines.Add(BypassJson(BypassA));
 	JsonLines.Add(BypassJson(BypassB));
+	JsonLines.Add(IIIBSignatureJson(IIIBSignatureA));
+	JsonLines.Add(IIIBSignatureJson(IIIBSignatureB));
 	JsonLines.Add(ReplayJson(ProcessA));
 	JsonLines.Add(ReplayJson(ProcessB));
 	JsonLines.Add(ReplayJson(Disabled));
@@ -821,6 +1317,8 @@ int32 UCarrierLabPhaseIIICConsolidationCommandlet::Main(const FString& Params)
 		OutputRoot,
 		BypassA,
 		BypassB,
+		IIIBSignatureA,
+		IIIBSignatureB,
 		ProcessA,
 		ProcessB,
 		Disabled,
@@ -833,12 +1331,15 @@ int32 UCarrierLabPhaseIIICConsolidationCommandlet::Main(const FString& Params)
 
 	const bool bPass =
 		bBypassA && bBypassB &&
+		bIIIBSignatureA && bIIIBSignatureB &&
 		bProcessA && bProcessB &&
 		bDisabled &&
 		bSlabA && bSlabB &&
 		bZero && bSingle && bDivergence &&
 		BypassPasses(BypassA) &&
 		BypassPasses(BypassB) &&
+		BypassReplayStable(BypassA, BypassB) &&
+		IIIBIndependentSignaturePasses(IIIBSignatureA, IIIBSignatureB) &&
 		ProcessLayerPasses(ProcessA) &&
 		ProcessLayerPasses(ProcessB) &&
 		ProcessA.RollupSignature == ProcessB.RollupSignature &&

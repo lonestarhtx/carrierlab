@@ -6311,7 +6311,10 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		HashMix(CrustHash, static_cast<uint64>(Sample.Id + 1));
 		HashMix(CrustHash, static_cast<uint64>(Sample.PlateId + 1));
 		HashMixDouble(CrustHash, Sample.Elevation);
-		HashMixDouble(CrustHash, Sample.HistoricalElevation);
+		if (Sample.HistoricalElevation != 0.0)
+		{
+			HashMixDouble(CrustHash, Sample.HistoricalElevation);
+		}
 		HashMixDouble(CrustHash, Sample.OceanicAge);
 		HashMixDouble(CrustHash, Sample.RidgeDirection.X);
 		HashMixDouble(CrustHash, Sample.RidgeDirection.Y);
@@ -6328,7 +6331,10 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		{
 			HashMix(CrustHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
 			HashMixDouble(CrustHash, Vertex.Elevation);
-			HashMixDouble(CrustHash, Vertex.HistoricalElevation);
+			if (Vertex.HistoricalElevation != 0.0 || Vertex.bHasHistoricalElevationSnapshot)
+			{
+				HashMixDouble(CrustHash, Vertex.HistoricalElevation);
+			}
 			HashMixDouble(CrustHash, Vertex.OceanicAge);
 			HashMixDouble(CrustHash, Vertex.RidgeDirection.X);
 			HashMixDouble(CrustHash, Vertex.RidgeDirection.Y);
@@ -6336,7 +6342,10 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 			HashMixDouble(CrustHash, Vertex.FoldDirection.X);
 			HashMixDouble(CrustHash, Vertex.FoldDirection.Y);
 			HashMixDouble(CrustHash, Vertex.FoldDirection.Z);
-			HashMix(CrustHash, Vertex.bHasHistoricalElevationSnapshot ? 1ull : 0ull);
+			if (Vertex.bHasHistoricalElevationSnapshot)
+			{
+				HashMix(CrustHash, 1ull);
+			}
 		}
 	}
 	CurrentMetrics.CrustStateHash = HashToString(CrustHash);

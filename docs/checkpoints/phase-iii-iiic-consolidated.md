@@ -1,6 +1,6 @@
 # Phase III Sub-Phase IIIC Consolidated Checkpoint
 
-Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIICConsolidation/20260502T231335Z`
+Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIICConsolidation/20260502T235001Z`
 
 Status: IIIC.1-IIIC.5 consolidated. This checkpoint closes the subduction-mutation sub-phase by proving the consolidated process-layer preset, the disabled regression path, and the slab-pull on/off differential. It does not add collision, rifting, erosion, terrain displacement, projection-derived ownership, or any new resampling mutation path.
 
@@ -10,11 +10,11 @@ Consolidated control shape: `ConfigurePhaseIIICProcessLayer(true, false)` enable
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Slice 5.5 bypass | pass | state `3b4a85366dab80db` / `3b4a85366dab80db`, material ledger `bc3077100ba291b4` / `bc3077100ba291b4` |
-| IIIB independent signature gate | pass | expected regression token `4df40569f5e51e1a`; closure hash recomputation still matches `51f1c267444ff160` |
-| Consolidated process layer, slab pull off | pass | marks 84 / 84, trench 149 / 149, uplift 11040 / 11040, rollup `16632a6e19b904c1` |
+| Slice 5.5 bypass | pass | projection `a411b6aad7877a55` / `a411b6aad7877a55`, state `3b4a85366dab80db` / `3b4a85366dab80db`, crust `a4e4e99de216c31c` / `a4e4e99de216c31c`, material `bc3077100ba291b4` / `bc3077100ba291b4`, convergence `60a0688dd0b05b59` / `60a0688dd0b05b59` |
+| IIIB independent signature gate | pass | computed `4df40569f5e51e1a` / `4df40569f5e51e1a`, expected `4df40569f5e51e1a`; closure `5445f4e8caa2c020` / `5445f4e8caa2c020` |
+| Consolidated process layer, slab pull off | pass | marks 84 / 84, trench 149 / 149, uplift 11040 / 11040, rollup `555ed1a3837ae3f9` |
 | Disabled process layer | pass | marks 0, records 0, motion `96d2f3bac07b3cda` -> `96d2f3bac07b3cda` |
-| Slab pull opt-in differential | pass | contributions 84 / 84, motion `96d2f3bac07b3cda` -> `7b00b66aaa1c9e83`, rollup `5bad65de6b800c2e` |
+| Slab pull opt-in differential | pass | contributions 84 / 84, motion `96d2f3bac07b3cda` -> `7b00b66aaa1c9e83`, rollup `6fb8ae1d5f18813e` |
 | Slab pull independent oracle | pass | axis 0.000000000000e+00, angular 0.000000000000e+00, contribution 0.000000000000e+00, max velocity 100.000000 mm/yr |
 | Negative controls | pass | zero 0, single 0, divergence-no-subduction 0 ledger records |
 
@@ -22,14 +22,23 @@ Consolidated control shape: `ConfigurePhaseIIICProcessLayer(true, false)` enable
 
 | Fixture | Replay | Process layer | Slab pull | Marks | Trench records | Uplift records | Ledger records | Actual delta km | Ledger residual km | Motion before | Motion after | Rollup | Seconds |
 |---|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---:|
-| process_layer_default | 0 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `16632a6e19b904c1` | 0.083 |
-| process_layer_default | 1 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `16632a6e19b904c1` | 0.082 |
-| process_layer_disabled | 0 | off | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `c0aeeeecd17f9120` | 0.077 |
-| slab_pull_opt_in | 0 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `5bad65de6b800c2e` | 0.082 |
-| slab_pull_opt_in | 1 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `5bad65de6b800c2e` | 0.083 |
-| zero_motion | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `84ba588e474acf95` | `84ba588e474acf95` | `af7f80dc1b83676b` | 0.074 |
-| single_plate | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `b42b5f5c6fc22793` | `b42b5f5c6fc22793` | `b1a98902dc424e8c` | 0.055 |
-| forced_divergence_no_subduction | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `aa96c1b974567fbe` | `aa96c1b974567fbe` | `20206dbc25dda1f7` | 0.056 |
+| process_layer_default | 0 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `555ed1a3837ae3f9` | 0.083 |
+| process_layer_default | 1 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `555ed1a3837ae3f9` | 0.083 |
+| process_layer_disabled | 0 | off | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `5309ee49b05096b4` | 0.080 |
+| slab_pull_opt_in | 0 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `6fb8ae1d5f18813e` | 0.085 |
+| slab_pull_opt_in | 1 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `6fb8ae1d5f18813e` | 0.083 |
+| zero_motion | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `84ba588e474acf95` | `84ba588e474acf95` | `6574c6007a11c337` | 0.075 |
+| single_plate | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `b42b5f5c6fc22793` | `b42b5f5c6fc22793` | `3a1b301ba11889d1` | 0.056 |
+| forced_divergence_no_subduction | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `aa96c1b974567fbe` | `aa96c1b974567fbe` | `04f934b1ef55d0d7` | 0.056 |
+
+## IIIB Regression Signature
+
+This is a replay of the IIIB hardening discriminator fixture inside the IIIC consolidation commandlet. It compares the computed IIIB independent signature directly to the accepted `4df40569f5e51e1a` token; closure-hash self-recomputation alone is not sufficient for this gate.
+
+| Replay | Step | Pair sign | Accepted local positives | Rejected local non-positives | Matrix pairs | Decisions | Propagation seeds | Propagation added | Computed signature | Expected signature | Slice 5.5 component | Closure component |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| 0 | 51 | -0.075341390677 | 432 | 293 | 1 | 1 | 413 | 22 | `4df40569f5e51e1a` | `4df40569f5e51e1a` | `c4455d7be67c6260` | `ee128f05184d6b3c` |
+| 1 | 51 | -0.075341390677 | 432 | 293 | 1 | 1 | 413 | 22 | `4df40569f5e51e1a` | `4df40569f5e51e1a` | `c4455d7be67c6260` | `ee128f05184d6b3c` |
 
 ## Sub-Slice Closure
 
