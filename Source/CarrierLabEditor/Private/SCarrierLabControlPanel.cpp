@@ -2,20 +2,92 @@
 
 #include "SCarrierLabControlPanel.h"
 
+#include "Dom/JsonObject.h"
 #include "Editor.h"
 #include "Engine/Selection.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Styling/CoreStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Input/SSlider.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "CarrierLabControlPanel"
+
+namespace
+{
+	constexpr double LiveRefreshIntervalSeconds = 0.25;
+	constexpr double PhaseIISignMargin = 1.0e-6;
+
+	FString JsonStringField(const TSharedPtr<FJsonObject>& Object, const TCHAR* FieldName)
+	{
+		FString Value;
+		if (Object.IsValid())
+		{
+			Object->TryGetStringField(FieldName, Value);
+		}
+		return Value;
+	}
+
+	int32 JsonIntField(const TSharedPtr<FJsonObject>& Object, const TCHAR* FieldName)
+	{
+		double Value = 0.0;
+		if (Object.IsValid())
+		{
+			Object->TryGetNumberField(FieldName, Value);
+		}
+		return static_cast<int32>(Value);
+	}
+
+	double JsonDoubleField(const TSharedPtr<FJsonObject>& Object, const TCHAR* FieldName)
+	{
+		double Value = 0.0;
+		if (Object.IsValid())
+		{
+			Object->TryGetNumberField(FieldName, Value);
+		}
+		return Value;
+	}
+
+	bool JsonBoolField(const TSharedPtr<FJsonObject>& Object, const TCHAR* FieldName)
+	{
+		bool bValue = false;
+		if (Object.IsValid())
+		{
+			Object->TryGetBoolField(FieldName, bValue);
+		}
+		return bValue;
+	}
+
+	FString PassFail(const bool bPass)
+	{
+		return bPass ? TEXT("PASS") : TEXT("FAIL");
+	}
+
+	FString YesNo(const bool bValue)
+	{
+		return bValue ? TEXT("yes") : TEXT("no");
+	}
+
+	FString PercentString(const int32 Count, const int32 Total)
+	{
+		const double Percent = Total > 0
+			? 100.0 * static_cast<double>(Count) / static_cast<double>(Total)
+			: 0.0;
+		return FString::Printf(TEXT("%.3f%%"), Percent);
+	}
+}
 
 void SCarrierLabControlPanel::Construct(const FArguments& InArgs)
 {
@@ -40,6 +112,8 @@ void SCarrierLabControlPanel::Construct(const FArguments& InArgs)
 	};
 
 	RefreshTargetActor();
+	CaptureLiveProjectionSnapshot();
+	LoadLatestSlice1Artifact();
 
 	ChildSlot
 	[
@@ -54,32 +128,32 @@ void SCarrierLabControlPanel::Construct(const FArguments& InArgs)
 				.AutoHeight()
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("Title", "CarrierLab Control Panel"))
-					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+					.Text(LOCTEXT("Title", "CarrierLab Diagnostics"))
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 4.0f, 0.0f, 8.0f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
 				[
-					SNew(STextBlock)
-					.Text(this, &SCarrierLabControlPanel::GetTargetText)
-					.ColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.80f, 0.90f, 1.0f)))
+					BuildTargetSection()
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
 				[
-					BuildControls()
+					BuildCarrierControls()
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 10.0f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
 				[
-					SNew(SSeparator)
+					BuildLiveProjectionSection()
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
 				[
-					BuildReadout()
+					BuildLiveContactsSection()
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
+				[
+					BuildGateSection()
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
+				[
+					BuildArtifactSection()
 				]
 			]
 		]
@@ -89,75 +163,93 @@ void SCarrierLabControlPanel::Construct(const FArguments& InArgs)
 void SCarrierLabControlPanel::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
 {
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
-	if (!TargetActor.IsValid())
+	if (InCurrentTime - LastLiveRefreshSeconds >= LiveRefreshIntervalSeconds)
 	{
 		RefreshTargetActor();
+		CaptureLiveProjectionSnapshot();
+		LastLiveRefreshSeconds = InCurrentTime;
 	}
 }
 
 ACarrierLabVisualizationActor* SCarrierLabControlPanel::GetCarrierActor(const bool bCreateIfMissing)
 {
-	if (TargetActor.IsValid())
-	{
-		return TargetActor.Get();
-	}
+	TargetActorCount = 0;
+	TargetSourceText = TEXT("none");
+	TargetWarningText.Reset();
+	TargetActor.Reset();
 
 	UWorld* World = GEditor != nullptr ? GEditor->GetEditorWorldContext().World() : nullptr;
 	if (World == nullptr)
 	{
+		TargetWarningText = TEXT("No editor world is available.");
 		return nullptr;
 	}
 
+	ACarrierLabVisualizationActor* SelectedActor = nullptr;
 	if (GEditor != nullptr)
 	{
 		if (USelection* Selection = GEditor->GetSelectedActors())
 		{
 			for (FSelectionIterator It(*Selection); It; ++It)
 			{
-				if (ACarrierLabVisualizationActor* SelectedActor = Cast<ACarrierLabVisualizationActor>(*It))
+				if (ACarrierLabVisualizationActor* Candidate = Cast<ACarrierLabVisualizationActor>(*It))
 				{
-					TargetActor = SelectedActor;
-					return SelectedActor;
+					SelectedActor = Candidate;
+					break;
 				}
 			}
 		}
 	}
 
 	ACarrierLabVisualizationActor* FirstActor = nullptr;
-	int32 ActorCount = 0;
 	for (TActorIterator<ACarrierLabVisualizationActor> It(World); It; ++It)
 	{
-		++ActorCount;
+		++TargetActorCount;
 		if (FirstActor == nullptr)
 		{
 			FirstActor = *It;
 		}
 	}
-	if (FirstActor != nullptr)
+
+	if (SelectedActor != nullptr)
+	{
+		TargetActor = SelectedActor;
+		TargetSourceText = TEXT("selected actor");
+	}
+	else if (FirstActor != nullptr)
 	{
 		TargetActor = FirstActor;
-		return FirstActor;
+		TargetSourceText = TEXT("first actor in world");
+	}
+	else if (bCreateIfMissing)
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Name = MakeUniqueObjectName(World, ACarrierLabVisualizationActor::StaticClass(), TEXT("CarrierLabCarrier"));
+		ACarrierLabVisualizationActor* NewActor = World->SpawnActor<ACarrierLabVisualizationActor>(
+			ACarrierLabVisualizationActor::StaticClass(),
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			SpawnParameters);
+		if (NewActor != nullptr)
+		{
+			NewActor->bAutoInitialize = false;
+			TargetActor = NewActor;
+			TargetSourceText = TEXT("created actor");
+			TargetActorCount = 1;
+			World->MarkPackageDirty();
+		}
 	}
 
-	if (!bCreateIfMissing)
+	if (TargetActorCount > 1)
 	{
-		return nullptr;
+		TargetWarningText = FString::Printf(TEXT("%d actors found, using %s."), TargetActorCount, *TargetSourceText);
+	}
+	else if (!TargetActor.IsValid())
+	{
+		TargetWarningText = TEXT("No ACarrierLabVisualizationActor found; Initialize or Reset creates one.");
 	}
 
-	FActorSpawnParameters SpawnParameters;
-	SpawnParameters.Name = MakeUniqueObjectName(World, ACarrierLabVisualizationActor::StaticClass(), TEXT("CarrierLabCarrier"));
-	ACarrierLabVisualizationActor* NewActor = World->SpawnActor<ACarrierLabVisualizationActor>(
-		ACarrierLabVisualizationActor::StaticClass(),
-		FVector::ZeroVector,
-		FRotator::ZeroRotator,
-		SpawnParameters);
-	if (NewActor != nullptr)
-	{
-		NewActor->bAutoInitialize = false;
-		TargetActor = NewActor;
-		World->MarkPackageDirty();
-	}
-	return NewActor;
+	return TargetActor.Get();
 }
 
 void SCarrierLabControlPanel::ApplyPanelConfigToActor(ACarrierLabVisualizationActor& Actor) const
@@ -185,12 +277,210 @@ void SCarrierLabControlPanel::RefreshTargetActor()
 	PendingLayer = Actor->VisualizationLayer;
 }
 
+void SCarrierLabControlPanel::CaptureLiveProjectionSnapshot()
+{
+	if (!TargetActor.IsValid())
+	{
+		LiveProjection = FLiveProjectionSnapshot();
+		return;
+	}
+
+	LiveProjection.bHasSnapshot = true;
+	LiveProjection.bInitialized = TargetActor->IsCarrierInitialized();
+	LiveProjection.bPlaying = TargetActor->IsPlaying();
+	LiveProjection.ActorLabel = TargetActor->GetActorLabel();
+	LiveProjection.CapturedAt = FDateTime::UtcNow();
+	LiveProjection.Metrics = TargetActor->CurrentMetrics;
+}
+
+void SCarrierLabControlPanel::LoadLatestSlice1Artifact()
+{
+	Slice1Artifact = FSlice1ArtifactSnapshot();
+
+	const FString SliceRoot = FPaths::ConvertRelativePathToFull(
+		FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseII"), TEXT("Slice1")));
+	TArray<FString> MetricsFiles;
+	IFileManager::Get().FindFilesRecursive(MetricsFiles, *SliceRoot, TEXT("metrics.jsonl"), true, false);
+	if (MetricsFiles.Num() == 0)
+	{
+		Slice1Artifact.StatusText = TEXT("No Slice 1 artifact found");
+		return;
+	}
+
+	FString LatestMetricsPath;
+	FDateTime LatestTimestamp = FDateTime::MinValue();
+	for (const FString& MetricsPath : MetricsFiles)
+	{
+		const FFileStatData StatData = IFileManager::Get().GetStatData(*MetricsPath);
+		if (StatData.bIsValid && StatData.ModificationTime > LatestTimestamp)
+		{
+			LatestTimestamp = StatData.ModificationTime;
+			LatestMetricsPath = MetricsPath;
+		}
+	}
+
+	if (LatestMetricsPath.IsEmpty())
+	{
+		Slice1Artifact.StatusText = TEXT("No Slice 1 artifact found");
+		return;
+	}
+
+	FString ParseError;
+	if (!ParseSlice1Artifact(LatestMetricsPath, LatestTimestamp, ParseError))
+	{
+		Slice1Artifact.StatusText = FString::Printf(TEXT("Latest Slice 1 artifact could not be loaded: %s"), *ParseError);
+	}
+}
+
+bool SCarrierLabControlPanel::ParseSlice1Artifact(const FString& MetricsPath, const FDateTime& ArtifactTimestamp, FString& OutError)
+{
+	FString FileContents;
+	if (!FFileHelper::LoadFileToString(FileContents, *MetricsPath))
+	{
+		OutError = FString::Printf(TEXT("could not read %s"), *MetricsPath);
+		return false;
+	}
+
+	Slice1Artifact = FSlice1ArtifactSnapshot();
+	Slice1Artifact.bHasArtifact = true;
+	Slice1Artifact.MetricsPath = FPaths::ConvertRelativePathToFull(MetricsPath);
+	Slice1Artifact.ArtifactTimestamp = ArtifactTimestamp;
+	Slice1Artifact.LoadedAt = FDateTime::UtcNow();
+	Slice1Artifact.StatusText = TEXT("latest loaded artifact");
+
+	const FString ReportPath = FPaths::ConvertRelativePathToFull(
+		FPaths::Combine(FPaths::ProjectDir(), TEXT("docs"), TEXT("checkpoints"), TEXT("phase-ii-slice-1-report.md")));
+	if (IFileManager::Get().FileExists(*ReportPath))
+	{
+		Slice1Artifact.CheckpointReportPath = ReportPath;
+	}
+
+	TArray<FString> Lines;
+	FileContents.ParseIntoArrayLines(Lines, false);
+	TMap<FString, int32> FixtureIndexByName;
+	for (const FString& Line : Lines)
+	{
+		if (Line.TrimStartAndEnd().IsEmpty())
+		{
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> JsonObject;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Line);
+		if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+		{
+			continue;
+		}
+
+		const FString Fixture = JsonStringField(JsonObject, TEXT("fixture"));
+		if (Fixture.IsEmpty())
+		{
+			continue;
+		}
+
+		int32* ExistingIndex = FixtureIndexByName.Find(Fixture);
+		if (ExistingIndex == nullptr)
+		{
+			ExistingIndex = &FixtureIndexByName.Add(Fixture, Slice1Artifact.FixtureRows.Num());
+			FSlice1ArtifactFixtureSummary& NewRow = Slice1Artifact.FixtureRows.AddDefaulted_GetRef();
+			NewRow.Fixture = Fixture;
+		}
+
+		FSlice1ArtifactFixtureSummary& Row = Slice1Artifact.FixtureRows[*ExistingIndex];
+		const FString ContactHash = JsonStringField(JsonObject, TEXT("contact_log_hash"));
+		const bool bProjectionHashUnchanged = JsonBoolField(JsonObject, TEXT("projection_hash_unchanged"));
+		const bool bStateHashUnchanged = JsonBoolField(JsonObject, TEXT("state_hash_unchanged"));
+		if (Row.ReplayCount == 0)
+		{
+			Row.SampleCount = JsonIntField(JsonObject, TEXT("sample_count"));
+			Row.PlateCount = JsonIntField(JsonObject, TEXT("plate_count"));
+			Row.Step = JsonIntField(JsonObject, TEXT("step"));
+			Row.RawEvidenceSampleCount = JsonIntField(JsonObject, TEXT("raw_evidence_sample_count"));
+			Row.ContactRecordCount = JsonIntField(JsonObject, TEXT("contact_record_count"));
+			Row.ConvergentContactCount = JsonIntField(JsonObject, TEXT("convergent_contact_count"));
+			Row.DivergentContactCount = JsonIntField(JsonObject, TEXT("divergent_contact_count"));
+			Row.TransformLowMarginContactCount = JsonIntField(JsonObject, TEXT("transform_low_margin_contact_count"));
+			Row.ThirdPlateContactCount = JsonIntField(JsonObject, TEXT("third_plate_contact_count"));
+			Row.SubductionCandidateCount = JsonIntField(JsonObject, TEXT("subduction_candidate_count"));
+			Row.BoundaryEvidenceCount = JsonIntField(JsonObject, TEXT("boundary_evidence_count"));
+			Row.PairSignedConvergenceVelocity = JsonDoubleField(JsonObject, TEXT("pair_signed_convergence_velocity"));
+			Row.ContactDetectionSeconds = JsonDoubleField(JsonObject, TEXT("contact_detection_seconds"));
+			Row.ContactLogHash = ContactHash;
+			Row.bProjectionHashUnchanged = bProjectionHashUnchanged;
+			Row.bStateHashUnchanged = bStateHashUnchanged;
+		}
+		else
+		{
+			Row.bContactHashMatch = Row.bContactHashMatch && Row.ContactLogHash == ContactHash;
+			Row.bProjectionHashUnchanged = Row.bProjectionHashUnchanged && bProjectionHashUnchanged;
+			Row.bStateHashUnchanged = Row.bStateHashUnchanged && bStateHashUnchanged;
+			Row.ContactDetectionSeconds =
+				((Row.ContactDetectionSeconds * static_cast<double>(Row.ReplayCount)) +
+				JsonDoubleField(JsonObject, TEXT("contact_detection_seconds"))) /
+				static_cast<double>(Row.ReplayCount + 1);
+		}
+		++Row.ReplayCount;
+	}
+
+	if (Slice1Artifact.FixtureRows.Num() == 0)
+	{
+		OutError = TEXT("metrics.jsonl did not contain fixture rows");
+		Slice1Artifact.bHasArtifact = false;
+		return false;
+	}
+
+	Slice1Artifact.bReplayHashMatch = true;
+	for (const FSlice1ArtifactFixtureSummary& Row : Slice1Artifact.FixtureRows)
+	{
+		Slice1Artifact.bReplayHashMatch = Slice1Artifact.bReplayHashMatch && Row.ReplayCount >= 2 && Row.bContactHashMatch;
+		Slice1Artifact.bThirdPlateExplicitness = Slice1Artifact.bThirdPlateExplicitness || Row.ThirdPlateContactCount > 0;
+	}
+
+	bool bFoundZeroMotion = false;
+	bool bFoundSinglePlate = false;
+	bool bFoundForcedDivergence = false;
+	bool bZeroMotionNoSubduction = false;
+	bool bSinglePlateNoSubduction = false;
+	bool bForcedDivergenceNoSubduction = false;
+	bool bForcedConvergencePositive = false;
+	bool bForcedDivergenceNegative = false;
+	for (const FSlice1ArtifactFixtureSummary& Row : Slice1Artifact.FixtureRows)
+	{
+		if (Row.Fixture.Equals(TEXT("zero_motion"), ESearchCase::IgnoreCase))
+		{
+			bFoundZeroMotion = true;
+			bZeroMotionNoSubduction = Row.SubductionCandidateCount == 0;
+		}
+		else if (Row.Fixture.Equals(TEXT("single_plate"), ESearchCase::IgnoreCase))
+		{
+			bFoundSinglePlate = true;
+			bSinglePlateNoSubduction = Row.SubductionCandidateCount == 0;
+		}
+		else if (Row.Fixture.Equals(TEXT("forced_divergence"), ESearchCase::IgnoreCase))
+		{
+			bFoundForcedDivergence = true;
+			bForcedDivergenceNoSubduction = Row.SubductionCandidateCount == 0;
+			bForcedDivergenceNegative = Row.PairSignedConvergenceVelocity < -PhaseIISignMargin;
+		}
+		else if (Row.Fixture.Equals(TEXT("forced_convergence"), ESearchCase::IgnoreCase))
+		{
+			bForcedConvergencePositive = Row.PairSignedConvergenceVelocity > PhaseIISignMargin;
+		}
+	}
+	Slice1Artifact.bNoSubductionControls =
+		bFoundZeroMotion && bFoundSinglePlate && bFoundForcedDivergence &&
+		bZeroMotionNoSubduction && bSinglePlateNoSubduction && bForcedDivergenceNoSubduction;
+	Slice1Artifact.bConvergenceSign = bForcedConvergencePositive && bForcedDivergenceNegative;
+	return true;
+}
+
 FReply SCarrierLabControlPanel::OnInitializeClicked()
 {
 	if (ACarrierLabVisualizationActor* Actor = GetCarrierActor(true))
 	{
 		ApplyPanelConfigToActor(*Actor);
 		Actor->InitializeCarrier();
+		CaptureLiveProjectionSnapshot();
 	}
 	return FReply::Handled();
 }
@@ -201,6 +491,7 @@ FReply SCarrierLabControlPanel::OnStepClicked()
 	{
 		ApplyPanelConfigToActor(*Actor);
 		Actor->StepOnce();
+		CaptureLiveProjectionSnapshot();
 	}
 	return FReply::Handled();
 }
@@ -211,6 +502,7 @@ FReply SCarrierLabControlPanel::OnPlayPauseClicked()
 	{
 		ApplyPanelConfigToActor(*Actor);
 		Actor->TogglePlay();
+		CaptureLiveProjectionSnapshot();
 	}
 	return FReply::Handled();
 }
@@ -221,6 +513,7 @@ FReply SCarrierLabControlPanel::OnResampleClicked()
 	{
 		ApplyPanelConfigToActor(*Actor);
 		Actor->ApplyResampleEvent();
+		CaptureLiveProjectionSnapshot();
 	}
 	return FReply::Handled();
 }
@@ -231,13 +524,109 @@ FReply SCarrierLabControlPanel::OnResetClicked()
 	{
 		ApplyPanelConfigToActor(*Actor);
 		Actor->ResetCarrier();
+		CaptureLiveProjectionSnapshot();
 	}
 	return FReply::Handled();
 }
 
-TSharedRef<SWidget> SCarrierLabControlPanel::BuildControls()
+FReply SCarrierLabControlPanel::OnDetectContactsClicked()
 {
-	return SNew(SVerticalBox)
+	LiveContact = FLiveContactDetectionSnapshot();
+	LiveContact.bHasAttempt = true;
+	LiveContact.CapturedAt = FDateTime::UtcNow();
+
+	ACarrierLabVisualizationActor* Actor = GetCarrierActor(false);
+	if (Actor == nullptr)
+	{
+		LiveContact.ErrorText = TEXT("No live actor target is available.");
+		return FReply::Handled();
+	}
+	if (!Actor->IsCarrierInitialized())
+	{
+		LiveContact.TargetActorLabel = Actor->GetActorLabel();
+		LiveContact.ErrorText = TEXT("Initialize the actor before read-only contact detection.");
+		return FReply::Handled();
+	}
+
+	LiveContact.TargetActorLabel = Actor->GetActorLabel();
+	LiveContact.ProjectionHashBefore = Actor->CurrentMetrics.LastHash;
+	LiveContact.StateHashBefore = Actor->CurrentMetrics.StateHash;
+
+	TArray<FCarrierLabPhaseIIContactRecord> Contacts;
+	FCarrierLabPhaseIIContactMetrics ContactMetrics;
+	const bool bDetected = Actor->DetectPhaseIIContacts(Contacts, ContactMetrics);
+	LiveContact.ProjectionHashAfter = Actor->CurrentMetrics.LastHash;
+	LiveContact.StateHashAfter = Actor->CurrentMetrics.StateHash;
+	LiveContact.bProjectionHashUnchanged = LiveContact.ProjectionHashBefore == LiveContact.ProjectionHashAfter;
+	LiveContact.bStateHashUnchanged = LiveContact.StateHashBefore == LiveContact.StateHashAfter;
+	LiveContact.Metrics = ContactMetrics;
+	LiveContact.bSucceeded = bDetected;
+	if (!bDetected)
+	{
+		LiveContact.ErrorText = TEXT("DetectPhaseIIContacts returned false.");
+	}
+
+	CaptureLiveProjectionSnapshot();
+	return FReply::Handled();
+}
+
+FReply SCarrierLabControlPanel::OnLoadArtifactClicked()
+{
+	LoadLatestSlice1Artifact();
+	return FReply::Handled();
+}
+
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildSection(const FText& Title, const TSharedRef<SWidget>& Body) const
+{
+	return SNew(SBorder)
+		.Padding(8.0f)
+		.BorderBackgroundColor(FLinearColor(0.035f, 0.035f, 0.035f, 1.0f))
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				SNew(STextBlock)
+				.Text(Title)
+				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f, 0.0f, 6.0f)
+			[
+				SNew(SSeparator)
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				Body
+			]
+		];
+}
+
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildTargetSection()
+{
+	return BuildSection(
+		LOCTEXT("TargetSection", "Target"),
+		SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(STextBlock)
+			.Text(this, &SCarrierLabControlPanel::GetTargetText)
+			.ColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.80f, 0.90f, 1.0f)))
+			.AutoWrapText(true)
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f, 0.0f, 0.0f)
+		[
+			SNew(STextBlock)
+			.Text(this, &SCarrierLabControlPanel::GetTargetWarningText)
+			.Visibility(this, &SCarrierLabControlPanel::GetTargetWarningVisibility)
+			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
+			.AutoWrapText(true)
+		]);
+}
+
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
+{
+	return BuildSection(
+		LOCTEXT("CarrierControlsSection", "Carrier Controls - Mutating"),
+		SNew(SVerticalBox)
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		.Padding(0.0f, 3.0f)
@@ -264,9 +653,23 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildControls()
 				SNew(SButton).Text(LOCTEXT("Reset", "Reset")).OnClicked(this, &SCarrierLabControlPanel::OnResetClicked)
 			]
 		]
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.Padding(0.0f, 8.0f, 0.0f, 0.0f)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 6.0f)
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("MutationNote", "Resample Now mutates carrier state. It is not Phase II read-only evidence."))
+			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
+			.AutoWrapText(true)
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			BuildControls()
+		]);
+}
+
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildControls()
+{
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight()
 		[
 			BuildResolutionSelector()
 		]
@@ -300,21 +703,15 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildControls()
 				.OnValueChanged(this, &SCarrierLabControlPanel::OnSeedChanged)
 			]
 		]
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 0.0f)
 		[
 			BuildPolicySelector()
 		]
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 0.0f)
 		[
 			BuildLayerSelector()
 		]
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.Padding(0.0f, 8.0f, 0.0f, 0.0f)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot().AutoHeight()
@@ -332,15 +729,100 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildControls()
 		];
 }
 
-TSharedRef<SWidget> SCarrierLabControlPanel::BuildReadout()
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildLiveProjectionSection()
 {
-	return SNew(SBorder)
-		.Padding(8.0f)
+	return BuildSection(
+		LOCTEXT("LiveProjectionSection", "Live Actor - Projection Metrics"),
+		SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight()
 		[
 			SNew(STextBlock)
-			.Text(this, &SCarrierLabControlPanel::GetReadoutText)
+			.Text(this, &SCarrierLabControlPanel::GetLiveProjectionSummaryText)
 			.AutoWrapText(true)
-		];
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
+		[
+			SNew(STextBlock)
+			.Text(this, &SCarrierLabControlPanel::GetLiveTimingText)
+			.ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.84f, 0.88f, 1.0f)))
+			.AutoWrapText(true)
+		]);
+}
+
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildLiveContactsSection()
+{
+	return BuildSection(
+		LOCTEXT("LiveContactsSection", "Live Actor - Read-Only Contacts"),
+		SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("DetectContacts", "Detect Contacts"))
+				.OnClicked(this, &SCarrierLabControlPanel::OnDetectContactsClicked)
+			]
+			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(8.0f, 0.0f, 0.0f, 0.0f)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("DetectContactsNote", "Button-only read-only check: captures projection/state hashes before and after contact detection."))
+				.ColorAndOpacity(FSlateColor(FLinearColor(0.72f, 0.80f, 0.90f, 1.0f)))
+				.AutoWrapText(true)
+			]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
+		[
+			SNew(STextBlock)
+			.Text(this, &SCarrierLabControlPanel::GetLiveContactSummaryText)
+			.AutoWrapText(true)
+		]);
+}
+
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildGateSection()
+{
+	return BuildSection(
+		LOCTEXT("GateSection", "Source-Aware Gate Panel"),
+		SNew(STextBlock)
+		.Text(this, &SCarrierLabControlPanel::GetGateSummaryText)
+		.AutoWrapText(true));
+}
+
+TSharedRef<SWidget> SCarrierLabControlPanel::BuildArtifactSection()
+{
+	return BuildSection(
+		LOCTEXT("ArtifactSection", "Checkpoint Artifact - Slice 1"),
+		SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("LoadLatestArtifact", "Load Latest Artifact"))
+				.OnClicked(this, &SCarrierLabControlPanel::OnLoadArtifactClicked)
+			]
+			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(8.0f, 0.0f, 0.0f, 0.0f)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("ArtifactNote", "Artifact gates are historical evidence from the latest loaded commandlet run, not current code passed."))
+				.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
+				.AutoWrapText(true)
+			]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
+		[
+			SNew(STextBlock)
+			.Text(this, &SCarrierLabControlPanel::GetArtifactProvenanceText)
+			.AutoWrapText(true)
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
+		[
+			SNew(STextBlock)
+			.Text(this, &SCarrierLabControlPanel::GetArtifactRowsText)
+			.ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.84f, 0.88f, 1.0f)))
+			.AutoWrapText(true)
+		]);
 }
 
 TSharedRef<SWidget> SCarrierLabControlPanel::BuildResolutionSelector()
@@ -497,9 +979,24 @@ FText SCarrierLabControlPanel::GetTargetText() const
 {
 	if (TargetActor.IsValid())
 	{
-		return FText::FromString(FString::Printf(TEXT("Target: %s"), *TargetActor->GetActorLabel()));
+		return FText::FromString(FString::Printf(
+			TEXT("Target: %s (%s) | initialized: %s | playing: %s"),
+			*TargetActor->GetActorLabel(),
+			*TargetSourceText,
+			TargetActor->IsCarrierInitialized() ? TEXT("yes") : TEXT("no"),
+			TargetActor->IsPlaying() ? TEXT("yes") : TEXT("no")));
 	}
-	return LOCTEXT("NoTarget", "Target: no ACarrierLabVisualizationActor found; Initialize or Reset creates one.");
+	return LOCTEXT("NoTarget", "Target: no ACarrierLabVisualizationActor found.");
+}
+
+FText SCarrierLabControlPanel::GetTargetWarningText() const
+{
+	return FText::FromString(TargetWarningText);
+}
+
+EVisibility SCarrierLabControlPanel::GetTargetWarningVisibility() const
+{
+	return TargetWarningText.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
 }
 
 FText SCarrierLabControlPanel::GetPlayPauseText() const
@@ -529,27 +1026,195 @@ FText SCarrierLabControlPanel::GetStepRateText() const
 	return FText::FromString(FString::Printf(TEXT("Play step rate: %.2f steps/s"), PendingStepRate));
 }
 
-FText SCarrierLabControlPanel::GetReadoutText() const
+FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 {
-	if (!TargetActor.IsValid())
+	if (!LiveProjection.bHasSnapshot)
 	{
-		return LOCTEXT("NoReadout", "No carrier actor is currently targeted.");
+		return LOCTEXT("NoLiveProjection", "No live actor snapshot yet.");
 	}
-	const FCarrierLabVisualizationMetrics& Metrics = TargetActor->CurrentMetrics;
-	const double MissPct = Metrics.SampleCount > 0 ? 100.0 * static_cast<double>(Metrics.RawMissCount) / static_cast<double>(Metrics.SampleCount) : 0.0;
-	const double MultiPct = Metrics.SampleCount > 0 ? 100.0 * static_cast<double>(Metrics.RawMultiHitCount) / static_cast<double>(Metrics.SampleCount) : 0.0;
+	const FCarrierLabVisualizationMetrics& Metrics = LiveProjection.Metrics;
 	return FText::FromString(FString::Printf(
-		TEXT("step: %d\nnext resample step: %d\nAuthCAF: %.6f\nProjectedCAF: %.6f\nmiss: %.3f%%\nmulti-hit: %.3f%%\ndrift mean: %.9f km\ndrift p95: %.9f km\nNaN/Inf: %d\nlast hash: %s"),
+		TEXT("Source: Live Actor snapshot @ %s\n")
+		TEXT("actor: %s | initialized: %s | playing: %s | step: %d | next resample: %d | events: %d\n")
+		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | boundary hits: %d | NaN/Inf: %d\n")
+		TEXT("Auth CAF: %.6f | Projected CAF: %.6f | drift mean: %.9f km | drift p95: %.9f km\n")
+		TEXT("projection hash: %s | state hash: %s"),
+		*FormatTimestamp(LiveProjection.CapturedAt),
+		*LiveProjection.ActorLabel,
+		LiveProjection.bInitialized ? TEXT("yes") : TEXT("no"),
+		LiveProjection.bPlaying ? TEXT("yes") : TEXT("no"),
 		Metrics.Step,
 		Metrics.NextResampleStep,
+		Metrics.EventCount,
+		Metrics.SampleCount,
+		Metrics.PlateCount,
+		*PercentString(Metrics.RawMissCount, Metrics.SampleCount),
+		Metrics.RawMissCount,
+		*PercentString(Metrics.RawMultiHitCount, Metrics.SampleCount),
+		Metrics.RawMultiHitCount,
+		Metrics.BoundaryHitCount,
+		Metrics.NaNOrInfCount,
 		Metrics.AuthoritativeCAF,
 		Metrics.ProjectedCAF,
-		MissPct,
-		MultiPct,
 		Metrics.DriftErrorMeanKm,
 		Metrics.DriftErrorP95Km,
-		Metrics.NaNOrInfCount,
-		*Metrics.LastHash));
+		*Metrics.LastHash,
+		*Metrics.StateHash));
+}
+
+FText SCarrierLabControlPanel::GetLiveTimingText() const
+{
+	if (!LiveProjection.bHasSnapshot)
+	{
+		return FText::GetEmpty();
+	}
+	const FCarrierLabVisualizationMetrics& Metrics = LiveProjection.Metrics;
+	return FText::FromString(FString::Printf(
+		TEXT("Timing: projection %.6fs | BVH %.6fs | query %.6fs | drift %.6fs | boundary %.6fs | hash %.6fs | render %.6fs | resample %.6fs"),
+		Metrics.ProjectionSeconds,
+		Metrics.BvhBuildSeconds,
+		Metrics.ProjectionQuerySeconds,
+		Metrics.DriftMetricsSeconds,
+		Metrics.BoundaryMaskSeconds,
+		Metrics.HashSeconds,
+		Metrics.MeshUpdateSeconds,
+		Metrics.ResampleEventSeconds));
+}
+
+FText SCarrierLabControlPanel::GetLiveContactSummaryText() const
+{
+	if (!LiveContact.bHasAttempt)
+	{
+		return LOCTEXT("NoLiveContact", "Detect Contacts has not been run. Contact detection is button-only and read-only.");
+	}
+	if (!LiveContact.bSucceeded)
+	{
+		return FText::FromString(FString::Printf(
+			TEXT("Source: Live Actor last Detect Contacts @ %s\n")
+			TEXT("target: %s\n")
+			TEXT("status: FAIL | %s"),
+			*FormatTimestamp(LiveContact.CapturedAt),
+			*LiveContact.TargetActorLabel,
+			*LiveContact.ErrorText));
+	}
+
+	const FCarrierLabPhaseIIContactMetrics& Metrics = LiveContact.Metrics;
+	return FText::FromString(FString::Printf(
+		TEXT("Source: Live Actor last Detect Contacts @ %s\n")
+		TEXT("target: %s\n")
+		TEXT("projection hash unchanged: %s | before: %s | after: %s\n")
+		TEXT("state hash unchanged: %s | before: %s | after: %s\n")
+		TEXT("contact hash: %s | contact seconds: %.6f\n")
+		TEXT("raw evidence: %d | records: %d | convergent: %d | divergent: %d | low-margin: %d | third-plate: %d | subduction candidates: %d | boundary evidence: %d | NaN/Inf: %d"),
+		*FormatTimestamp(LiveContact.CapturedAt),
+		*LiveContact.TargetActorLabel,
+		*PassFail(LiveContact.bProjectionHashUnchanged),
+		*LiveContact.ProjectionHashBefore,
+		*LiveContact.ProjectionHashAfter,
+		*PassFail(LiveContact.bStateHashUnchanged),
+		*LiveContact.StateHashBefore,
+		*LiveContact.StateHashAfter,
+		*Metrics.ContactLogHash,
+		Metrics.ContactDetectionSeconds,
+		Metrics.RawEvidenceSampleCount,
+		Metrics.ContactRecordCount,
+		Metrics.ConvergentContactCount,
+		Metrics.DivergentContactCount,
+		Metrics.TransformLowMarginContactCount,
+		Metrics.ThirdPlateContactCount,
+		Metrics.SubductionCandidateCount,
+		Metrics.BoundaryEvidenceCount,
+		Metrics.NaNOrInfCount));
+}
+
+FText SCarrierLabControlPanel::GetGateSummaryText() const
+{
+	FString Text;
+	if (!LiveContact.bHasAttempt)
+	{
+		Text += TEXT("No mutation | Source: Live Actor last Detect Contacts | Status: not run\n");
+	}
+	else if (!LiveContact.bSucceeded)
+	{
+		Text += TEXT("No mutation | Source: Live Actor last Detect Contacts | Status: no valid check\n");
+	}
+	else
+	{
+		Text += FString::Printf(
+			TEXT("No mutation | Source: Live Actor last Detect Contacts | Status: %s\n"),
+			*PassFail(LiveContact.bProjectionHashUnchanged && LiveContact.bStateHashUnchanged));
+	}
+
+	if (Slice1Artifact.bHasArtifact)
+	{
+		Text += FString::Printf(TEXT("Replay contact hash match | Source: Checkpoint Artifact latest loaded artifact | Status: %s\n"), *PassFail(Slice1Artifact.bReplayHashMatch));
+		Text += FString::Printf(TEXT("No-subduction controls | Source: Checkpoint Artifact latest loaded artifact | Status: %s\n"), *PassFail(Slice1Artifact.bNoSubductionControls));
+		Text += FString::Printf(TEXT("Convergence sign | Source: Checkpoint Artifact latest loaded artifact | Status: %s\n"), *PassFail(Slice1Artifact.bConvergenceSign));
+		Text += FString::Printf(TEXT("Third-plate explicitness | Source: Checkpoint Artifact latest loaded artifact | Status: %s"), *PassFail(Slice1Artifact.bThirdPlateExplicitness));
+	}
+	else
+	{
+		Text += TEXT("Replay contact hash match | Source: Checkpoint Artifact | Status: no artifact\n");
+		Text += TEXT("No-subduction controls | Source: Checkpoint Artifact | Status: no artifact\n");
+		Text += TEXT("Convergence sign | Source: Checkpoint Artifact | Status: no artifact\n");
+		if (LiveContact.bSucceeded && LiveContact.Metrics.ThirdPlateContactCount > 0)
+		{
+			Text += TEXT("Third-plate explicitness | Source: Live Actor last Detect Contacts with third-plate evidence | Status: SEEN");
+		}
+		else
+		{
+			Text += TEXT("Third-plate explicitness | Source: no loaded artifact | Status: no source");
+		}
+	}
+	return FText::FromString(Text);
+}
+
+FText SCarrierLabControlPanel::GetArtifactProvenanceText() const
+{
+	if (!Slice1Artifact.bHasArtifact)
+	{
+		return FText::FromString(Slice1Artifact.StatusText.IsEmpty() ? FString(TEXT("No Slice 1 artifact found")) : Slice1Artifact.StatusText);
+	}
+
+	return FText::FromString(FString::Printf(
+		TEXT("Source: latest loaded artifact (historical evidence, not current code passed)\n")
+		TEXT("metrics.jsonl: %s\n")
+		TEXT("artifact timestamp: %s\n")
+		TEXT("checkpoint report: %s\n")
+		TEXT("loaded: %s"),
+		*Slice1Artifact.MetricsPath,
+		*FormatTimestamp(Slice1Artifact.ArtifactTimestamp),
+		Slice1Artifact.CheckpointReportPath.IsEmpty() ? TEXT("not found") : *Slice1Artifact.CheckpointReportPath,
+		*FormatTimestamp(Slice1Artifact.LoadedAt)));
+}
+
+FText SCarrierLabControlPanel::GetArtifactRowsText() const
+{
+	if (!Slice1Artifact.bHasArtifact)
+	{
+		return LOCTEXT("NoArtifactRows", "No artifact fixture rows loaded.");
+	}
+
+	FString Text = TEXT("Fixture rows from metrics.jsonl:\n");
+	for (const FSlice1ArtifactFixtureSummary& Row : Slice1Artifact.FixtureRows)
+	{
+		Text += FString::Printf(
+			TEXT("%s | replays=%d | replay_hash=%s | no_mutation=%s | records=%d | conv=%d | div=%d | low=%d | third=%d | candidates=%d | sign=%.12f | contact_s=%.6f | hash=%s\n"),
+			*Row.Fixture,
+			Row.ReplayCount,
+			*PassFail(Row.ReplayCount >= 2 && Row.bContactHashMatch),
+			*PassFail(Row.bProjectionHashUnchanged && Row.bStateHashUnchanged),
+			Row.ContactRecordCount,
+			Row.ConvergentContactCount,
+			Row.DivergentContactCount,
+			Row.TransformLowMarginContactCount,
+			Row.ThirdPlateContactCount,
+			Row.SubductionCandidateCount,
+			Row.PairSignedConvergenceVelocity,
+			Row.ContactDetectionSeconds,
+			*Row.ContactLogHash);
+	}
+	return FText::FromString(Text);
 }
 
 FString SCarrierLabControlPanel::PolicyToString(const ECarrierLabMultiHitPolicy Policy)
@@ -584,6 +1249,15 @@ FString SCarrierLabControlPanel::LayerToString(const ECarrierLabVisualizationLay
 	default:
 		return TEXT("PlateId");
 	}
+}
+
+FString SCarrierLabControlPanel::FormatTimestamp(const FDateTime& Timestamp)
+{
+	if (Timestamp.GetTicks() <= 0)
+	{
+		return TEXT("none");
+	}
+	return Timestamp.ToString(TEXT("%Y-%m-%d %H:%M:%S UTC"));
 }
 
 #undef LOCTEXT_NAMESPACE

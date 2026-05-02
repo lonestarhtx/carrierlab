@@ -20,6 +20,7 @@ public class CarrierLabEditor : ModuleRules
 		{
 			"EditorFramework",
 			"InputCore",
+			"Json",
 			"LevelEditor",
 			"Slate",
 			"SlateCore",
