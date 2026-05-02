@@ -61,6 +61,7 @@ namespace
 	struct FCarrierLabCrustFields
 	{
 		double Elevation = 0.0;
+		double HistoricalElevation = 0.0;
 		double OceanicAge = 0.0;
 		FVector3d RidgeDirection = FVector3d::ZeroVector;
 		FVector3d FoldDirection = FVector3d::ZeroVector;
@@ -866,6 +867,10 @@ namespace
 			Candidate.Bary.X * A.Elevation +
 			Candidate.Bary.Y * B.Elevation +
 			Candidate.Bary.Z * C.Elevation;
+		OutFields.HistoricalElevation =
+			Candidate.Bary.X * A.HistoricalElevation +
+			Candidate.Bary.Y * B.HistoricalElevation +
+			Candidate.Bary.Z * C.HistoricalElevation;
 		OutFields.OceanicAge =
 			Candidate.Bary.X * A.OceanicAge +
 			Candidate.Bary.Y * B.OceanicAge +
@@ -2208,12 +2213,14 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	TArray<int32> NewPlateIds;
 	TArray<double> NewFractions;
 	TArray<double> NewElevations;
+	TArray<double> NewHistoricalElevations;
 	TArray<double> NewOceanicAges;
 	TArray<FVector3d> NewRidgeDirections;
 	TArray<FVector3d> NewFoldDirections;
 	NewPlateIds.SetNum(State.Samples.Num());
 	NewFractions.SetNum(State.Samples.Num());
 	NewElevations.SetNum(State.Samples.Num());
+	NewHistoricalElevations.SetNum(State.Samples.Num());
 	NewOceanicAges.SetNum(State.Samples.Num());
 	NewRidgeDirections.SetNum(State.Samples.Num());
 	NewFoldDirections.SetNum(State.Samples.Num());
@@ -2246,6 +2253,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 		NewPlateIds[Sample.Id] = Sample.PlateId;
 		NewFractions[Sample.Id] = Sample.ContinentalFraction;
 		NewElevations[Sample.Id] = Sample.Elevation;
+		NewHistoricalElevations[Sample.Id] = Sample.HistoricalElevation;
 		NewOceanicAges[Sample.Id] = Sample.OceanicAge;
 		NewRidgeDirections[Sample.Id] = Sample.RidgeDirection;
 		NewFoldDirections[Sample.Id] = Sample.FoldDirection;
@@ -2354,6 +2362,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				NewPlateIds[Sample.Id] = Q1.PlateId;
 				NewFractions[Sample.Id] = FMath::Clamp(0.5 * (Q1.ContinentalFraction + Q2.ContinentalFraction), 0.0, 1.0);
 				NewElevations[Sample.Id] = 0.0;
+				NewHistoricalElevations[Sample.Id] = 0.0;
 				NewOceanicAges[Sample.Id] = 0.0;
 				NewRidgeDirections[Sample.Id] = FVector3d::ZeroVector;
 				NewFoldDirections[Sample.Id] = FVector3d::ZeroVector;
@@ -2523,6 +2532,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				InterpolateCrustFields(State.Plates[ResolvedPlateId], *Chosen, Sample.UnitPosition, InterpolatedFields))
 			{
 				NewElevations[Sample.Id] = InterpolatedFields.Elevation;
+				NewHistoricalElevations[Sample.Id] = InterpolatedFields.HistoricalElevation;
 				NewOceanicAges[Sample.Id] = InterpolatedFields.OceanicAge;
 				NewRidgeDirections[Sample.Id] = InterpolatedFields.RidgeDirection;
 				NewFoldDirections[Sample.Id] = InterpolatedFields.FoldDirection;
@@ -2821,6 +2831,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			Sample.PlateId = NewPlateIds[Sample.Id];
 			Sample.ContinentalFraction = FMath::Clamp(NewFractions[Sample.Id], 0.0, 1.0);
 			Sample.Elevation = NewElevations[Sample.Id];
+			Sample.HistoricalElevation = NewHistoricalElevations[Sample.Id];
 			Sample.OceanicAge = NewOceanicAges[Sample.Id];
 			Sample.RidgeDirection = NewRidgeDirections[Sample.Id];
 			Sample.FoldDirection = NewFoldDirections[Sample.Id];
@@ -3938,10 +3949,127 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIC1SubductingMarkAudit(FCarrierLab
 			Record.EvidenceId = Mark.EvidenceId;
 			Record.SignedConvergenceVelocity = Mark.SignedConvergenceVelocity;
 			Record.DecisionClass = Mark.DecisionClass;
+			Record.bHistoricalElevationSnapshotTaken = Mark.bHistoricalElevationSnapshotTaken;
+			Record.HistoricalElevationSnapshotVertexCount = Mark.HistoricalElevationSnapshotVertexCount;
+			Record.HistoricalElevationSnapshotMin = Mark.HistoricalElevationSnapshotMin;
+			Record.HistoricalElevationSnapshotMax = Mark.HistoricalElevationSnapshotMax;
+			Record.VisibleElevationAppliedKm = Mark.VisibleElevationAppliedKm;
 		}
 	}
 
 	OutAudit.SubductingMarkHash = HashToString(MarkHash);
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::GetPhaseIIIC2ElevationAudit(FCarrierLabPhaseIIIC2ElevationAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIC2ElevationAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	OutAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
+	OutAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	OutAudit.DuplicateSnapshotCount = State.ConvergenceHistoricalElevationDuplicateSnapshotCount;
+	OutAudit.StateSnapshotCount = State.ConvergenceHistoricalElevationSnapshotCount;
+	OutAudit.StateSnapshotVertexCount = State.ConvergenceHistoricalElevationSnapshotVertexCount;
+	OutAudit.StateInvalidSnapshotCount = State.ConvergenceHistoricalElevationInvalidSnapshotCount;
+	OutAudit.TrenchDepthKm = PhaseIIICTrenchDepthKm;
+	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
+	OutAudit.HistoricalElevationHash = CurrentMetrics.HistoricalElevationHash;
+	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+
+	bool bInitializedVisible = false;
+	bool bInitializedHistorical = false;
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		if (!Mark.bHistoricalElevationSnapshotTaken)
+		{
+			++OutAudit.MissingSnapshotCount;
+			continue;
+		}
+		++OutAudit.SnapshotMarkCount;
+		OutAudit.SnapshotVertexCount += Mark.HistoricalElevationSnapshotVertexCount;
+		if (!State.Plates.IsValidIndex(Mark.PlateId) ||
+			!State.Plates[Mark.PlateId].LocalTriangles.IsValidIndex(Mark.LocalTriangleId))
+		{
+			++OutAudit.InvalidSnapshotCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[Mark.PlateId];
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[Mark.LocalTriangleId];
+		const int32 VertexIds[3] = { Triangle.A, Triangle.B, Triangle.C };
+		double VisibleMin = TNumericLimits<double>::Max();
+		double VisibleMax = -TNumericLimits<double>::Max();
+		double HistoricalMin = TNumericLimits<double>::Max();
+		double HistoricalMax = -TNumericLimits<double>::Max();
+		bool bAllVerticesValid = true;
+		for (const int32 VertexId : VertexIds)
+		{
+			if (!Plate.Vertices.IsValidIndex(VertexId))
+			{
+				bAllVerticesValid = false;
+				break;
+			}
+			const CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[VertexId];
+			VisibleMin = FMath::Min(VisibleMin, Vertex.Elevation);
+			VisibleMax = FMath::Max(VisibleMax, Vertex.Elevation);
+			HistoricalMin = FMath::Min(HistoricalMin, Vertex.HistoricalElevation);
+			HistoricalMax = FMath::Max(HistoricalMax, Vertex.HistoricalElevation);
+		}
+		if (!bAllVerticesValid)
+		{
+			++OutAudit.InvalidSnapshotCount;
+			continue;
+		}
+
+		if (!bInitializedVisible)
+		{
+			OutAudit.VisibleElevationMin = VisibleMin;
+			OutAudit.VisibleElevationMax = VisibleMax;
+			bInitializedVisible = true;
+		}
+		else
+		{
+			OutAudit.VisibleElevationMin = FMath::Min(OutAudit.VisibleElevationMin, VisibleMin);
+			OutAudit.VisibleElevationMax = FMath::Max(OutAudit.VisibleElevationMax, VisibleMax);
+		}
+
+		if (!bInitializedHistorical)
+		{
+			OutAudit.HistoricalElevationMin = HistoricalMin;
+			OutAudit.HistoricalElevationMax = HistoricalMax;
+			bInitializedHistorical = true;
+		}
+		else
+		{
+			OutAudit.HistoricalElevationMin = FMath::Min(OutAudit.HistoricalElevationMin, HistoricalMin);
+			OutAudit.HistoricalElevationMax = FMath::Max(OutAudit.HistoricalElevationMax, HistoricalMax);
+		}
+
+		if (OutAudit.Records.Num() < 16)
+		{
+			FCarrierLabPhaseIIIC2ElevationAuditRecord& Record = OutAudit.Records.AddDefaulted_GetRef();
+			Record.MarkId = Mark.MarkId;
+			Record.PlateId = Mark.PlateId;
+			Record.OtherPlateId = Mark.OtherPlateId;
+			Record.LocalTriangleId = Mark.LocalTriangleId;
+			Record.SnapshotVertexCount = Mark.HistoricalElevationSnapshotVertexCount;
+			Record.HistoricalElevationMin = HistoricalMin;
+			Record.HistoricalElevationMax = HistoricalMax;
+			Record.VisibleElevationMin = VisibleMin;
+			Record.VisibleElevationMax = VisibleMax;
+			Record.AppliedTrenchDepthKm = Mark.VisibleElevationAppliedKm;
+		}
+	}
+
 	return true;
 }
 
@@ -3970,6 +4098,36 @@ bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 Plate
 		{
 			Sample.ContinentalFraction = Fraction;
 			Sample.bContinental = bContinental;
+		}
+	}
+	ProjectCurrentCarrier();
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::SetPlateElevationForTest(const int32 PlateId, const double ElevationKm)
+{
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+	if (!State.Plates.IsValidIndex(PlateId) || !FMath::IsFinite(ElevationKm))
+	{
+		return false;
+	}
+
+	CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+	for (CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+	{
+		Vertex.Elevation = ElevationKm;
+		Vertex.HistoricalElevation = 0.0;
+		Vertex.bHasHistoricalElevationSnapshot = false;
+	}
+	for (CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (Sample.PlateId == PlateId)
+		{
+			Sample.Elevation = ElevationKm;
+			Sample.HistoricalElevation = 0.0;
 		}
 	}
 	ProjectCurrentCarrier();
@@ -4044,6 +4202,10 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(F
 	State.ConvergenceNeighborPropagationInvalidCount = 0;
 	State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 	State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+	State.ConvergenceHistoricalElevationSnapshotCount = 0;
+	State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
+	State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
+	State.ConvergenceHistoricalElevationInvalidSnapshotCount = 0;
 
 	CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence =
 		State.ConvergenceSubductionMatrixEvidence.AddDefaulted_GetRef();
@@ -4168,6 +4330,10 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			State.ConvergenceNeighborPropagationInvalidCount = 0;
 			State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 			State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+			State.ConvergenceHistoricalElevationSnapshotCount = 0;
+			State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
+			State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
+			State.ConvergenceHistoricalElevationInvalidSnapshotCount = 0;
 
 			CarrierLab::FConvergenceSubductionTriangleHit& TriangleHit = State.ConvergenceSubductionTriangleHits.AddDefaulted_GetRef();
 			TriangleHit.PairKey = PairKey;
@@ -4302,12 +4468,14 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	TArray<int32> NewPlateIds;
 	TArray<double> NewFractions;
 	TArray<double> NewElevations;
+	TArray<double> NewHistoricalElevations;
 	TArray<double> NewOceanicAges;
 	TArray<FVector3d> NewRidgeDirections;
 	TArray<FVector3d> NewFoldDirections;
 	NewPlateIds.Init(INDEX_NONE, State.Samples.Num());
 	NewFractions.Init(0.0, State.Samples.Num());
 	NewElevations.Init(0.0, State.Samples.Num());
+	NewHistoricalElevations.Init(0.0, State.Samples.Num());
 	NewOceanicAges.Init(0.0, State.Samples.Num());
 	NewRidgeDirections.Init(FVector3d::ZeroVector, State.Samples.Num());
 	NewFoldDirections.Init(FVector3d::ZeroVector, State.Samples.Num());
@@ -4320,6 +4488,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 		NewPlateIds[Sample.Id] = Sample.PlateId;
 		NewFractions[Sample.Id] = Sample.ContinentalFraction;
 		NewElevations[Sample.Id] = Sample.Elevation;
+		NewHistoricalElevations[Sample.Id] = Sample.HistoricalElevation;
 		NewOceanicAges[Sample.Id] = Sample.OceanicAge;
 		NewRidgeDirections[Sample.Id] = Sample.RidgeDirection;
 		NewFoldDirections[Sample.Id] = Sample.FoldDirection;
@@ -4344,6 +4513,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 				NewPlateIds[Sample.Id] = Q1.PlateId;
 				NewFractions[Sample.Id] = FMath::Clamp(0.5 * (Q1.ContinentalFraction + Q2.ContinentalFraction), 0.0, 1.0);
 				NewElevations[Sample.Id] = 0.0;
+				NewHistoricalElevations[Sample.Id] = 0.0;
 				NewOceanicAges[Sample.Id] = 0.0;
 				NewRidgeDirections[Sample.Id] = FVector3d::ZeroVector;
 				NewFoldDirections[Sample.Id] = FVector3d::ZeroVector;
@@ -4373,6 +4543,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 			if (InterpolateCrustFields(State.Plates[ResolvedPlateId], *Chosen, Sample.UnitPosition, InterpolatedFields))
 			{
 				NewElevations[Sample.Id] = InterpolatedFields.Elevation;
+				NewHistoricalElevations[Sample.Id] = InterpolatedFields.HistoricalElevation;
 				NewOceanicAges[Sample.Id] = InterpolatedFields.OceanicAge;
 				NewRidgeDirections[Sample.Id] = InterpolatedFields.RidgeDirection;
 				NewFoldDirections[Sample.Id] = InterpolatedFields.FoldDirection;
@@ -4387,6 +4558,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 			Sample.PlateId = NewPlateIds[Sample.Id];
 			Sample.ContinentalFraction = FMath::Clamp(NewFractions[Sample.Id], 0.0, 1.0);
 			Sample.Elevation = NewElevations[Sample.Id];
+			Sample.HistoricalElevation = NewHistoricalElevations[Sample.Id];
 			Sample.OceanicAge = NewOceanicAges[Sample.Id];
 			Sample.RidgeDirection = NewRidgeDirections[Sample.Id];
 			Sample.FoldDirection = NewFoldDirections[Sample.Id];
@@ -4906,8 +5078,71 @@ void ACarrierLabVisualizationActor::UpdatePhaseIIICSubductingTriangleMarks()
 		Mark.EvidenceId = Hit.EvidenceId;
 		Mark.SignedConvergenceVelocity = Hit.SignedConvergenceVelocity;
 		Mark.DecisionClass = Decision->DecisionClass;
+		if (bEnablePhaseIIICVisibleHistoricalElevation)
+		{
+			ApplyPhaseIIIC2ElevationSplitToMark(Mark);
+		}
 		ExistingTriangleKeys.Add(TriangleKey);
 	}
+}
+
+bool ACarrierLabVisualizationActor::ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark)
+{
+	if (Mark.bHistoricalElevationSnapshotTaken)
+	{
+		++State.ConvergenceHistoricalElevationDuplicateSnapshotCount;
+		return true;
+	}
+	if (!State.Plates.IsValidIndex(Mark.PlateId))
+	{
+		++State.ConvergenceHistoricalElevationInvalidSnapshotCount;
+		return false;
+	}
+
+	CarrierLab::FCarrierPlate& Plate = State.Plates[Mark.PlateId];
+	if (!Plate.LocalTriangles.IsValidIndex(Mark.LocalTriangleId))
+	{
+		++State.ConvergenceHistoricalElevationInvalidSnapshotCount;
+		return false;
+	}
+
+	const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[Mark.LocalTriangleId];
+	const int32 VertexIds[3] = { Triangle.A, Triangle.B, Triangle.C };
+	for (const int32 VertexId : VertexIds)
+	{
+		if (!Plate.Vertices.IsValidIndex(VertexId))
+		{
+			++State.ConvergenceHistoricalElevationInvalidSnapshotCount;
+			return false;
+		}
+	}
+
+	double MinHistoricalElevation = TNumericLimits<double>::Max();
+	double MaxHistoricalElevation = -TNumericLimits<double>::Max();
+	for (const int32 VertexId : VertexIds)
+	{
+		CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[VertexId];
+		if (!Vertex.bHasHistoricalElevationSnapshot)
+		{
+			Vertex.HistoricalElevation = Vertex.Elevation;
+			Vertex.bHasHistoricalElevationSnapshot = true;
+		}
+		MinHistoricalElevation = FMath::Min(MinHistoricalElevation, Vertex.HistoricalElevation);
+		MaxHistoricalElevation = FMath::Max(MaxHistoricalElevation, Vertex.HistoricalElevation);
+	}
+	for (const int32 VertexId : VertexIds)
+	{
+		Plate.Vertices[VertexId].Elevation = PhaseIIICTrenchDepthKm;
+	}
+
+	Mark.bHistoricalElevationSnapshotTaken = true;
+	Mark.HistoricalElevationSnapshotVertexCount = 3;
+	Mark.HistoricalElevationSnapshotMin = MinHistoricalElevation;
+	Mark.HistoricalElevationSnapshotMax = MaxHistoricalElevation;
+	Mark.VisibleElevationAppliedKm = PhaseIIICTrenchDepthKm;
+	++State.ConvergenceHistoricalElevationSnapshotCount;
+	State.ConvergenceHistoricalElevationSnapshotVertexCount += 3;
+	return true;
 }
 
 void ACarrierLabVisualizationActor::AdvanceOneStep()
@@ -5180,6 +5415,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 
 	RenderPlateIds.Init(INDEX_NONE, State.Samples.Num());
 	RenderContinentalFractions.Init(0.0, State.Samples.Num());
+	RenderElevations.Init(0.0, State.Samples.Num());
 	DriftErrorKmBySample.Init(-1.0, State.Samples.Num());
 	MissMask.Init(0, State.Samples.Num());
 	OverlapMask.Init(0, State.Samples.Num());
@@ -5255,6 +5491,14 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 			: 0.0;
 		RenderPlateIds[OutputIndex] = ResolvedPlateId;
 		RenderContinentalFractions[OutputIndex] = Fraction;
+		if (Chosen != nullptr && State.Plates.IsValidIndex(ResolvedPlateId) && RenderElevations.IsValidIndex(OutputIndex))
+		{
+			FCarrierLabCrustFields ProjectedFields;
+			if (InterpolateCrustFields(State.Plates[ResolvedPlateId], *Chosen, Sample.UnitPosition, ProjectedFields))
+			{
+				RenderElevations[OutputIndex] = ProjectedFields.Elevation;
+			}
+		}
 		ProjectedAreaBySample[OutputIndex] = Sample.AreaWeight * Fraction;
 	});
 
@@ -5366,6 +5610,7 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		HashMix(CrustHash, static_cast<uint64>(Sample.Id + 1));
 		HashMix(CrustHash, static_cast<uint64>(Sample.PlateId + 1));
 		HashMixDouble(CrustHash, Sample.Elevation);
+		HashMixDouble(CrustHash, Sample.HistoricalElevation);
 		HashMixDouble(CrustHash, Sample.OceanicAge);
 		HashMixDouble(CrustHash, Sample.RidgeDirection.X);
 		HashMixDouble(CrustHash, Sample.RidgeDirection.Y);
@@ -5382,6 +5627,7 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		{
 			HashMix(CrustHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
 			HashMixDouble(CrustHash, Vertex.Elevation);
+			HashMixDouble(CrustHash, Vertex.HistoricalElevation);
 			HashMixDouble(CrustHash, Vertex.OceanicAge);
 			HashMixDouble(CrustHash, Vertex.RidgeDirection.X);
 			HashMixDouble(CrustHash, Vertex.RidgeDirection.Y);
@@ -5389,9 +5635,39 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 			HashMixDouble(CrustHash, Vertex.FoldDirection.X);
 			HashMixDouble(CrustHash, Vertex.FoldDirection.Y);
 			HashMixDouble(CrustHash, Vertex.FoldDirection.Z);
+			HashMix(CrustHash, Vertex.bHasHistoricalElevationSnapshot ? 1ull : 0ull);
 		}
 	}
 	CurrentMetrics.CrustStateHash = HashToString(CrustHash);
+
+	uint64 VisibleElevationHash = 1469598103934665603ull;
+	uint64 HistoricalElevationHash = 1469598103934665603ull;
+	HashMix(VisibleElevationHash, static_cast<uint64>(CurrentMetrics.Step + 1));
+	HashMix(VisibleElevationHash, static_cast<uint64>(CurrentMetrics.EventCount + 1));
+	HashMix(HistoricalElevationHash, static_cast<uint64>(CurrentMetrics.Step + 1));
+	HashMix(HistoricalElevationHash, static_cast<uint64>(CurrentMetrics.EventCount + 1));
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		HashMix(VisibleElevationHash, static_cast<uint64>(Sample.Id + 1));
+		HashMixDouble(VisibleElevationHash, Sample.Elevation);
+		HashMix(HistoricalElevationHash, static_cast<uint64>(Sample.Id + 1));
+		HashMixDouble(HistoricalElevationHash, Sample.HistoricalElevation);
+	}
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		HashMix(VisibleElevationHash, static_cast<uint64>(Plate.PlateId + 1));
+		HashMix(HistoricalElevationHash, static_cast<uint64>(Plate.PlateId + 1));
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			HashMix(VisibleElevationHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
+			HashMixDouble(VisibleElevationHash, Vertex.Elevation);
+			HashMix(HistoricalElevationHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
+			HashMixDouble(HistoricalElevationHash, Vertex.HistoricalElevation);
+			HashMix(HistoricalElevationHash, Vertex.bHasHistoricalElevationSnapshot ? 1ull : 0ull);
+		}
+	}
+	CurrentMetrics.VisibleElevationHash = HashToString(VisibleElevationHash);
+	CurrentMetrics.HistoricalElevationHash = HashToString(HistoricalElevationHash);
 	CurrentMetrics.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
 }
 
@@ -5429,7 +5705,9 @@ bool ACarrierLabVisualizationActor::BuildVisualizationLayerMap(
 		{
 		case ECarrierLabVisualizationLayer::ElevationHeatmap:
 		{
-			const double ElevationKm = State.Samples.IsValidIndex(SampleId) ? State.Samples[SampleId].Elevation : 0.0;
+			const double ElevationKm = RenderElevations.IsValidIndex(SampleId)
+				? RenderElevations[SampleId]
+				: (State.Samples.IsValidIndex(SampleId) ? State.Samples[SampleId].Elevation : 0.0);
 			return FMath::Abs(ElevationKm) <= 1.0e-9
 				? Base
 				: BlendMapOverlay(DimMapBase(Base), ElevationColor(ElevationKm));
@@ -5498,7 +5776,9 @@ FLinearColor ACarrierLabVisualizationActor::ColorForSampleLayer(
 	case ECarrierLabVisualizationLayer::DriftError:
 		return DriftColor(DriftErrorKmBySample.IsValidIndex(SampleId) ? DriftErrorKmBySample[SampleId] : -1.0);
 	case ECarrierLabVisualizationLayer::ElevationHeatmap:
-		return ElevationColor(State.Samples.IsValidIndex(SampleId) ? State.Samples[SampleId].Elevation : 0.0);
+		return ElevationColor(RenderElevations.IsValidIndex(SampleId)
+			? RenderElevations[SampleId]
+			: (State.Samples.IsValidIndex(SampleId) ? State.Samples[SampleId].Elevation : 0.0));
 	case ECarrierLabVisualizationLayer::SubductionMask:
 		return SubductionRoleColor(SubductionRoleMask.IsValidIndex(SampleId) ? SubductionRoleMask[SampleId] : 0);
 	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:

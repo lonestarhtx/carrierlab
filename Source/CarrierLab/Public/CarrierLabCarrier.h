@@ -22,6 +22,7 @@ namespace CarrierLab
 		int32 PlateId = INDEX_NONE;
 		double ContinentalFraction = 0.0;
 		double Elevation = 0.0;
+		double HistoricalElevation = 0.0;
 		double OceanicAge = 0.0;
 		FVector3d RidgeDirection = FVector3d::ZeroVector;
 		FVector3d FoldDirection = FVector3d::ZeroVector;
@@ -44,9 +45,11 @@ namespace CarrierLab
 		double AreaWeight = 0.0;
 		double ContinentalFraction = 0.0;
 		double Elevation = 0.0;
+		double HistoricalElevation = 0.0;
 		double OceanicAge = 0.0;
 		FVector3d RidgeDirection = FVector3d::ZeroVector;
 		FVector3d FoldDirection = FVector3d::ZeroVector;
+		bool bHasHistoricalElevationSnapshot = false;
 		bool bContinental = false;
 	};
 
@@ -136,6 +139,11 @@ namespace CarrierLab
 		int32 EvidenceId = INDEX_NONE;
 		double SignedConvergenceVelocity = 0.0;
 		EConvergenceSubductionPolarityClass DecisionClass = EConvergenceSubductionPolarityClass::None;
+		bool bHistoricalElevationSnapshotTaken = false;
+		int32 HistoricalElevationSnapshotVertexCount = 0;
+		double HistoricalElevationSnapshotMin = 0.0;
+		double HistoricalElevationSnapshotMax = 0.0;
+		double VisibleElevationAppliedKm = 0.0;
 	};
 
 	struct FCarrierState
@@ -165,6 +173,10 @@ namespace CarrierLab
 		int32 ConvergenceNeighborPropagationInvalidCount = 0;
 		int32 ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 		int32 ConvergenceSubductingTriangleMarkInvalidCount = 0;
+		int32 ConvergenceHistoricalElevationSnapshotCount = 0;
+		int32 ConvergenceHistoricalElevationSnapshotVertexCount = 0;
+		int32 ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
+		int32 ConvergenceHistoricalElevationInvalidSnapshotCount = 0;
 	};
 
 	enum class EStage0MissClass : uint8

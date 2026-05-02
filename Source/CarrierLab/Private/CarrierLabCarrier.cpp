@@ -114,6 +114,7 @@ namespace CarrierLab
 			Vertex.AreaWeight = Sample.AreaWeight;
 			Vertex.ContinentalFraction = Sample.ContinentalFraction;
 			Vertex.Elevation = Sample.Elevation;
+			Vertex.HistoricalElevation = Sample.HistoricalElevation;
 			Vertex.OceanicAge = Sample.OceanicAge;
 			Vertex.RidgeDirection = Sample.RidgeDirection;
 			Vertex.FoldDirection = Sample.FoldDirection;
@@ -464,6 +465,10 @@ namespace CarrierLab
 		State.ConvergenceNeighborPropagationInvalidCount = 0;
 		State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 		State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+		State.ConvergenceHistoricalElevationSnapshotCount = 0;
+		State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
+		State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
+		State.ConvergenceHistoricalElevationInvalidSnapshotCount = 0;
 
 		for (FCarrierPlate& Plate : State.Plates)
 		{

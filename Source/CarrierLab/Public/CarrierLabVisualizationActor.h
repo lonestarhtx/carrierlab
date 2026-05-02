@@ -120,6 +120,12 @@ struct FCarrierLabVisualizationMetrics
 	FString CrustStateHash;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	FString VisibleElevationHash;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	FString HistoricalElevationHash;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	FString ConvergenceTrackingHash;
 };
 
@@ -678,6 +684,11 @@ struct FCarrierLabPhaseIIIC1SubductingMarkAuditRecord
 	int32 EvidenceId = INDEX_NONE;
 	double SignedConvergenceVelocity = 0.0;
 	CarrierLab::EConvergenceSubductionPolarityClass DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::None;
+	bool bHistoricalElevationSnapshotTaken = false;
+	int32 HistoricalElevationSnapshotVertexCount = 0;
+	double HistoricalElevationSnapshotMin = 0.0;
+	double HistoricalElevationSnapshotMax = 0.0;
+	double VisibleElevationAppliedKm = 0.0;
 };
 
 struct FCarrierLabPhaseIIIC1SubductingMarkAudit
@@ -694,6 +705,48 @@ struct FCarrierLabPhaseIIIC1SubductingMarkAudit
 	int32 NonSubductionDecisionCount = 0;
 	TArray<FCarrierLabPhaseIIIC1SubductingMarkAuditRecord> Records;
 	FString SubductingMarkHash;
+};
+
+struct FCarrierLabPhaseIIIC2ElevationAuditRecord
+{
+	int32 MarkId = INDEX_NONE;
+	int32 PlateId = INDEX_NONE;
+	int32 OtherPlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	int32 SnapshotVertexCount = 0;
+	double HistoricalElevationMin = 0.0;
+	double HistoricalElevationMax = 0.0;
+	double VisibleElevationMin = 0.0;
+	double VisibleElevationMax = 0.0;
+	double AppliedTrenchDepthKm = 0.0;
+};
+
+struct FCarrierLabPhaseIIIC2ElevationAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	bool bMarksEnabled = false;
+	bool bElevationSplitEnabled = false;
+	int32 MarkCount = 0;
+	int32 SnapshotMarkCount = 0;
+	int32 MissingSnapshotCount = 0;
+	int32 InvalidSnapshotCount = 0;
+	int32 SnapshotVertexCount = 0;
+	int32 DuplicateSnapshotCount = 0;
+	int32 StateSnapshotCount = 0;
+	int32 StateSnapshotVertexCount = 0;
+	int32 StateInvalidSnapshotCount = 0;
+	double TrenchDepthKm = -10.0;
+	double VisibleElevationMin = 0.0;
+	double VisibleElevationMax = 0.0;
+	double HistoricalElevationMin = 0.0;
+	double HistoricalElevationMax = 0.0;
+	FString VisibleElevationHash;
+	FString HistoricalElevationHash;
+	FString CrustStateHash;
+	TArray<FCarrierLabPhaseIIIC2ElevationAuditRecord> Records;
 };
 
 UCLASS(Blueprintable)
@@ -743,6 +796,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	bool bEnablePhaseIIICSubductingMarks = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	bool bEnablePhaseIIICVisibleHistoricalElevation = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIICTrenchDepthKm = -10.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
 	bool bAutoInitialize = true;
@@ -886,7 +945,9 @@ public:
 	bool GetPhaseIIIB6NeighborPropagationAudit(FCarrierLabPhaseIIIB6NeighborPropagationAudit& OutAudit) const;
 	bool GetPhaseIIIB7HashClosureAudit(FCarrierLabPhaseIIIB7HashClosureAudit& OutAudit) const;
 	bool GetPhaseIIIC1SubductingMarkAudit(FCarrierLabPhaseIIIC1SubductingMarkAudit& OutAudit) const;
+	bool GetPhaseIIIC2ElevationAudit(FCarrierLabPhaseIIIC2ElevationAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
+	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
 	bool SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit);
 	bool SeedPhaseIIIB6SingleConvergentTriangleForTest(
@@ -901,6 +962,7 @@ private:
 	void UpdateConvergenceSubductionPolarityDecisions();
 	void UpdateConvergenceNeighborPropagation();
 	void UpdatePhaseIIICSubductingTriangleMarks();
+	bool ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark);
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);
@@ -917,6 +979,7 @@ private:
 	FCarrierLabVizProjectionMesh ProjectionRayMesh;
 	TArray<int32> RenderPlateIds;
 	TArray<double> RenderContinentalFractions;
+	TArray<double> RenderElevations;
 	TArray<double> DriftErrorKmBySample;
 	TArray<TArray<FVector3d>> DriftReferencePositions;
 	TArray<uint8> MissMask;
