@@ -88,8 +88,13 @@ namespace CarrierLab
 		TArray<TArray<int32>> SampleIncidentTriangleIds;
 		TArray<TArray<int32>> SampleNeighborIds;
 		TArray<TArray<FCarrierRayTriangleRef>> SampleRayCandidateTriangles;
+		TSet<uint64> ConvergenceSubductionMatrixPairKeys;
 		int32 ConvergenceTrackingResetSerial = 0;
 		int32 ConvergenceTrackingDistanceCullCount = 0;
+		int32 ConvergenceSubductionMatrixRayTestCount = 0;
+		int32 ConvergenceSubductionMatrixHitCount = 0;
+		int32 ConvergenceSubductionMatrixBoundaryHitCount = 0;
+		int32 ConvergenceSubductionMatrixNonConvergentHitCount = 0;
 	};
 
 	enum class EStage0MissClass : uint8

@@ -524,6 +524,27 @@ struct FCarrierLabPhaseIIIB2DistanceAudit
 	FString ConvergenceTrackingHash;
 };
 
+struct FCarrierLabPhaseIIIB3SubductionMatrixAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	int32 ActiveBoundaryTriangleCount = 0;
+	int32 DistanceRecordCount = 0;
+	int32 MatrixPairCount = 0;
+	int32 InvalidMatrixPairCount = 0;
+	int32 SelfMatrixPairCount = 0;
+	int32 RayTestCount = 0;
+	int32 HitCount = 0;
+	int32 BoundaryHitCount = 0;
+	int32 NonConvergentHitCount = 0;
+	int32 ProbePlateA = INDEX_NONE;
+	int32 ProbePlateB = INDEX_NONE;
+	double ProbeSignedConvergenceVelocity = 0.0;
+	FString ConvergenceTrackingHash;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -691,11 +712,13 @@ public:
 		FCarrierLabPhaseIIIA4FieldAudit& OutAudit) const;
 	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
+	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
 
 private:
 	void BindInputControls();
 	void AdvanceOneStep();
 	void UpdateConvergenceTrackingDistances();
+	void UpdateConvergenceSubductionMatrix();
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);

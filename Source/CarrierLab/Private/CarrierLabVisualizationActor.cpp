@@ -131,6 +131,19 @@ namespace
 		HashMix(Hash, static_cast<uint64>(FMath::RoundToInt64(Value * 1000000000.0)));
 	}
 
+	uint64 MakePlatePairKey(const int32 A, const int32 B)
+	{
+		const uint32 MinPlateId = static_cast<uint32>(FMath::Min(A, B));
+		const uint32 MaxPlateId = static_cast<uint32>(FMath::Max(A, B));
+		return (static_cast<uint64>(MinPlateId) << 32) | static_cast<uint64>(MaxPlateId);
+	}
+
+	void DecodePlatePairKey(const uint64 Key, int32& OutA, int32& OutB)
+	{
+		OutA = static_cast<int32>(static_cast<uint32>(Key >> 32));
+		OutB = static_cast<int32>(static_cast<uint32>(Key & 0xffffffffull));
+	}
+
 	FString HashToString(const uint64 Hash)
 	{
 		return FString::Printf(TEXT("%016llx"), static_cast<unsigned long long>(Hash));
@@ -142,6 +155,13 @@ namespace
 		HashMix(Hash, static_cast<uint64>(State.ConvergenceTrackingResetSerial + 1));
 		HashMix(Hash, static_cast<uint64>(State.ConvergenceTrackingDistanceCullCount + 1));
 		HashMix(Hash, static_cast<uint64>(State.Plates.Num() + 1));
+		TArray<uint64> MatrixPairKeys = State.ConvergenceSubductionMatrixPairKeys.Array();
+		MatrixPairKeys.Sort();
+		HashMix(Hash, static_cast<uint64>(MatrixPairKeys.Num() + 1));
+		for (const uint64 PairKey : MatrixPairKeys)
+		{
+			HashMix(Hash, PairKey + 1ull);
+		}
 		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 		{
 			HashMix(Hash, static_cast<uint64>(Plate.PlateId + 1));
@@ -3051,6 +3071,58 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseI
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIB3SubductionMatrixAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.RayTestCount = State.ConvergenceSubductionMatrixRayTestCount;
+	OutAudit.HitCount = State.ConvergenceSubductionMatrixHitCount;
+	OutAudit.BoundaryHitCount = State.ConvergenceSubductionMatrixBoundaryHitCount;
+	OutAudit.NonConvergentHitCount = State.ConvergenceSubductionMatrixNonConvergentHitCount;
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		OutAudit.ActiveBoundaryTriangleCount += Plate.ActiveBoundaryTriangles.Num();
+		OutAudit.DistanceRecordCount += Plate.ActiveBoundaryTriangleDistancesKm.Num();
+	}
+
+	TArray<uint64> PairKeys = State.ConvergenceSubductionMatrixPairKeys.Array();
+	PairKeys.Sort();
+	OutAudit.MatrixPairCount = PairKeys.Num();
+	for (const uint64 PairKey : PairKeys)
+	{
+		int32 PlateA = INDEX_NONE;
+		int32 PlateB = INDEX_NONE;
+		DecodePlatePairKey(PairKey, PlateA, PlateB);
+		if (PlateA == PlateB)
+		{
+			++OutAudit.SelfMatrixPairCount;
+		}
+		if (!State.Plates.IsValidIndex(PlateA) || !State.Plates.IsValidIndex(PlateB))
+		{
+			++OutAudit.InvalidMatrixPairCount;
+			continue;
+		}
+		if (OutAudit.ProbePlateA == INDEX_NONE)
+		{
+			OutAudit.ProbePlateA = PlateA;
+			OutAudit.ProbePlateB = PlateB;
+			OutAudit.ProbeSignedConvergenceVelocity = ComputePhaseIIPairSignedConvergenceVelocity(PlateA, PlateB);
+		}
+	}
+
+	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -3380,6 +3452,96 @@ void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
 	}
 }
 
+void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
+{
+	FString MeshError;
+	if (!RefreshPlateRayMeshes(MeshError))
+	{
+		UE_LOG(LogTemp, Error, TEXT("CarrierLab convergence subduction matrix update failed: %s"), *MeshError);
+		return;
+	}
+
+	IMeshSpatial::FQueryOptions QueryOptions(2.0 + 1.0e-6);
+	TArray<MeshIntersection::FHitIntersectionResult> Hits;
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		if (!Motions.IsValidIndex(Plate.PlateId))
+		{
+			continue;
+		}
+
+		for (const int32 LocalTriangleId : Plate.ActiveBoundaryTriangles)
+		{
+			if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+			{
+				continue;
+			}
+
+			const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+			if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+				!Plate.Vertices.IsValidIndex(Triangle.B) ||
+				!Plate.Vertices.IsValidIndex(Triangle.C))
+			{
+				continue;
+			}
+
+			const FVector3d Barycenter = NormalizeOrFallback(
+				Plate.Vertices[Triangle.A].UnitPosition +
+				Plate.Vertices[Triangle.B].UnitPosition +
+				Plate.Vertices[Triangle.C].UnitPosition,
+				Plate.Vertices[Triangle.A].UnitPosition);
+			const FRay3d Ray(FVector3d::Zero(), Barycenter);
+
+			for (const CarrierLab::FCarrierPlate& OtherPlate : State.Plates)
+			{
+				if (OtherPlate.PlateId == Plate.PlateId ||
+					!PlateRayMeshes.IsValidIndex(OtherPlate.PlateId) ||
+					!PlateRayMeshes[OtherPlate.PlateId].Tree.IsValid())
+				{
+					continue;
+				}
+
+				const double PairSignedConvergenceVelocity = ComputePhaseIIPairSignedConvergenceVelocity(Plate.PlateId, OtherPlate.PlateId);
+				++State.ConvergenceSubductionMatrixRayTestCount;
+				Hits.Reset();
+				PlateRayMeshes[OtherPlate.PlateId].Tree->FindAllHitTriangles(Ray, Hits, QueryOptions);
+				bool bAcceptedPair = false;
+				for (const MeshIntersection::FHitIntersectionResult& Hit : Hits)
+				{
+					if (Hit.Distance <= 0.0 || Hit.Distance > 2.0 + 1.0e-6)
+					{
+						continue;
+					}
+					if (!PlateRayMeshes[OtherPlate.PlateId].MeshTriangleIdToLocalTriangleId.Contains(Hit.TriangleId))
+					{
+						continue;
+					}
+					if (IsBoundaryHit(Hit.BaryCoords))
+					{
+						++State.ConvergenceSubductionMatrixBoundaryHitCount;
+						continue;
+					}
+
+					if (PairSignedConvergenceVelocity <= PhaseIIContactVelocityMargin)
+					{
+						++State.ConvergenceSubductionMatrixNonConvergentHitCount;
+						continue;
+					}
+
+					State.ConvergenceSubductionMatrixPairKeys.Add(MakePlatePairKey(Plate.PlateId, OtherPlate.PlateId));
+					++State.ConvergenceSubductionMatrixHitCount;
+					bAcceptedPair = true;
+					break;
+				}
+				if (bAcceptedPair)
+				{
+					break;
+				}
+			}
+		}
+	}
+}
+
 void ACarrierLabVisualizationActor::AdvanceOneStep()
 {
 	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -3401,6 +3563,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 		Motion.CurrentCenter = NormalizeOrFallback(RotateVector(Motion.CurrentCenter, Motion.Axis, Motion.AngularSpeedRadiansPerStep), Motion.CurrentCenter);
 	}
 	UpdateConvergenceTrackingDistances();
+	UpdateConvergenceSubductionMatrix();
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
