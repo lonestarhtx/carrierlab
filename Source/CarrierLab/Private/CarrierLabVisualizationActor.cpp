@@ -135,6 +135,28 @@ namespace
 		return FString::Printf(TEXT("%016llx"), static_cast<unsigned long long>(Hash));
 	}
 
+	uint64 ComputeConvergenceTrackingHash(const CarrierLab::FCarrierState& State)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMix(Hash, static_cast<uint64>(State.ConvergenceTrackingResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(State.Plates.Num() + 1));
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			HashMix(Hash, static_cast<uint64>(Plate.PlateId + 1));
+			HashMix(Hash, static_cast<uint64>(Plate.ActiveBoundaryTriangles.Num() + 1));
+			for (const int32 LocalTriangleId : Plate.ActiveBoundaryTriangles)
+			{
+				HashMix(Hash, static_cast<uint64>(LocalTriangleId + 1));
+				const CarrierLab::FCarrierPlateTriangle* Triangle = Plate.LocalTriangles.IsValidIndex(LocalTriangleId)
+					? &Plate.LocalTriangles[LocalTriangleId]
+					: nullptr;
+				HashMix(Hash, static_cast<uint64>((Triangle != nullptr ? Triangle->SourceTriangleId : INDEX_NONE) + 1));
+				HashMix(Hash, Triangle != nullptr && Triangle->bBoundary ? 1ull : 0ull);
+			}
+		}
+		return Hash;
+	}
+
 	bool IntersectRayWithTriangle(
 		const FVector3d& RayDirection,
 		const FVector3d& A,
@@ -2844,6 +2866,68 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIA4FieldAuditForSamples(
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIB1TrackingAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		TSet<int32> SeenActiveTriangles;
+		for (int32 LocalTriangleId = 0; LocalTriangleId < Plate.LocalTriangles.Num(); ++LocalTriangleId)
+		{
+			const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+			if (!Triangle.bBoundary)
+			{
+				continue;
+			}
+
+			++OutAudit.SourceBoundaryTriangleCount;
+			if (!Plate.ActiveBoundaryTriangles.Contains(LocalTriangleId))
+			{
+				++OutAudit.MissingBoundaryTriangleCount;
+			}
+		}
+
+		if (Plate.ActiveBoundaryTriangles.IsEmpty())
+		{
+			++OutAudit.EmptyActivePlateCount;
+		}
+
+		for (const int32 LocalTriangleId : Plate.ActiveBoundaryTriangles)
+		{
+			++OutAudit.ActiveBoundaryTriangleCount;
+			if (SeenActiveTriangles.Contains(LocalTriangleId))
+			{
+				++OutAudit.DuplicateActiveTriangleCount;
+			}
+			SeenActiveTriangles.Add(LocalTriangleId);
+
+			if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+			{
+				++OutAudit.InvalidActiveTriangleCount;
+				continue;
+			}
+
+			if (!Plate.LocalTriangles[LocalTriangleId].bBoundary)
+			{
+				++OutAudit.NonBoundaryActiveTriangleCount;
+			}
+		}
+	}
+
+	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -3507,6 +3591,7 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		}
 	}
 	CurrentMetrics.CrustStateHash = HashToString(CrustHash);
+	CurrentMetrics.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
 }
 
 FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId) const

@@ -115,6 +115,9 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	FString CrustStateHash;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	FString ConvergenceTrackingHash;
 };
 
 struct FCarrierLabVisualizationMotion
@@ -479,6 +482,22 @@ struct FCarrierLabPhaseIIIA4SeedMetrics
 	double SeedOceanicAge = 64.0;
 };
 
+struct FCarrierLabPhaseIIIB1TrackingAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 SourceBoundaryTriangleCount = 0;
+	int32 ActiveBoundaryTriangleCount = 0;
+	int32 MissingBoundaryTriangleCount = 0;
+	int32 NonBoundaryActiveTriangleCount = 0;
+	int32 DuplicateActiveTriangleCount = 0;
+	int32 InvalidActiveTriangleCount = 0;
+	int32 EmptyActivePlateCount = 0;
+	int32 ResetSerial = 0;
+	FString ConvergenceTrackingHash;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -644,6 +663,7 @@ public:
 		const TArray<int32>& SampleIds,
 		double SeedElevation,
 		FCarrierLabPhaseIIIA4FieldAudit& OutAudit) const;
+	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 
 private:
 	void BindInputControls();

@@ -452,6 +452,7 @@ namespace CarrierLab
 		{
 			Plate.Vertices.Reset();
 			Plate.LocalTriangles.Reset();
+			Plate.ActiveBoundaryTriangles.Reset();
 			Plate.GlobalSampleIdToLocalVertexId.Reset();
 		}
 
@@ -471,6 +472,10 @@ namespace CarrierLab
 			LocalTriangle.SourceTriangleId = TriangleIndex;
 			LocalTriangle.bBoundary = Triangle.bBoundary;
 			const int32 LocalTriangleId = Plate.LocalTriangles.Add(LocalTriangle);
+			if (LocalTriangle.bBoundary)
+			{
+				Plate.ActiveBoundaryTriangles.Add(LocalTriangleId);
+			}
 
 			const int32 SourceVerts[3] = {Triangle.A, Triangle.B, Triangle.C};
 			for (const int32 SourceVertexId : SourceVerts)
@@ -573,6 +578,7 @@ namespace CarrierLab
 			Plate.TriangleIds.Reset();
 			Plate.Vertices.Reset();
 			Plate.LocalTriangles.Reset();
+			Plate.ActiveBoundaryTriangles.Reset();
 			Plate.GlobalSampleIdToLocalVertexId.Reset();
 		}
 
@@ -629,6 +635,7 @@ namespace CarrierLab
 		}
 
 		BuildPlateLocalTriangulations(State);
+		++State.ConvergenceTrackingResetSerial;
 	}
 
 	FStage0Metrics FCarrierLabStage0::ProjectColdStart(const FCarrierState& State, FStage0ProjectionBuffers* OutProjectionBuffers)
