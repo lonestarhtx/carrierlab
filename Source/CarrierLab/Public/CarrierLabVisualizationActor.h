@@ -588,6 +588,43 @@ struct FCarrierLabPhaseIIIB4PolarityAudit
 	FString ConvergenceTrackingHash;
 };
 
+struct FCarrierLabPhaseIIIB6SeedMetrics
+{
+	int32 SeedPlateId = INDEX_NONE;
+	int32 SeedOtherPlateId = INDEX_NONE;
+	int32 SeedLocalTriangleId = INDEX_NONE;
+	int32 SeedNeighborCandidateCount = 0;
+	double SeedStepDistanceKm = 0.0;
+	double MaxSeedNeighborDistanceKm = 0.0;
+	uint64 SeedPairKey = 0;
+};
+
+struct FCarrierLabPhaseIIIB6NeighborPropagationAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	int32 ActiveTriangleCount = 0;
+	int32 TotalPlateLocalTriangleCount = 0;
+	int32 DistanceRecordCount = 0;
+	int32 NonBoundaryActiveTriangleCount = 0;
+	int32 OverThresholdActiveTriangleCount = 0;
+	int32 PropagationSeedHitCount = 0;
+	int32 PropagationAddedCount = 0;
+	int32 PropagationDuplicateCount = 0;
+	int32 PropagationDistanceRejectedCount = 0;
+	int32 PropagationInvalidCount = 0;
+	int32 ActivePlateCount = 0;
+	int32 MaxActiveTrianglesOnPlate = 0;
+	int32 ProbePlateId = INDEX_NONE;
+	int32 ProbeLocalTriangleId = INDEX_NONE;
+	double ProbeDistanceKm = 0.0;
+	double DistanceThresholdKm = 1800.0;
+	double MaxDistanceKm = 0.0;
+	FString ConvergenceTrackingHash;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -757,8 +794,12 @@ public:
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
 	bool GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseIIIB4PolarityAudit& OutAudit) const;
+	bool GetPhaseIIIB6NeighborPropagationAudit(FCarrierLabPhaseIIIB6NeighborPropagationAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
+	bool SeedPhaseIIIB6SingleConvergentTriangleForTest(
+		int32 PreferredUnderPlateId,
+		FCarrierLabPhaseIIIB6SeedMetrics& OutSeedMetrics);
 
 private:
 	void BindInputControls();
@@ -766,6 +807,7 @@ private:
 	void UpdateConvergenceTrackingDistances();
 	void UpdateConvergenceSubductionMatrix();
 	void UpdateConvergenceSubductionPolarityDecisions();
+	void UpdateConvergenceNeighborPropagation();
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);

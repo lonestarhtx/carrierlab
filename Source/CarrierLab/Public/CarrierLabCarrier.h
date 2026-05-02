@@ -103,6 +103,14 @@ namespace CarrierLab
 		EConvergenceSubductionPolarityClass DecisionClass = EConvergenceSubductionPolarityClass::None;
 	};
 
+	struct FConvergenceSubductionTriangleHit
+	{
+		uint64 PairKey = 0;
+		int32 PlateId = INDEX_NONE;
+		int32 OtherPlateId = INDEX_NONE;
+		int32 LocalTriangleId = INDEX_NONE;
+	};
+
 	struct FCarrierState
 	{
 		FStage0Config Config;
@@ -114,12 +122,18 @@ namespace CarrierLab
 		TArray<TArray<FCarrierRayTriangleRef>> SampleRayCandidateTriangles;
 		TSet<uint64> ConvergenceSubductionMatrixPairKeys;
 		TArray<FConvergenceSubductionPolarityDecision> ConvergenceSubductionPolarityDecisions;
+		TArray<FConvergenceSubductionTriangleHit> ConvergenceSubductionTriangleHits;
 		int32 ConvergenceTrackingResetSerial = 0;
 		int32 ConvergenceTrackingDistanceCullCount = 0;
 		int32 ConvergenceSubductionMatrixRayTestCount = 0;
 		int32 ConvergenceSubductionMatrixHitCount = 0;
 		int32 ConvergenceSubductionMatrixBoundaryHitCount = 0;
 		int32 ConvergenceSubductionMatrixNonConvergentHitCount = 0;
+		int32 ConvergenceNeighborPropagationSeedCount = 0;
+		int32 ConvergenceNeighborPropagationAddedCount = 0;
+		int32 ConvergenceNeighborPropagationDuplicateCount = 0;
+		int32 ConvergenceNeighborPropagationDistanceRejectedCount = 0;
+		int32 ConvergenceNeighborPropagationInvalidCount = 0;
 	};
 
 	enum class EStage0MissClass : uint8

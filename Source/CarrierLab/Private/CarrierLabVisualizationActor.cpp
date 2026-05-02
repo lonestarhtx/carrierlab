@@ -183,6 +183,38 @@ namespace
 			HashMixDouble(Hash, Decision.PlateBOceanicAge);
 			HashMix(Hash, static_cast<uint64>(Decision.DecisionClass) + 1ull);
 		}
+		TArray<CarrierLab::FConvergenceSubductionTriangleHit> TriangleHits = State.ConvergenceSubductionTriangleHits;
+		TriangleHits.Sort([](
+			const CarrierLab::FConvergenceSubductionTriangleHit& A,
+			const CarrierLab::FConvergenceSubductionTriangleHit& B)
+		{
+			if (A.PairKey != B.PairKey)
+			{
+				return A.PairKey < B.PairKey;
+			}
+			if (A.PlateId != B.PlateId)
+			{
+				return A.PlateId < B.PlateId;
+			}
+			if (A.OtherPlateId != B.OtherPlateId)
+			{
+				return A.OtherPlateId < B.OtherPlateId;
+			}
+			return A.LocalTriangleId < B.LocalTriangleId;
+		});
+		HashMix(Hash, static_cast<uint64>(TriangleHits.Num() + 1));
+		for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : TriangleHits)
+		{
+			HashMix(Hash, Hit.PairKey + 1ull);
+			HashMix(Hash, static_cast<uint64>(Hit.PlateId + 1));
+			HashMix(Hash, static_cast<uint64>(Hit.OtherPlateId + 1));
+			HashMix(Hash, static_cast<uint64>(Hit.LocalTriangleId + 1));
+		}
+		HashMix(Hash, static_cast<uint64>(State.ConvergenceNeighborPropagationSeedCount + 1));
+		HashMix(Hash, static_cast<uint64>(State.ConvergenceNeighborPropagationAddedCount + 1));
+		HashMix(Hash, static_cast<uint64>(State.ConvergenceNeighborPropagationDuplicateCount + 1));
+		HashMix(Hash, static_cast<uint64>(State.ConvergenceNeighborPropagationDistanceRejectedCount + 1));
+		HashMix(Hash, static_cast<uint64>(State.ConvergenceNeighborPropagationInvalidCount + 1));
 		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 		{
 			HashMix(Hash, static_cast<uint64>(Plate.PlateId + 1));
@@ -231,6 +263,100 @@ namespace
 		const double SinToAxis = FVector3d::CrossProduct(Motion.Axis, Barycenter).Length();
 		const double StepRadians = SinToAxis * FMath::Abs(Motion.AngularSpeedRadiansPerStep);
 		return StepRadians * EarthRadiusKm;
+	}
+
+	bool ComputePlateLocalTriangleBarycenter(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 LocalTriangleId,
+		FVector3d& OutBarycenter)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return false;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return false;
+		}
+
+		OutBarycenter = NormalizeOrFallback(
+			Plate.Vertices[Triangle.A].UnitPosition +
+			Plate.Vertices[Triangle.B].UnitPosition +
+			Plate.Vertices[Triangle.C].UnitPosition,
+			Plate.Vertices[Triangle.A].UnitPosition);
+		return true;
+	}
+
+	double ComputePlateLocalTriangleDistanceKm(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 A,
+		const int32 B)
+	{
+		FVector3d BaryA;
+		FVector3d BaryB;
+		if (!ComputePlateLocalTriangleBarycenter(Plate, A, BaryA) ||
+			!ComputePlateLocalTriangleBarycenter(Plate, B, BaryB))
+		{
+			return TNumericLimits<double>::Max();
+		}
+
+		const double Dot = FMath::Clamp(FVector3d::DotProduct(BaryA, BaryB), -1.0, 1.0);
+		return FMath::Acos(Dot) * EarthRadiusKm;
+	}
+
+	void GetPlateLocalTriangleNeighbors(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 LocalTriangleId,
+		TArray<int32>& OutNeighbors)
+	{
+		OutNeighbors.Reset();
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Source = Plate.LocalTriangles[LocalTriangleId];
+		const int32 SourceVertices[3] = {Source.A, Source.B, Source.C};
+		for (int32 CandidateId = 0; CandidateId < Plate.LocalTriangles.Num(); ++CandidateId)
+		{
+			if (CandidateId == LocalTriangleId)
+			{
+				continue;
+			}
+
+			const CarrierLab::FCarrierPlateTriangle& Candidate = Plate.LocalTriangles[CandidateId];
+			const int32 CandidateVertices[3] = {Candidate.A, Candidate.B, Candidate.C};
+			int32 SharedVertexCount = 0;
+			for (const int32 SourceVertex : SourceVertices)
+			{
+				for (const int32 CandidateVertex : CandidateVertices)
+				{
+					if (SourceVertex == CandidateVertex)
+					{
+						++SharedVertexCount;
+						break;
+					}
+				}
+			}
+
+			if (SharedVertexCount >= 2)
+			{
+				OutNeighbors.Add(CandidateId);
+			}
+		}
+		OutNeighbors.Sort();
+	}
+
+	bool IsSubductionPolarityDecision(const CarrierLab::FConvergenceSubductionPolarityDecision& Decision)
+	{
+		return Decision.UnderPlate != INDEX_NONE &&
+			Decision.OverPlate != INDEX_NONE &&
+			(Decision.DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::OceanicUnderContinental ||
+				Decision.DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::OlderOceanicUnderYoungerOceanic);
 	}
 
 	double ComputePlateContinentalFraction(
@@ -3298,6 +3424,67 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseI
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIB6NeighborPropagationAudit(FCarrierLabPhaseIIIB6NeighborPropagationAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIB6NeighborPropagationAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.DistanceThresholdKm = PhaseIIIBDistanceToFrontLimitKm;
+	OutAudit.PropagationSeedHitCount = State.ConvergenceNeighborPropagationSeedCount;
+	OutAudit.PropagationAddedCount = State.ConvergenceNeighborPropagationAddedCount;
+	OutAudit.PropagationDuplicateCount = State.ConvergenceNeighborPropagationDuplicateCount;
+	OutAudit.PropagationDistanceRejectedCount = State.ConvergenceNeighborPropagationDistanceRejectedCount;
+	OutAudit.PropagationInvalidCount = State.ConvergenceNeighborPropagationInvalidCount;
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		OutAudit.TotalPlateLocalTriangleCount += Plate.LocalTriangles.Num();
+		if (!Plate.ActiveBoundaryTriangles.IsEmpty())
+		{
+			++OutAudit.ActivePlateCount;
+			OutAudit.MaxActiveTrianglesOnPlate = FMath::Max(OutAudit.MaxActiveTrianglesOnPlate, Plate.ActiveBoundaryTriangles.Num());
+		}
+
+		for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
+		{
+			const int32 LocalTriangleId = Plate.ActiveBoundaryTriangles[ActiveIndex];
+			++OutAudit.ActiveTriangleCount;
+			if (Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(ActiveIndex))
+			{
+				++OutAudit.DistanceRecordCount;
+				const double DistanceKm = Plate.ActiveBoundaryTriangleDistancesKm[ActiveIndex];
+				OutAudit.MaxDistanceKm = FMath::Max(OutAudit.MaxDistanceKm, DistanceKm);
+				if (DistanceKm > PhaseIIIBDistanceToFrontLimitKm)
+				{
+					++OutAudit.OverThresholdActiveTriangleCount;
+				}
+				if (OutAudit.ProbePlateId == INDEX_NONE)
+				{
+					OutAudit.ProbePlateId = Plate.PlateId;
+					OutAudit.ProbeLocalTriangleId = LocalTriangleId;
+					OutAudit.ProbeDistanceKm = DistanceKm;
+				}
+			}
+
+			if (Plate.LocalTriangles.IsValidIndex(LocalTriangleId) &&
+				!Plate.LocalTriangles[LocalTriangleId].bBoundary)
+			{
+				++OutAudit.NonBoundaryActiveTriangleCount;
+			}
+		}
+	}
+
+	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())
@@ -3355,6 +3542,130 @@ bool ACarrierLabVisualizationActor::SetPlateOceanicAgeForTest(const int32 PlateI
 	}
 	ProjectCurrentCarrier();
 	return true;
+}
+
+bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTest(
+	const int32 PreferredUnderPlateId,
+	FCarrierLabPhaseIIIB6SeedMetrics& OutSeedMetrics)
+{
+	OutSeedMetrics = FCarrierLabPhaseIIIB6SeedMetrics();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+	if (!State.Plates.IsValidIndex(PreferredUnderPlateId) ||
+		!Motions.IsValidIndex(PreferredUnderPlateId))
+	{
+		return false;
+	}
+
+	FString MeshError;
+	if (!RefreshPlateRayMeshes(MeshError))
+	{
+		UE_LOG(LogTemp, Error, TEXT("CarrierLab IIIB.6 seed failed: %s"), *MeshError);
+		return false;
+	}
+
+	const CarrierLab::FCarrierPlate& Plate = State.Plates[PreferredUnderPlateId];
+	TArray<int32> NeighborCandidates;
+	for (int32 LocalTriangleId = 0; LocalTriangleId < Plate.LocalTriangles.Num(); ++LocalTriangleId)
+	{
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Triangle.bBoundary)
+		{
+			continue;
+		}
+
+		GetPlateLocalTriangleNeighbors(Plate, LocalTriangleId, NeighborCandidates);
+		if (NeighborCandidates.IsEmpty())
+		{
+			continue;
+		}
+
+		const double StepDistanceKm = ComputeActiveTriangleDistanceStepKm(Plate, LocalTriangleId, Motions[PreferredUnderPlateId]);
+		if (!FMath::IsFinite(StepDistanceKm) || StepDistanceKm > PhaseIIIBDistanceToFrontLimitKm)
+		{
+			continue;
+		}
+
+		double MaxNeighborDistanceKm = 0.0;
+		int32 InRangeNeighborCount = 0;
+		for (const int32 NeighborLocalTriangleId : NeighborCandidates)
+		{
+			const double NeighborDistanceKm = ComputePlateLocalTriangleDistanceKm(Plate, LocalTriangleId, NeighborLocalTriangleId);
+			if (!FMath::IsFinite(NeighborDistanceKm) || NeighborDistanceKm == TNumericLimits<double>::Max())
+			{
+				continue;
+			}
+			const double PropagatedDistanceKm = StepDistanceKm + NeighborDistanceKm;
+			if (PropagatedDistanceKm <= PhaseIIIBDistanceToFrontLimitKm)
+			{
+				++InRangeNeighborCount;
+				MaxNeighborDistanceKm = FMath::Max(MaxNeighborDistanceKm, NeighborDistanceKm);
+			}
+		}
+		if (InRangeNeighborCount <= 0)
+		{
+			continue;
+		}
+
+		for (const CarrierLab::FCarrierPlate& OtherPlate : State.Plates)
+		{
+			if (OtherPlate.PlateId == Plate.PlateId)
+			{
+				continue;
+			}
+
+			const double PairSignedConvergenceVelocity = ComputePhaseIIPairSignedConvergenceVelocity(Plate.PlateId, OtherPlate.PlateId);
+			if (PairSignedConvergenceVelocity <= PhaseIIContactVelocityMargin)
+			{
+				continue;
+			}
+
+			for (CarrierLab::FCarrierPlate& MutablePlate : State.Plates)
+			{
+				MutablePlate.ActiveBoundaryTriangles.Reset();
+				MutablePlate.ActiveBoundaryTriangleDistancesKm.Reset();
+			}
+			CarrierLab::FCarrierPlate& SeedPlate = State.Plates[PreferredUnderPlateId];
+			SeedPlate.ActiveBoundaryTriangles.Add(LocalTriangleId);
+			SeedPlate.ActiveBoundaryTriangleDistancesKm.Add(0.0);
+
+			const uint64 PairKey = MakePlatePairKey(PreferredUnderPlateId, OtherPlate.PlateId);
+			State.ConvergenceSubductionMatrixPairKeys.Reset();
+			State.ConvergenceSubductionMatrixPairKeys.Add(PairKey);
+			State.ConvergenceSubductionPolarityDecisions.Reset();
+			State.ConvergenceSubductionTriangleHits.Reset();
+			State.ConvergenceSubductionMatrixRayTestCount = 0;
+			State.ConvergenceSubductionMatrixHitCount = 1;
+			State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
+			State.ConvergenceSubductionMatrixNonConvergentHitCount = 0;
+			State.ConvergenceNeighborPropagationSeedCount = 0;
+			State.ConvergenceNeighborPropagationAddedCount = 0;
+			State.ConvergenceNeighborPropagationDuplicateCount = 0;
+			State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
+			State.ConvergenceNeighborPropagationInvalidCount = 0;
+
+			CarrierLab::FConvergenceSubductionTriangleHit& TriangleHit = State.ConvergenceSubductionTriangleHits.AddDefaulted_GetRef();
+			TriangleHit.PairKey = PairKey;
+			TriangleHit.PlateId = PreferredUnderPlateId;
+			TriangleHit.OtherPlateId = OtherPlate.PlateId;
+			TriangleHit.LocalTriangleId = LocalTriangleId;
+			UpdateConvergenceSubductionPolarityDecisions();
+			UpdateConvergenceNeighborPropagation();
+
+			OutSeedMetrics.SeedPlateId = PreferredUnderPlateId;
+			OutSeedMetrics.SeedOtherPlateId = OtherPlate.PlateId;
+			OutSeedMetrics.SeedLocalTriangleId = LocalTriangleId;
+			OutSeedMetrics.SeedNeighborCandidateCount = InRangeNeighborCount;
+			OutSeedMetrics.SeedStepDistanceKm = StepDistanceKm;
+			OutSeedMetrics.MaxSeedNeighborDistanceKm = MaxNeighborDistanceKm;
+			OutSeedMetrics.SeedPairKey = PairKey;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
@@ -3688,6 +3999,7 @@ void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
 
 void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 {
+	State.ConvergenceSubductionTriangleHits.Reset();
 	FString MeshError;
 	if (!RefreshPlateRayMeshes(MeshError))
 	{
@@ -3763,6 +4075,11 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 					}
 
 					State.ConvergenceSubductionMatrixPairKeys.Add(MakePlatePairKey(Plate.PlateId, OtherPlate.PlateId));
+					State.ConvergenceSubductionTriangleHits.Add(CarrierLab::FConvergenceSubductionTriangleHit{
+						MakePlatePairKey(Plate.PlateId, OtherPlate.PlateId),
+						Plate.PlateId,
+						OtherPlate.PlateId,
+						LocalTriangleId});
 					++State.ConvergenceSubductionMatrixHitCount;
 					bAcceptedPair = true;
 					break;
@@ -3832,6 +4149,136 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionPolarityDecisions
 	}
 }
 
+void ACarrierLabVisualizationActor::UpdateConvergenceNeighborPropagation()
+{
+	State.ConvergenceNeighborPropagationSeedCount = 0;
+	State.ConvergenceNeighborPropagationAddedCount = 0;
+	State.ConvergenceNeighborPropagationDuplicateCount = 0;
+	State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
+	State.ConvergenceNeighborPropagationInvalidCount = 0;
+
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+	if (DecisionsByPair.IsEmpty() || State.ConvergenceSubductionTriangleHits.IsEmpty())
+	{
+		return;
+	}
+
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : State.ConvergenceSubductionTriangleHits)
+	{
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision != nullptr && !IsSubductionPolarityDecision(*Decision))
+		{
+			continue;
+		}
+		if (Decision != nullptr && Decision->UnderPlate != Hit.PlateId)
+		{
+			continue;
+		}
+		if (Decision == nullptr || !State.Plates.IsValidIndex(Hit.PlateId))
+		{
+			++State.ConvergenceNeighborPropagationInvalidCount;
+			continue;
+		}
+
+		CarrierLab::FCarrierPlate& Plate = State.Plates[Hit.PlateId];
+		if (!Plate.LocalTriangles.IsValidIndex(Hit.LocalTriangleId))
+		{
+			++State.ConvergenceNeighborPropagationInvalidCount;
+			continue;
+		}
+
+		int32 ParentActiveIndex = INDEX_NONE;
+		for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
+		{
+			if (Plate.ActiveBoundaryTriangles[ActiveIndex] == Hit.LocalTriangleId)
+			{
+				ParentActiveIndex = ActiveIndex;
+				break;
+			}
+		}
+		if (ParentActiveIndex == INDEX_NONE ||
+			!Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(ParentActiveIndex))
+		{
+			++State.ConvergenceNeighborPropagationInvalidCount;
+			continue;
+		}
+
+		++State.ConvergenceNeighborPropagationSeedCount;
+		const double ParentDistanceKm = Plate.ActiveBoundaryTriangleDistancesKm[ParentActiveIndex];
+		TArray<int32> Neighbors;
+		GetPlateLocalTriangleNeighbors(Plate, Hit.LocalTriangleId, Neighbors);
+
+		TMap<int32, int32> ActiveIndexByTriangle;
+		for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
+		{
+			ActiveIndexByTriangle.Add(Plate.ActiveBoundaryTriangles[ActiveIndex], ActiveIndex);
+		}
+
+		for (const int32 NeighborLocalTriangleId : Neighbors)
+		{
+			if (!Plate.LocalTriangles.IsValidIndex(NeighborLocalTriangleId))
+			{
+				++State.ConvergenceNeighborPropagationInvalidCount;
+				continue;
+			}
+
+			const double NeighborDistanceKm = ComputePlateLocalTriangleDistanceKm(Plate, Hit.LocalTriangleId, NeighborLocalTriangleId);
+			const double PropagatedDistanceKm = ParentDistanceKm + NeighborDistanceKm;
+			if (!FMath::IsFinite(PropagatedDistanceKm) || PropagatedDistanceKm > PhaseIIIBDistanceToFrontLimitKm)
+			{
+				++State.ConvergenceNeighborPropagationDistanceRejectedCount;
+				continue;
+			}
+
+			if (const int32* ExistingActiveIndex = ActiveIndexByTriangle.Find(NeighborLocalTriangleId))
+			{
+				++State.ConvergenceNeighborPropagationDuplicateCount;
+				if (Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(*ExistingActiveIndex) &&
+					PropagatedDistanceKm < Plate.ActiveBoundaryTriangleDistancesKm[*ExistingActiveIndex])
+				{
+					Plate.ActiveBoundaryTriangleDistancesKm[*ExistingActiveIndex] = PropagatedDistanceKm;
+				}
+				continue;
+			}
+
+			const int32 NewActiveIndex = Plate.ActiveBoundaryTriangles.Add(NeighborLocalTriangleId);
+			Plate.ActiveBoundaryTriangleDistancesKm.Add(PropagatedDistanceKm);
+			ActiveIndexByTriangle.Add(NeighborLocalTriangleId, NewActiveIndex);
+			++State.ConvergenceNeighborPropagationAddedCount;
+		}
+	}
+
+	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		TArray<TPair<int32, double>> ActivePairs;
+		ActivePairs.Reserve(Plate.ActiveBoundaryTriangles.Num());
+		for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
+		{
+			ActivePairs.Add(TPair<int32, double>(
+				Plate.ActiveBoundaryTriangles[ActiveIndex],
+				Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(ActiveIndex)
+					? Plate.ActiveBoundaryTriangleDistancesKm[ActiveIndex]
+					: 0.0));
+		}
+		ActivePairs.Sort([](const TPair<int32, double>& A, const TPair<int32, double>& B)
+		{
+			return A.Key < B.Key;
+		});
+
+		Plate.ActiveBoundaryTriangles.Reset(ActivePairs.Num());
+		Plate.ActiveBoundaryTriangleDistancesKm.Reset(ActivePairs.Num());
+		for (const TPair<int32, double>& Pair : ActivePairs)
+		{
+			Plate.ActiveBoundaryTriangles.Add(Pair.Key);
+			Plate.ActiveBoundaryTriangleDistancesKm.Add(Pair.Value);
+		}
+	}
+}
+
 void ACarrierLabVisualizationActor::AdvanceOneStep()
 {
 	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -3855,6 +4302,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	UpdateConvergenceTrackingDistances();
 	UpdateConvergenceSubductionMatrix();
 	UpdateConvergenceSubductionPolarityDecisions();
+	UpdateConvergenceNeighborPropagation();
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;

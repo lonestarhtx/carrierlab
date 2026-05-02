@@ -449,11 +449,17 @@ namespace CarrierLab
 		State.SampleRayCandidateTriangles.SetNum(State.Samples.Num());
 		State.ConvergenceSubductionMatrixPairKeys.Reset();
 		State.ConvergenceSubductionPolarityDecisions.Reset();
+		State.ConvergenceSubductionTriangleHits.Reset();
 		State.ConvergenceTrackingDistanceCullCount = 0;
 		State.ConvergenceSubductionMatrixRayTestCount = 0;
 		State.ConvergenceSubductionMatrixHitCount = 0;
 		State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
 		State.ConvergenceSubductionMatrixNonConvergentHitCount = 0;
+		State.ConvergenceNeighborPropagationSeedCount = 0;
+		State.ConvergenceNeighborPropagationAddedCount = 0;
+		State.ConvergenceNeighborPropagationDuplicateCount = 0;
+		State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
+		State.ConvergenceNeighborPropagationInvalidCount = 0;
 
 		for (FCarrierPlate& Plate : State.Plates)
 		{
