@@ -28,6 +28,8 @@ namespace
 	constexpr double BoundaryBarycentricEpsilon = 1.0e-7;
 	constexpr double PhaseIIContactVelocityMargin = 1.0e-6;
 	constexpr double PhaseIIIBDistanceToFrontLimitKm = 1800.0;
+	constexpr int32 PhaseIIIObservabilityMapWidth = 2048;
+	constexpr int32 PhaseIIIObservabilityMapHeight = 1024;
 	constexpr int32 BoundaryLonBins = 72;
 	constexpr int32 BoundaryLatBins = 36;
 	constexpr int32 BoundarySearchRadiusBins = 2;
@@ -86,6 +88,34 @@ namespace
 	{
 		const double DistanceKmPerStep = VelocityMmPerYear * 1.0e-6 * DeltaTimeMa * 1000000.0;
 		return DistanceKmPerStep / EarthRadiusKm;
+	}
+
+	FIntPoint ObservabilitySamplePixel(const FVector3d& UnitPosition)
+	{
+		const double Lon = FMath::Atan2(UnitPosition.Y, UnitPosition.X);
+		const double Lat = FMath::Asin(FMath::Clamp(UnitPosition.Z, -1.0, 1.0));
+		const int32 X = FMath::Clamp(
+			FMath::RoundToInt(((Lon + UE_PI) / (2.0 * UE_PI)) * static_cast<double>(PhaseIIIObservabilityMapWidth - 1)),
+			0,
+			PhaseIIIObservabilityMapWidth - 1);
+		const int32 Y = FMath::Clamp(
+			FMath::RoundToInt((0.5 - Lat / UE_PI) * static_cast<double>(PhaseIIIObservabilityMapHeight - 1)),
+			0,
+			PhaseIIIObservabilityMapHeight - 1);
+		return FIntPoint(X, Y);
+	}
+
+	void PaintObservabilitySample(TArray<FColor>& Pixels, const FIntPoint Pixel, const FColor Color, const int32 Radius)
+	{
+		for (int32 Dy = -Radius; Dy <= Radius; ++Dy)
+		{
+			for (int32 Dx = -Radius; Dx <= Radius; ++Dx)
+			{
+				const int32 X = FMath::Clamp(Pixel.X + Dx, 0, PhaseIIIObservabilityMapWidth - 1);
+				const int32 Y = FMath::Clamp(Pixel.Y + Dy, 0, PhaseIIIObservabilityMapHeight - 1);
+				Pixels[Y * PhaseIIIObservabilityMapWidth + X] = Color;
+			}
+		}
 	}
 
 	bool IsBoundaryHit(const FVector3d& Bary)
@@ -5051,9 +5081,35 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 	CurrentMetrics.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
 }
 
-FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId) const
+bool ACarrierLabVisualizationActor::BuildVisualizationLayerMap(
+	const ECarrierLabVisualizationLayer Layer,
+	TArray<FColor>& OutPixels,
+	int32& OutWidth,
+	int32& OutHeight) const
 {
-	switch (VisualizationLayer)
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutWidth = PhaseIIIObservabilityMapWidth;
+	OutHeight = PhaseIIIObservabilityMapHeight;
+	OutPixels.Init(FColor(5, 8, 12, 255), OutWidth * OutHeight);
+	const int32 Radius = State.Samples.Num() <= 100000 ? 1 : 0;
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		FColor Color = ColorForSampleLayer(Sample.Id, Layer).ToFColor(true);
+		Color.A = 255;
+		PaintObservabilitySample(OutPixels, ObservabilitySamplePixel(Sample.UnitPosition), Color, Radius);
+	}
+	return true;
+}
+
+FLinearColor ACarrierLabVisualizationActor::ColorForSampleLayer(
+	const int32 SampleId,
+	const ECarrierLabVisualizationLayer Layer) const
+{
+	switch (Layer)
 	{
 	case ECarrierLabVisualizationLayer::ContinentalFraction:
 		return ContinentalColor(RenderContinentalFractions.IsValidIndex(SampleId) ? RenderContinentalFractions[SampleId] : 0.0);
@@ -5081,6 +5137,11 @@ FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId)
 	default:
 		return PlateColor(RenderPlateIds.IsValidIndex(SampleId) ? RenderPlateIds[SampleId] : INDEX_NONE);
 	}
+}
+
+FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId) const
+{
+	return ColorForSampleLayer(SampleId, VisualizationLayer);
 }
 
 bool ACarrierLabVisualizationActor::BuildRenderMeshTopology()

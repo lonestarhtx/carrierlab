@@ -784,6 +784,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowDistanceToFrontHeatmapLayer();
 
+	bool BuildVisualizationLayerMap(
+		ECarrierLabVisualizationLayer Layer,
+		TArray<FColor>& OutPixels,
+		int32& OutWidth,
+		int32& OutHeight) const;
+
 	void ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture Fixture);
 	bool DetectPhaseIIContacts(TArray<FCarrierLabPhaseIIContactRecord>& OutContacts, FCarrierLabPhaseIIContactMetrics& OutMetrics);
 	bool BuildPhaseIITriangleLabels(
@@ -866,6 +872,7 @@ private:
 	bool RefreshProjectionRayMesh(FString& OutError);
 	void RebuildRenderMesh();
 	bool BuildRenderMeshTopology();
+	FLinearColor ColorForSampleLayer(int32 SampleId, ECarrierLabVisualizationLayer Layer) const;
 	FLinearColor ColorForSample(int32 SampleId) const;
 	void ShowHud() const;
 	FString BuildHudText() const;
