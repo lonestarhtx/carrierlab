@@ -21,6 +21,7 @@ $lines = @(
     "",
     "Minimum gates:",
     "- bypass/off hash gate when mutation is opt-in",
+    "- IIIB independent-signature regression for IIIC+ convergence-dependent slices: 4df40569f5e51e1a",
     "- primary positive fixture with independent oracle",
     "- zero-motion negative",
     "- single-plate negative when plate contacts are involved",

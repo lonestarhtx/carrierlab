@@ -47,9 +47,10 @@ For each slice:
 3. Add one behavior surface only.
 4. Include a bypass/off gate when mutation is opt-in.
 5. Use an independent oracle for formulas or expected state.
-6. Include zero/single/divergence or other relevant negative controls.
-7. Write `docs/checkpoints/phase-iii-slice-<id>-report.md`.
-8. Pause for user review before advancing.
+6. For every IIIC+ slice, include an explicit IIIB independent-signature regression row when the slice touches or depends on convergence tracking. The current consolidated IIIB signature token is `4df40569f5e51e1a`; update this only through a written IIIB/Phase III consolidation checkpoint.
+7. Include zero/single/divergence or other relevant negative controls.
+8. Write `docs/checkpoints/phase-iii-slice-<id>-report.md`.
+9. Pause for user review before advancing.
 
 ## Stop Conditions
 
