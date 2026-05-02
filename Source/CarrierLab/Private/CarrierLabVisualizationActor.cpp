@@ -66,6 +66,13 @@ namespace
 		return Vector * C + FVector3d::CrossProduct(Axis, Vector) * S + Axis * FVector3d::DotProduct(Axis, Vector) * (1.0 - C);
 	}
 
+	FVector3d RotateCarrierVectorField(const FVector3d& Vector, const FVector3d& Axis, const double AngleRadians)
+	{
+		return Vector.SquaredLength() > UE_DOUBLE_SMALL_NUMBER
+			? RotateVector(Vector, Axis, AngleRadians)
+			: FVector3d::ZeroVector;
+	}
+
 	double AngularSpeedRadiansPerStep(const double VelocityMmPerYear)
 	{
 		const double DistanceKmPerStep = VelocityMmPerYear * 1.0e-6 * DeltaTimeMa * 1000000.0;
@@ -2397,6 +2404,129 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIA2CrustFieldAudit(
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIA3VectorFieldAudit(
+	int32& OutSampleCount,
+	int32& OutPlateVertexCount,
+	double& OutMaxSampleVectorMagnitude,
+	double& OutMaxPlateVertexVectorMagnitude,
+	double& OutMaxPlateVertexRadialDot) const
+{
+	OutSampleCount = State.Samples.Num();
+	OutPlateVertexCount = 0;
+	OutMaxSampleVectorMagnitude = 0.0;
+	OutMaxPlateVertexVectorMagnitude = 0.0;
+	OutMaxPlateVertexRadialDot = 0.0;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		OutMaxSampleVectorMagnitude = FMath::Max(OutMaxSampleVectorMagnitude, Sample.RidgeDirection.Size());
+		OutMaxSampleVectorMagnitude = FMath::Max(OutMaxSampleVectorMagnitude, Sample.FoldDirection.Size());
+	}
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		OutPlateVertexCount += Plate.Vertices.Num();
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			OutMaxPlateVertexVectorMagnitude = FMath::Max(OutMaxPlateVertexVectorMagnitude, Vertex.RidgeDirection.Size());
+			OutMaxPlateVertexVectorMagnitude = FMath::Max(OutMaxPlateVertexVectorMagnitude, Vertex.FoldDirection.Size());
+			OutMaxPlateVertexRadialDot = FMath::Max(OutMaxPlateVertexRadialDot, FMath::Abs(FVector3d::DotProduct(Vertex.UnitPosition, Vertex.RidgeDirection)));
+			OutMaxPlateVertexRadialDot = FMath::Max(OutMaxPlateVertexRadialDot, FMath::Abs(FVector3d::DotProduct(Vertex.UnitPosition, Vertex.FoldDirection)));
+		}
+	}
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::SeedPhaseIIIA3VectorAuditProbe(
+	int32& OutPlateId,
+	int32& OutLocalVertexId,
+	FVector3d& OutInitialPosition,
+	FVector3d& OutInitialRidgeDirection,
+	FVector3d& OutInitialFoldDirection,
+	FVector3d& OutRotationAxis,
+	double& OutAngularSpeedRadiansPerStep)
+{
+	OutPlateId = INDEX_NONE;
+	OutLocalVertexId = INDEX_NONE;
+	OutInitialPosition = FVector3d::ZeroVector;
+	OutInitialRidgeDirection = FVector3d::ZeroVector;
+	OutInitialFoldDirection = FVector3d::ZeroVector;
+	OutRotationAxis = FVector3d::UnitZ();
+	OutAngularSpeedRadiansPerStep = 0.0;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		if (!Motions.IsValidIndex(Plate.PlateId) || Plate.Vertices.IsEmpty())
+		{
+			continue;
+		}
+
+		FCarrierLabVisualizationMotion& Motion = Motions[Plate.PlateId];
+		for (int32 LocalVertexId = 0; LocalVertexId < Plate.Vertices.Num(); ++LocalVertexId)
+		{
+			CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[LocalVertexId];
+			FVector3d Ridge = FVector3d::CrossProduct(Motion.Axis, Vertex.UnitPosition);
+			if (Ridge.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+			{
+				Ridge = FVector3d::CrossProduct(FVector3d::UnitX(), Vertex.UnitPosition);
+			}
+			if (Ridge.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+			{
+				Ridge = FVector3d::CrossProduct(FVector3d::UnitY(), Vertex.UnitPosition);
+			}
+			if (Ridge.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			Ridge = Ridge.GetSafeNormal();
+			FVector3d Fold = FVector3d::CrossProduct(Vertex.UnitPosition, Ridge).GetSafeNormal();
+			Vertex.RidgeDirection = Ridge;
+			Vertex.FoldDirection = Fold;
+
+			OutPlateId = Plate.PlateId;
+			OutLocalVertexId = LocalVertexId;
+			OutInitialPosition = Vertex.UnitPosition;
+			OutInitialRidgeDirection = Vertex.RidgeDirection;
+			OutInitialFoldDirection = Vertex.FoldDirection;
+			OutRotationAxis = Motion.Axis;
+			OutAngularSpeedRadiansPerStep = Motion.AngularSpeedRadiansPerStep;
+			UpdateLastHash();
+			return true;
+		}
+	}
+	return false;
+}
+
+bool ACarrierLabVisualizationActor::GetPhaseIIIA3VectorAuditProbe(
+	const int32 PlateId,
+	const int32 LocalVertexId,
+	FVector3d& OutPosition,
+	FVector3d& OutRidgeDirection,
+	FVector3d& OutFoldDirection) const
+{
+	OutPosition = FVector3d::ZeroVector;
+	OutRidgeDirection = FVector3d::ZeroVector;
+	OutFoldDirection = FVector3d::ZeroVector;
+	if (!State.Plates.IsValidIndex(PlateId) || !State.Plates[PlateId].Vertices.IsValidIndex(LocalVertexId))
+	{
+		return false;
+	}
+
+	const CarrierLab::FCarrierVertex& Vertex = State.Plates[PlateId].Vertices[LocalVertexId];
+	OutPosition = Vertex.UnitPosition;
+	OutRidgeDirection = Vertex.RidgeDirection;
+	OutFoldDirection = Vertex.FoldDirection;
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -2667,6 +2797,8 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 		for (CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
 		{
 			Vertex.UnitPosition = NormalizeOrFallback(RotateVector(Vertex.UnitPosition, Motion.Axis, Motion.AngularSpeedRadiansPerStep), Vertex.UnitPosition);
+			Vertex.RidgeDirection = RotateCarrierVectorField(Vertex.RidgeDirection, Motion.Axis, Motion.AngularSpeedRadiansPerStep);
+			Vertex.FoldDirection = RotateCarrierVectorField(Vertex.FoldDirection, Motion.Axis, Motion.AngularSpeedRadiansPerStep);
 		}
 	}
 	for (FCarrierLabVisualizationMotion& Motion : Motions)
@@ -2999,6 +3131,12 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		HashMix(CrustHash, static_cast<uint64>(Sample.PlateId + 1));
 		HashMixDouble(CrustHash, Sample.Elevation);
 		HashMixDouble(CrustHash, Sample.OceanicAge);
+		HashMixDouble(CrustHash, Sample.RidgeDirection.X);
+		HashMixDouble(CrustHash, Sample.RidgeDirection.Y);
+		HashMixDouble(CrustHash, Sample.RidgeDirection.Z);
+		HashMixDouble(CrustHash, Sample.FoldDirection.X);
+		HashMixDouble(CrustHash, Sample.FoldDirection.Y);
+		HashMixDouble(CrustHash, Sample.FoldDirection.Z);
 	}
 	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 	{
@@ -3009,6 +3147,12 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 			HashMix(CrustHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
 			HashMixDouble(CrustHash, Vertex.Elevation);
 			HashMixDouble(CrustHash, Vertex.OceanicAge);
+			HashMixDouble(CrustHash, Vertex.RidgeDirection.X);
+			HashMixDouble(CrustHash, Vertex.RidgeDirection.Y);
+			HashMixDouble(CrustHash, Vertex.RidgeDirection.Z);
+			HashMixDouble(CrustHash, Vertex.FoldDirection.X);
+			HashMixDouble(CrustHash, Vertex.FoldDirection.Y);
+			HashMixDouble(CrustHash, Vertex.FoldDirection.Z);
 		}
 	}
 	CurrentMetrics.CrustStateHash = HashToString(CrustHash);

@@ -23,6 +23,8 @@ namespace CarrierLab
 		double ContinentalFraction = 0.0;
 		double Elevation = 0.0;
 		double OceanicAge = 0.0;
+		FVector3d RidgeDirection = FVector3d::ZeroVector;
+		FVector3d FoldDirection = FVector3d::ZeroVector;
 		bool bContinental = false;
 	};
 
@@ -43,6 +45,8 @@ namespace CarrierLab
 		double ContinentalFraction = 0.0;
 		double Elevation = 0.0;
 		double OceanicAge = 0.0;
+		FVector3d RidgeDirection = FVector3d::ZeroVector;
+		FVector3d FoldDirection = FVector3d::ZeroVector;
 		bool bContinental = false;
 	};
 

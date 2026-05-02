@@ -584,6 +584,26 @@ public:
 		double& OutMaxAbsPlateVertexElevation,
 		double& OutMaxAbsSampleOceanicAge,
 		double& OutMaxAbsPlateVertexOceanicAge) const;
+	bool GetPhaseIIIA3VectorFieldAudit(
+		int32& OutSampleCount,
+		int32& OutPlateVertexCount,
+		double& OutMaxSampleVectorMagnitude,
+		double& OutMaxPlateVertexVectorMagnitude,
+		double& OutMaxPlateVertexRadialDot) const;
+	bool SeedPhaseIIIA3VectorAuditProbe(
+		int32& OutPlateId,
+		int32& OutLocalVertexId,
+		FVector3d& OutInitialPosition,
+		FVector3d& OutInitialRidgeDirection,
+		FVector3d& OutInitialFoldDirection,
+		FVector3d& OutRotationAxis,
+		double& OutAngularSpeedRadiansPerStep);
+	bool GetPhaseIIIA3VectorAuditProbe(
+		int32 PlateId,
+		int32 LocalVertexId,
+		FVector3d& OutPosition,
+		FVector3d& OutRidgeDirection,
+		FVector3d& OutFoldDirection) const;
 
 private:
 	void BindInputControls();
