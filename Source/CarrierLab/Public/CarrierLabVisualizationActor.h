@@ -449,6 +449,36 @@ struct FCarrierLabPhaseIIResamplingFilterMetrics
 	FString MaterialLedgerHash;
 };
 
+struct FCarrierLabPhaseIIIA4FieldAudit
+{
+	int32 SampleCount = 0;
+	int32 PlateVertexCount = 0;
+	int32 NonZeroSampleFieldCount = 0;
+	int32 NonZeroPlateVertexFieldCount = 0;
+	int32 SmearedSampleCount = 0;
+	double MaxAbsSampleElevation = 0.0;
+	double MaxAbsSampleOceanicAge = 0.0;
+	double MaxSampleVectorMagnitude = 0.0;
+	double MaxSampleVectorRadialDot = 0.0;
+	double MaxAbsPlateVertexElevation = 0.0;
+	double MaxAbsPlateVertexOceanicAge = 0.0;
+	double MaxPlateVertexVectorMagnitude = 0.0;
+	double MaxPlateVertexVectorRadialDot = 0.0;
+	double MinPositiveSampleElevation = 0.0;
+	double MaxPositiveSampleElevation = 0.0;
+	double MeanPositiveSampleElevation = 0.0;
+};
+
+struct FCarrierLabPhaseIIIA4SeedMetrics
+{
+	int32 PlateId = INDEX_NONE;
+	int32 SeededVertexCount = 0;
+	int32 ZeroedVertexCount = 0;
+	int32 BoundaryTriangleCount = 0;
+	double SeedElevation = 10.0;
+	double SeedOceanicAge = 64.0;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -604,6 +634,16 @@ public:
 		FVector3d& OutPosition,
 		FVector3d& OutRidgeDirection,
 		FVector3d& OutFoldDirection) const;
+	bool SeedPhaseIIIA4BoundarySmearProbe(
+		int32 PreferredPlateId,
+		FCarrierLabPhaseIIIA4SeedMetrics& OutSeedMetrics);
+	bool GetPhaseIIIA4FieldAudit(
+		double SeedElevation,
+		FCarrierLabPhaseIIIA4FieldAudit& OutAudit) const;
+	bool GetPhaseIIIA4FieldAuditForSamples(
+		const TArray<int32>& SampleIds,
+		double SeedElevation,
+		FCarrierLabPhaseIIIA4FieldAudit& OutAudit) const;
 
 private:
 	void BindInputControls();

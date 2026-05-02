@@ -53,6 +53,14 @@ namespace
 		TMap<int32, TArray<int32>> Bins;
 	};
 
+	struct FCarrierLabCrustFields
+	{
+		double Elevation = 0.0;
+		double OceanicAge = 0.0;
+		FVector3d RidgeDirection = FVector3d::ZeroVector;
+		FVector3d FoldDirection = FVector3d::ZeroVector;
+	};
+
 	FVector3d NormalizeOrFallback(const FVector3d& Vector, const FVector3d& Fallback)
 	{
 		const double Size = Vector.Size();
@@ -379,6 +387,62 @@ namespace
 			Candidate.Bary.Z * Plate.Vertices[Triangle.C].ContinentalFraction,
 			0.0,
 			1.0);
+	}
+
+	FVector3d RetangentAndNormalizeVectorField(const FVector3d& Vector, const FVector3d& UnitPosition)
+	{
+		const FVector3d Tangent = Vector - UnitPosition * FVector3d::DotProduct(Vector, UnitPosition);
+		const double TangentSize = Tangent.Size();
+		return TangentSize > UE_DOUBLE_SMALL_NUMBER ? Tangent / TangentSize : FVector3d::ZeroVector;
+	}
+
+	FVector3d MakeDeterministicTangent(const FVector3d& UnitPosition)
+	{
+		const FVector3d Reference = FMath::Abs(UnitPosition.Z) < 0.9 ? FVector3d::UnitZ() : FVector3d::UnitX();
+		return RetangentAndNormalizeVectorField(FVector3d::CrossProduct(Reference, UnitPosition), UnitPosition);
+	}
+
+	bool InterpolateCrustFields(
+		const CarrierLab::FCarrierPlate& Plate,
+		const FCarrierLabVizCandidate& Candidate,
+		const FVector3d& TargetUnitPosition,
+		FCarrierLabCrustFields& OutFields)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(Candidate.LocalTriangleId))
+		{
+			return false;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[Candidate.LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return false;
+		}
+
+		const CarrierLab::FCarrierVertex& A = Plate.Vertices[Triangle.A];
+		const CarrierLab::FCarrierVertex& B = Plate.Vertices[Triangle.B];
+		const CarrierLab::FCarrierVertex& C = Plate.Vertices[Triangle.C];
+		OutFields.Elevation =
+			Candidate.Bary.X * A.Elevation +
+			Candidate.Bary.Y * B.Elevation +
+			Candidate.Bary.Z * C.Elevation;
+		OutFields.OceanicAge =
+			Candidate.Bary.X * A.OceanicAge +
+			Candidate.Bary.Y * B.OceanicAge +
+			Candidate.Bary.Z * C.OceanicAge;
+		OutFields.RidgeDirection = RetangentAndNormalizeVectorField(
+			Candidate.Bary.X * A.RidgeDirection +
+			Candidate.Bary.Y * B.RidgeDirection +
+			Candidate.Bary.Z * C.RidgeDirection,
+			TargetUnitPosition);
+		OutFields.FoldDirection = RetangentAndNormalizeVectorField(
+			Candidate.Bary.X * A.FoldDirection +
+			Candidate.Bary.Y * B.FoldDirection +
+			Candidate.Bary.Z * C.FoldDirection,
+			TargetUnitPosition);
+		return true;
 	}
 
 	ECarrierLabPhaseIISourceTriangleUniformity ClassifyHitTriangleUniformity(
@@ -1637,8 +1701,16 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 
 	TArray<int32> NewPlateIds;
 	TArray<double> NewFractions;
+	TArray<double> NewElevations;
+	TArray<double> NewOceanicAges;
+	TArray<FVector3d> NewRidgeDirections;
+	TArray<FVector3d> NewFoldDirections;
 	NewPlateIds.SetNum(State.Samples.Num());
 	NewFractions.SetNum(State.Samples.Num());
+	NewElevations.SetNum(State.Samples.Num());
+	NewOceanicAges.SetNum(State.Samples.Num());
+	NewRidgeDirections.SetNum(State.Samples.Num());
+	NewFoldDirections.SetNum(State.Samples.Num());
 	TArray<ECarrierLabPhaseIIMaterialEventClass> MaterialClassBySample;
 	TArray<ECarrierLabPhaseIIFilterDecisionClass> MaterialDecisionClassBySample;
 	TArray<int32> MaterialRawPlateCountBySample;
@@ -1667,6 +1739,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	{
 		NewPlateIds[Sample.Id] = Sample.PlateId;
 		NewFractions[Sample.Id] = Sample.ContinentalFraction;
+		NewElevations[Sample.Id] = Sample.Elevation;
+		NewOceanicAges[Sample.Id] = Sample.OceanicAge;
+		NewRidgeDirections[Sample.Id] = Sample.RidgeDirection;
+		NewFoldDirections[Sample.Id] = Sample.FoldDirection;
 	}
 
 	TSet<int32> SamplesWithFilteredCandidates;
@@ -1771,6 +1847,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				}
 				NewPlateIds[Sample.Id] = Q1.PlateId;
 				NewFractions[Sample.Id] = FMath::Clamp(0.5 * (Q1.ContinentalFraction + Q2.ContinentalFraction), 0.0, 1.0);
+				NewElevations[Sample.Id] = 0.0;
+				NewOceanicAges[Sample.Id] = 0.0;
+				NewRidgeDirections[Sample.Id] = FVector3d::ZeroVector;
+				NewFoldDirections[Sample.Id] = FVector3d::ZeroVector;
 
 				FCarrierLabPhaseIIFilterDecisionRecord& Decision = OutDecisions.AddDefaulted_GetRef();
 				Decision.DecisionId = OutDecisions.Num() - 1;
@@ -1926,6 +2006,15 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			: Sample.ContinentalFraction;
 		if (Chosen != nullptr)
 		{
+			FCarrierLabCrustFields InterpolatedFields;
+			if (State.Plates.IsValidIndex(ResolvedPlateId) &&
+				InterpolateCrustFields(State.Plates[ResolvedPlateId], *Chosen, Sample.UnitPosition, InterpolatedFields))
+			{
+				NewElevations[Sample.Id] = InterpolatedFields.Elevation;
+				NewOceanicAges[Sample.Id] = InterpolatedFields.OceanicAge;
+				NewRidgeDirections[Sample.Id] = InterpolatedFields.RidgeDirection;
+				NewFoldDirections[Sample.Id] = InterpolatedFields.FoldDirection;
+			}
 			SetHitTriangleSource(Sample.Id, ResolvedPlateId, Chosen->LocalTriangleId);
 		}
 		if (MaterialRawPlateCountBySample.IsValidIndex(Sample.Id))
@@ -2219,6 +2308,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 		{
 			Sample.PlateId = NewPlateIds[Sample.Id];
 			Sample.ContinentalFraction = FMath::Clamp(NewFractions[Sample.Id], 0.0, 1.0);
+			Sample.Elevation = NewElevations[Sample.Id];
+			Sample.OceanicAge = NewOceanicAges[Sample.Id];
+			Sample.RidgeDirection = NewRidgeDirections[Sample.Id];
+			Sample.FoldDirection = NewFoldDirections[Sample.Id];
 			Sample.bContinental = Sample.ContinentalFraction >= 0.5;
 		}
 	}
@@ -2527,6 +2620,230 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIA3VectorAuditProbe(
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::SeedPhaseIIIA4BoundarySmearProbe(
+	const int32 PreferredPlateId,
+	FCarrierLabPhaseIIIA4SeedMetrics& OutSeedMetrics)
+{
+	OutSeedMetrics = FCarrierLabPhaseIIIA4SeedMetrics();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+
+	int32 ChosenPlateId = INDEX_NONE;
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		if (PreferredPlateId != INDEX_NONE && Plate.PlateId != PreferredPlateId)
+		{
+			continue;
+		}
+
+		int32 BoundaryTriangleCount = 0;
+		int32 SeedableVertexCount = 0;
+		int32 ZeroedVertexCount = 0;
+		for (const CarrierLab::FCarrierPlateTriangle& Triangle : Plate.LocalTriangles)
+		{
+			if (Triangle.bBoundary)
+			{
+				++BoundaryTriangleCount;
+			}
+		}
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			const bool bSourceOwnedByPlate =
+				State.Samples.IsValidIndex(Vertex.GlobalSampleId) &&
+				State.Samples[Vertex.GlobalSampleId].PlateId == Plate.PlateId;
+			if (bSourceOwnedByPlate)
+			{
+				++SeedableVertexCount;
+			}
+			else
+			{
+				++ZeroedVertexCount;
+			}
+		}
+
+		if (BoundaryTriangleCount > 0 && SeedableVertexCount > 0 && ZeroedVertexCount > 0)
+		{
+			ChosenPlateId = Plate.PlateId;
+			OutSeedMetrics.BoundaryTriangleCount = BoundaryTriangleCount;
+			break;
+		}
+	}
+
+	if (ChosenPlateId == INDEX_NONE || !State.Plates.IsValidIndex(ChosenPlateId))
+	{
+		return false;
+	}
+
+	CarrierLab::FCarrierPlate& Plate = State.Plates[ChosenPlateId];
+	OutSeedMetrics.PlateId = ChosenPlateId;
+	for (CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+	{
+		const bool bSourceOwnedByPlate =
+			State.Samples.IsValidIndex(Vertex.GlobalSampleId) &&
+			State.Samples[Vertex.GlobalSampleId].PlateId == Plate.PlateId;
+		if (!bSourceOwnedByPlate)
+		{
+			Vertex.Elevation = 0.0;
+			Vertex.OceanicAge = 0.0;
+			Vertex.RidgeDirection = FVector3d::ZeroVector;
+			Vertex.FoldDirection = FVector3d::ZeroVector;
+			++OutSeedMetrics.ZeroedVertexCount;
+			continue;
+		}
+
+		const FVector3d UnitPosition = Vertex.UnitPosition.GetSafeNormal();
+		const FVector3d RidgeDirection = MakeDeterministicTangent(UnitPosition);
+		const FVector3d FoldDirection = RetangentAndNormalizeVectorField(
+			FVector3d::CrossProduct(UnitPosition, RidgeDirection),
+			UnitPosition);
+		Vertex.Elevation = OutSeedMetrics.SeedElevation;
+		Vertex.OceanicAge = OutSeedMetrics.SeedOceanicAge;
+		Vertex.RidgeDirection = RidgeDirection;
+		Vertex.FoldDirection = FoldDirection;
+		++OutSeedMetrics.SeededVertexCount;
+	}
+
+	UpdateLastHash();
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::GetPhaseIIIA4FieldAudit(
+	const double SeedElevation,
+	FCarrierLabPhaseIIIA4FieldAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIA4FieldAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	constexpr double NonZeroEpsilon = 1.0e-12;
+	double PositiveElevationSum = 0.0;
+	int32 PositiveElevationCount = 0;
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		++OutAudit.SampleCount;
+		const double RidgeMagnitude = Sample.RidgeDirection.Size();
+		const double FoldMagnitude = Sample.FoldDirection.Size();
+		const double MaxVectorMagnitude = FMath::Max(RidgeMagnitude, FoldMagnitude);
+		const double MaxRadialDot = FMath::Max(
+			FMath::Abs(FVector3d::DotProduct(Sample.UnitPosition, Sample.RidgeDirection)),
+			FMath::Abs(FVector3d::DotProduct(Sample.UnitPosition, Sample.FoldDirection)));
+		OutAudit.MaxAbsSampleElevation = FMath::Max(OutAudit.MaxAbsSampleElevation, FMath::Abs(Sample.Elevation));
+		OutAudit.MaxAbsSampleOceanicAge = FMath::Max(OutAudit.MaxAbsSampleOceanicAge, FMath::Abs(Sample.OceanicAge));
+		OutAudit.MaxSampleVectorMagnitude = FMath::Max(OutAudit.MaxSampleVectorMagnitude, MaxVectorMagnitude);
+		OutAudit.MaxSampleVectorRadialDot = FMath::Max(OutAudit.MaxSampleVectorRadialDot, MaxRadialDot);
+		if (FMath::Abs(Sample.Elevation) > NonZeroEpsilon ||
+			FMath::Abs(Sample.OceanicAge) > NonZeroEpsilon ||
+			MaxVectorMagnitude > NonZeroEpsilon)
+		{
+			++OutAudit.NonZeroSampleFieldCount;
+		}
+		if (Sample.Elevation > NonZeroEpsilon)
+		{
+			OutAudit.MinPositiveSampleElevation = OutAudit.MinPositiveSampleElevation <= 0.0
+				? Sample.Elevation
+				: FMath::Min(OutAudit.MinPositiveSampleElevation, Sample.Elevation);
+			OutAudit.MaxPositiveSampleElevation = FMath::Max(OutAudit.MaxPositiveSampleElevation, Sample.Elevation);
+			PositiveElevationSum += Sample.Elevation;
+			++PositiveElevationCount;
+			if (Sample.Elevation < SeedElevation - NonZeroEpsilon)
+			{
+				++OutAudit.SmearedSampleCount;
+			}
+		}
+	}
+	OutAudit.MeanPositiveSampleElevation = PositiveElevationCount > 0
+		? PositiveElevationSum / static_cast<double>(PositiveElevationCount)
+		: 0.0;
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			++OutAudit.PlateVertexCount;
+			const double RidgeMagnitude = Vertex.RidgeDirection.Size();
+			const double FoldMagnitude = Vertex.FoldDirection.Size();
+			const double MaxVectorMagnitude = FMath::Max(RidgeMagnitude, FoldMagnitude);
+			const double MaxRadialDot = FMath::Max(
+				FMath::Abs(FVector3d::DotProduct(Vertex.UnitPosition, Vertex.RidgeDirection)),
+				FMath::Abs(FVector3d::DotProduct(Vertex.UnitPosition, Vertex.FoldDirection)));
+			OutAudit.MaxAbsPlateVertexElevation = FMath::Max(OutAudit.MaxAbsPlateVertexElevation, FMath::Abs(Vertex.Elevation));
+			OutAudit.MaxAbsPlateVertexOceanicAge = FMath::Max(OutAudit.MaxAbsPlateVertexOceanicAge, FMath::Abs(Vertex.OceanicAge));
+			OutAudit.MaxPlateVertexVectorMagnitude = FMath::Max(OutAudit.MaxPlateVertexVectorMagnitude, MaxVectorMagnitude);
+			OutAudit.MaxPlateVertexVectorRadialDot = FMath::Max(OutAudit.MaxPlateVertexVectorRadialDot, MaxRadialDot);
+			if (FMath::Abs(Vertex.Elevation) > NonZeroEpsilon ||
+				FMath::Abs(Vertex.OceanicAge) > NonZeroEpsilon ||
+				MaxVectorMagnitude > NonZeroEpsilon)
+			{
+				++OutAudit.NonZeroPlateVertexFieldCount;
+			}
+		}
+	}
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::GetPhaseIIIA4FieldAuditForSamples(
+	const TArray<int32>& SampleIds,
+	const double SeedElevation,
+	FCarrierLabPhaseIIIA4FieldAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIA4FieldAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	constexpr double NonZeroEpsilon = 1.0e-12;
+	double PositiveElevationSum = 0.0;
+	int32 PositiveElevationCount = 0;
+	for (const int32 SampleId : SampleIds)
+	{
+		if (!State.Samples.IsValidIndex(SampleId))
+		{
+			continue;
+		}
+
+		const CarrierLab::FSphereSample& Sample = State.Samples[SampleId];
+		++OutAudit.SampleCount;
+		const double RidgeMagnitude = Sample.RidgeDirection.Size();
+		const double FoldMagnitude = Sample.FoldDirection.Size();
+		const double MaxVectorMagnitude = FMath::Max(RidgeMagnitude, FoldMagnitude);
+		const double MaxRadialDot = FMath::Max(
+			FMath::Abs(FVector3d::DotProduct(Sample.UnitPosition, Sample.RidgeDirection)),
+			FMath::Abs(FVector3d::DotProduct(Sample.UnitPosition, Sample.FoldDirection)));
+		OutAudit.MaxAbsSampleElevation = FMath::Max(OutAudit.MaxAbsSampleElevation, FMath::Abs(Sample.Elevation));
+		OutAudit.MaxAbsSampleOceanicAge = FMath::Max(OutAudit.MaxAbsSampleOceanicAge, FMath::Abs(Sample.OceanicAge));
+		OutAudit.MaxSampleVectorMagnitude = FMath::Max(OutAudit.MaxSampleVectorMagnitude, MaxVectorMagnitude);
+		OutAudit.MaxSampleVectorRadialDot = FMath::Max(OutAudit.MaxSampleVectorRadialDot, MaxRadialDot);
+		if (FMath::Abs(Sample.Elevation) > NonZeroEpsilon ||
+			FMath::Abs(Sample.OceanicAge) > NonZeroEpsilon ||
+			MaxVectorMagnitude > NonZeroEpsilon)
+		{
+			++OutAudit.NonZeroSampleFieldCount;
+		}
+		if (Sample.Elevation > NonZeroEpsilon)
+		{
+			OutAudit.MinPositiveSampleElevation = OutAudit.MinPositiveSampleElevation <= 0.0
+				? Sample.Elevation
+				: FMath::Min(OutAudit.MinPositiveSampleElevation, Sample.Elevation);
+			OutAudit.MaxPositiveSampleElevation = FMath::Max(OutAudit.MaxPositiveSampleElevation, Sample.Elevation);
+			PositiveElevationSum += Sample.Elevation;
+			++PositiveElevationCount;
+			if (Sample.Elevation < SeedElevation - NonZeroEpsilon)
+			{
+				++OutAudit.SmearedSampleCount;
+			}
+		}
+	}
+	OutAudit.MeanPositiveSampleElevation = PositiveElevationCount > 0
+		? PositiveElevationSum / static_cast<double>(PositiveElevationCount)
+		: 0.0;
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -2625,14 +2942,29 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	const FCarrierLabVizBoundaryIndex BoundaryIndex = BuildBoundaryIndex(State);
 	TArray<int32> NewPlateIds;
 	TArray<double> NewFractions;
+	TArray<double> NewElevations;
+	TArray<double> NewOceanicAges;
+	TArray<FVector3d> NewRidgeDirections;
+	TArray<FVector3d> NewFoldDirections;
 	NewPlateIds.Init(INDEX_NONE, State.Samples.Num());
 	NewFractions.Init(0.0, State.Samples.Num());
+	NewElevations.Init(0.0, State.Samples.Num());
+	NewOceanicAges.Init(0.0, State.Samples.Num());
+	NewRidgeDirections.Init(FVector3d::ZeroVector, State.Samples.Num());
+	NewFoldDirections.Init(FVector3d::ZeroVector, State.Samples.Num());
 
 	int32 GapFillCount = 0;
 	int32 NonSeparatingGapFillCount = 0;
 	TArray<FCarrierLabVizCandidate> Candidates;
 	for (const CarrierLab::FSphereSample& Sample : State.Samples)
 	{
+		NewPlateIds[Sample.Id] = Sample.PlateId;
+		NewFractions[Sample.Id] = Sample.ContinentalFraction;
+		NewElevations[Sample.Id] = Sample.Elevation;
+		NewOceanicAges[Sample.Id] = Sample.OceanicAge;
+		NewRidgeDirections[Sample.Id] = Sample.RidgeDirection;
+		NewFoldDirections[Sample.Id] = Sample.FoldDirection;
+
 		uint64 PlateMask = 0;
 		bool bAnyBoundary = false;
 		QuerySampleCandidates(State, ProjectionRayMesh, Sample, Candidates, PlateMask, bAnyBoundary);
@@ -2652,6 +2984,10 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 				}
 				NewPlateIds[Sample.Id] = Q1.PlateId;
 				NewFractions[Sample.Id] = FMath::Clamp(0.5 * (Q1.ContinentalFraction + Q2.ContinentalFraction), 0.0, 1.0);
+				NewElevations[Sample.Id] = 0.0;
+				NewOceanicAges[Sample.Id] = 0.0;
+				NewRidgeDirections[Sample.Id] = FVector3d::ZeroVector;
+				NewFoldDirections[Sample.Id] = FVector3d::ZeroVector;
 			}
 			else
 			{
@@ -2671,7 +3007,18 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 		NewPlateIds[Sample.Id] = ResolvedPlateId;
 		NewFractions[Sample.Id] = (Chosen != nullptr && State.Plates.IsValidIndex(ResolvedPlateId))
 			? InterpolateContinentalFraction(State.Plates[ResolvedPlateId], *Chosen)
-			: 0.0;
+			: Sample.ContinentalFraction;
+		if (Chosen != nullptr && State.Plates.IsValidIndex(ResolvedPlateId))
+		{
+			FCarrierLabCrustFields InterpolatedFields;
+			if (InterpolateCrustFields(State.Plates[ResolvedPlateId], *Chosen, Sample.UnitPosition, InterpolatedFields))
+			{
+				NewElevations[Sample.Id] = InterpolatedFields.Elevation;
+				NewOceanicAges[Sample.Id] = InterpolatedFields.OceanicAge;
+				NewRidgeDirections[Sample.Id] = InterpolatedFields.RidgeDirection;
+				NewFoldDirections[Sample.Id] = InterpolatedFields.FoldDirection;
+			}
+		}
 	}
 
 	for (CarrierLab::FSphereSample& Sample : State.Samples)
@@ -2680,6 +3027,10 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 		{
 			Sample.PlateId = NewPlateIds[Sample.Id];
 			Sample.ContinentalFraction = FMath::Clamp(NewFractions[Sample.Id], 0.0, 1.0);
+			Sample.Elevation = NewElevations[Sample.Id];
+			Sample.OceanicAge = NewOceanicAges[Sample.Id];
+			Sample.RidgeDirection = NewRidgeDirections[Sample.Id];
+			Sample.FoldDirection = NewFoldDirections[Sample.Id];
 			Sample.bContinental = Sample.ContinentalFraction >= 0.5;
 		}
 	}
