@@ -161,6 +161,24 @@ enum class ECarrierLabPhaseIIContactClass : uint8
 	ThirdPlate
 };
 
+enum class ECarrierLabPhaseIIPolaritySource : uint8
+{
+	None,
+	MixedMaterial,
+	FixtureSpecified,
+	SameMaterialAmbiguous,
+	ThirdPlateOutOfScope
+};
+
+enum class ECarrierLabPhaseIITriangleLabel : uint8
+{
+	None,
+	Subducting,
+	Overriding,
+	CollisionCandidate,
+	Ambiguous
+};
+
 struct FCarrierLabPhaseIIContactRecord
 {
 	int32 ContactId = INDEX_NONE;
@@ -176,6 +194,33 @@ struct FCarrierLabPhaseIIContactRecord
 	bool bBoundaryEvidence = false;
 	bool bThirdPlate = false;
 	ECarrierLabPhaseIIContactClass ContactClass = ECarrierLabPhaseIIContactClass::TransformLowMargin;
+};
+
+struct FCarrierLabPhaseIITriangleLabelConfig
+{
+	bool bUseFixturePolarity = false;
+	int32 FixtureUnderPlate = INDEX_NONE;
+	int32 FixtureOverPlate = INDEX_NONE;
+};
+
+struct FCarrierLabPhaseIITriangleLabelRecord
+{
+	int32 LabelId = INDEX_NONE;
+	int32 ContactId = INDEX_NONE;
+	int32 Step = 0;
+	int32 SampleId = INDEX_NONE;
+	int32 PlateId = INDEX_NONE;
+	int32 OtherPlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	int32 SourceGlobalTriangleId = INDEX_NONE;
+	FVector3d EvidenceUnitPosition = FVector3d::UnitZ();
+	double SignedConvergenceVelocity = 0.0;
+	double VelocityMargin = 0.0;
+	double DistanceFromContactKm = 0.0;
+	ECarrierLabPhaseIITriangleLabel Label = ECarrierLabPhaseIITriangleLabel::None;
+	ECarrierLabPhaseIIPolaritySource PolaritySource = ECarrierLabPhaseIIPolaritySource::None;
+	bool bFromThirdPlateContact = false;
+	FString LabelReason;
 };
 
 struct FCarrierLabPhaseIIContactMetrics
@@ -194,6 +239,30 @@ struct FCarrierLabPhaseIIContactMetrics
 	int32 NaNOrInfCount = 0;
 	double ContactDetectionSeconds = 0.0;
 	FString ContactLogHash;
+};
+
+struct FCarrierLabPhaseIITriangleLabelMetrics
+{
+	int32 Step = 0;
+	int32 ContactRecordCount = 0;
+	int32 LabelRecordCount = 0;
+	int32 UniqueLabeledTriangleCount = 0;
+	int32 LabelableContactCount = 0;
+	int32 FixtureSpecifiedPolarityContactCount = 0;
+	int32 MixedMaterialPolarityContactCount = 0;
+	int32 SameMaterialAmbiguousContactCount = 0;
+	int32 ThirdPlateOutOfScopeContactCount = 0;
+	int32 NonConvergentSkippedContactCount = 0;
+	int32 SubductingLabelCount = 0;
+	int32 OverridingLabelCount = 0;
+	int32 AmbiguousLabelCount = 0;
+	int32 CollisionCandidateLabelCount = 0;
+	int32 LabelsFromThirdPlateContactCount = 0;
+	int32 NaNOrInfCount = 0;
+	int32 MaxLabelsPerContact = 0;
+	double TriangleLabelSeconds = 0.0;
+	double UniqueLabeledTriangleAreaProxy = 0.0;
+	FString TriangleLabelHash;
 };
 
 UCLASS(Blueprintable)
@@ -306,6 +375,11 @@ public:
 
 	void ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture Fixture);
 	bool DetectPhaseIIContacts(TArray<FCarrierLabPhaseIIContactRecord>& OutContacts, FCarrierLabPhaseIIContactMetrics& OutMetrics);
+	bool BuildPhaseIITriangleLabels(
+		const TArray<FCarrierLabPhaseIIContactRecord>& Contacts,
+		const FCarrierLabPhaseIITriangleLabelConfig& Config,
+		TArray<FCarrierLabPhaseIITriangleLabelRecord>& OutLabels,
+		FCarrierLabPhaseIITriangleLabelMetrics& OutMetrics) const;
 	bool GetPhaseIIMotion(int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const;
 	double ComputePhaseIIPairSignedConvergenceVelocity(int32 PlateA, int32 PlateB) const;
 

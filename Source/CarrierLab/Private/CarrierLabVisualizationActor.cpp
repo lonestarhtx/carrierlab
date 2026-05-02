@@ -1263,6 +1263,242 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIContacts(TArray<FCarrierLabPhas
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::BuildPhaseIITriangleLabels(
+	const TArray<FCarrierLabPhaseIIContactRecord>& Contacts,
+	const FCarrierLabPhaseIITriangleLabelConfig& Config,
+	TArray<FCarrierLabPhaseIITriangleLabelRecord>& OutLabels,
+	FCarrierLabPhaseIITriangleLabelMetrics& OutMetrics) const
+{
+	OutLabels.Reset();
+	OutMetrics = FCarrierLabPhaseIITriangleLabelMetrics();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	const double StartSeconds = FPlatformTime::Seconds();
+	OutMetrics.Step = CurrentMetrics.Step;
+	OutMetrics.ContactRecordCount = Contacts.Num();
+
+	TMap<int32, int32> LabelsPerContact;
+	TSet<uint64> UniqueTriangles;
+	double AreaProxy = 0.0;
+
+	auto IsPlateContinental = [this](const int32 PlateId) -> bool
+	{
+		return State.Plates.IsValidIndex(PlateId) && State.Plates[PlateId].bContinental;
+	};
+
+	auto ContactUsesFixturePolarity = [&Config](const FCarrierLabPhaseIIContactRecord& Contact) -> bool
+	{
+		return Config.bUseFixturePolarity &&
+			Config.FixtureUnderPlate != INDEX_NONE &&
+			Config.FixtureOverPlate != INDEX_NONE &&
+			((Contact.PlateA == Config.FixtureUnderPlate && Contact.PlateB == Config.FixtureOverPlate) ||
+				(Contact.PlateB == Config.FixtureUnderPlate && Contact.PlateA == Config.FixtureOverPlate));
+	};
+
+	auto TriangleAreaProxy = [this](const int32 PlateId, const int32 LocalTriangleId) -> double
+	{
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			return 0.0;
+		}
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return 0.0;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		double Sum = 0.0;
+		int32 Count = 0;
+		for (const int32 VertexId : {Triangle.A, Triangle.B, Triangle.C})
+		{
+			if (Plate.Vertices.IsValidIndex(VertexId))
+			{
+				Sum += Plate.Vertices[VertexId].AreaWeight;
+				++Count;
+			}
+		}
+		return Count > 0 ? Sum / static_cast<double>(Count) : 0.0;
+	};
+
+	auto DistanceFromContactKm = [this](const int32 PlateId, const int32 LocalTriangleId, const FVector3d& Evidence) -> double
+	{
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			return 0.0;
+		}
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return 0.0;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return 0.0;
+		}
+		const FVector3d Center = NormalizeOrFallback(
+			Plate.Vertices[Triangle.A].UnitPosition +
+			Plate.Vertices[Triangle.B].UnitPosition +
+			Plate.Vertices[Triangle.C].UnitPosition,
+			Evidence);
+		const double Dot = FMath::Clamp(FVector3d::DotProduct(Center, Evidence), -1.0, 1.0);
+		return FMath::Acos(Dot) * SphereRadius;
+	};
+
+	auto AddLabel = [&](const FCarrierLabPhaseIIContactRecord& Contact,
+		const int32 PlateId,
+		const int32 OtherPlateId,
+		const int32 LocalTriangleId,
+		const ECarrierLabPhaseIITriangleLabel Label,
+		const ECarrierLabPhaseIIPolaritySource PolaritySource,
+		const TCHAR* Reason)
+	{
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			++OutMetrics.NaNOrInfCount;
+			return;
+		}
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			++OutMetrics.NaNOrInfCount;
+			return;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+
+		FCarrierLabPhaseIITriangleLabelRecord& Record = OutLabels.AddDefaulted_GetRef();
+		Record.LabelId = OutLabels.Num() - 1;
+		Record.ContactId = Contact.ContactId;
+		Record.Step = Contact.Step;
+		Record.SampleId = Contact.SampleId;
+		Record.PlateId = PlateId;
+		Record.OtherPlateId = OtherPlateId;
+		Record.LocalTriangleId = LocalTriangleId;
+		Record.SourceGlobalTriangleId = Triangle.SourceTriangleId;
+		Record.EvidenceUnitPosition = Contact.EvidenceUnitPosition;
+		Record.SignedConvergenceVelocity = Contact.SignedConvergenceVelocity;
+		Record.VelocityMargin = Contact.VelocityMargin;
+		Record.DistanceFromContactKm = DistanceFromContactKm(PlateId, LocalTriangleId, Contact.EvidenceUnitPosition);
+		Record.Label = Label;
+		Record.PolaritySource = PolaritySource;
+		Record.bFromThirdPlateContact = Contact.bThirdPlate;
+		Record.LabelReason = Reason;
+
+		int32& ContactLabelCount = LabelsPerContact.FindOrAdd(Contact.ContactId);
+		++ContactLabelCount;
+		OutMetrics.MaxLabelsPerContact = FMath::Max(OutMetrics.MaxLabelsPerContact, ContactLabelCount);
+		if (Contact.bThirdPlate)
+		{
+			++OutMetrics.LabelsFromThirdPlateContactCount;
+		}
+		switch (Label)
+		{
+		case ECarrierLabPhaseIITriangleLabel::Subducting:
+			++OutMetrics.SubductingLabelCount;
+			break;
+		case ECarrierLabPhaseIITriangleLabel::Overriding:
+			++OutMetrics.OverridingLabelCount;
+			break;
+		case ECarrierLabPhaseIITriangleLabel::CollisionCandidate:
+			++OutMetrics.CollisionCandidateLabelCount;
+			break;
+		case ECarrierLabPhaseIITriangleLabel::Ambiguous:
+			++OutMetrics.AmbiguousLabelCount;
+			break;
+		case ECarrierLabPhaseIITriangleLabel::None:
+		default:
+			break;
+		}
+
+		const uint64 UniqueKey =
+			(static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) |
+			static_cast<uint32>(LocalTriangleId);
+		if (!UniqueTriangles.Contains(UniqueKey))
+		{
+			UniqueTriangles.Add(UniqueKey);
+			AreaProxy += TriangleAreaProxy(PlateId, LocalTriangleId);
+		}
+	};
+
+	for (const FCarrierLabPhaseIIContactRecord& Contact : Contacts)
+	{
+		if (Contact.bThirdPlate || Contact.ContactClass == ECarrierLabPhaseIIContactClass::ThirdPlate)
+		{
+			++OutMetrics.ThirdPlateOutOfScopeContactCount;
+			continue;
+		}
+		if (Contact.ContactClass != ECarrierLabPhaseIIContactClass::Convergent ||
+			Contact.SignedConvergenceVelocity <= Contact.VelocityMargin)
+		{
+			++OutMetrics.NonConvergentSkippedContactCount;
+			continue;
+		}
+
+		++OutMetrics.LabelableContactCount;
+		const bool bFixturePolarity = ContactUsesFixturePolarity(Contact);
+		const bool bAContinental = IsPlateContinental(Contact.PlateA);
+		const bool bBContinental = IsPlateContinental(Contact.PlateB);
+
+		if (bFixturePolarity)
+		{
+			++OutMetrics.FixtureSpecifiedPolarityContactCount;
+			const int32 UnderPlate = Config.FixtureUnderPlate;
+			const int32 OverPlate = Config.FixtureOverPlate;
+			const int32 UnderTriangle = Contact.PlateA == UnderPlate ? Contact.PlateALocalTriangleId : Contact.PlateBLocalTriangleId;
+			const int32 OverTriangle = Contact.PlateA == OverPlate ? Contact.PlateALocalTriangleId : Contact.PlateBLocalTriangleId;
+			AddLabel(Contact, UnderPlate, OverPlate, UnderTriangle, ECarrierLabPhaseIITriangleLabel::Subducting, ECarrierLabPhaseIIPolaritySource::FixtureSpecified, TEXT("fixture_specified_under_plate"));
+			AddLabel(Contact, OverPlate, UnderPlate, OverTriangle, ECarrierLabPhaseIITriangleLabel::Overriding, ECarrierLabPhaseIIPolaritySource::FixtureSpecified, TEXT("fixture_specified_over_plate"));
+		}
+		else if (bAContinental != bBContinental)
+		{
+			++OutMetrics.MixedMaterialPolarityContactCount;
+			const int32 UnderPlate = bAContinental ? Contact.PlateB : Contact.PlateA;
+			const int32 OverPlate = bAContinental ? Contact.PlateA : Contact.PlateB;
+			const int32 UnderTriangle = bAContinental ? Contact.PlateBLocalTriangleId : Contact.PlateALocalTriangleId;
+			const int32 OverTriangle = bAContinental ? Contact.PlateALocalTriangleId : Contact.PlateBLocalTriangleId;
+			AddLabel(Contact, UnderPlate, OverPlate, UnderTriangle, ECarrierLabPhaseIITriangleLabel::Subducting, ECarrierLabPhaseIIPolaritySource::MixedMaterial, TEXT("oceanic_under_continental"));
+			AddLabel(Contact, OverPlate, UnderPlate, OverTriangle, ECarrierLabPhaseIITriangleLabel::Overriding, ECarrierLabPhaseIIPolaritySource::MixedMaterial, TEXT("continental_over_oceanic"));
+		}
+		else
+		{
+			++OutMetrics.SameMaterialAmbiguousContactCount;
+			AddLabel(Contact, Contact.PlateA, Contact.PlateB, Contact.PlateALocalTriangleId, ECarrierLabPhaseIITriangleLabel::Ambiguous, ECarrierLabPhaseIIPolaritySource::SameMaterialAmbiguous, TEXT("same_material_ambiguous"));
+			AddLabel(Contact, Contact.PlateB, Contact.PlateA, Contact.PlateBLocalTriangleId, ECarrierLabPhaseIITriangleLabel::Ambiguous, ECarrierLabPhaseIIPolaritySource::SameMaterialAmbiguous, TEXT("same_material_ambiguous"));
+		}
+	}
+
+	OutMetrics.LabelRecordCount = OutLabels.Num();
+	OutMetrics.UniqueLabeledTriangleCount = UniqueTriangles.Num();
+	OutMetrics.UniqueLabeledTriangleAreaProxy = AreaProxy;
+
+	uint64 LabelHash = 1469598103934665603ull;
+	HashMix(LabelHash, static_cast<uint64>(OutMetrics.Step + 1));
+	HashMix(LabelHash, static_cast<uint64>(OutMetrics.ContactRecordCount + 1));
+	for (const FCarrierLabPhaseIITriangleLabelRecord& Record : OutLabels)
+	{
+		HashMix(LabelHash, static_cast<uint64>(Record.LabelId + 1));
+		HashMix(LabelHash, static_cast<uint64>(Record.ContactId + 1));
+		HashMix(LabelHash, static_cast<uint64>(Record.SampleId + 1));
+		HashMix(LabelHash, static_cast<uint64>(Record.PlateId + 1));
+		HashMix(LabelHash, static_cast<uint64>(Record.OtherPlateId + 1));
+		HashMix(LabelHash, static_cast<uint64>(Record.LocalTriangleId + 1));
+		HashMix(LabelHash, static_cast<uint64>(Record.SourceGlobalTriangleId + 1));
+		HashMixDouble(LabelHash, Record.SignedConvergenceVelocity);
+		HashMixDouble(LabelHash, Record.DistanceFromContactKm);
+		HashMix(LabelHash, static_cast<uint64>(Record.Label) + 1);
+		HashMix(LabelHash, static_cast<uint64>(Record.PolaritySource) + 1);
+		HashMix(LabelHash, Record.bFromThirdPlateContact ? 1ull : 0ull);
+	}
+	OutMetrics.TriangleLabelHash = HashToString(LabelHash);
+	OutMetrics.TriangleLabelSeconds = FPlatformTime::Seconds() - StartSeconds;
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::GetPhaseIIMotion(const int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const
 {
 	if (!Motions.IsValidIndex(PlateId))
