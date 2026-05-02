@@ -16,6 +16,9 @@ namespace
 {
 	constexpr int32 ObservabilitySeed = 42;
 	constexpr double ObservabilityVelocityMmPerYear = 66.6666666667;
+	constexpr double ObservabilitySeedElevationKm = 2.5;
+	constexpr double ObservabilitySlabPullSpeedMmPerYear = 8.0;
+	constexpr double ObservabilityReferenceVelocityMmPerYear = 100.0;
 	constexpr int32 ContactThumbWidth = 512;
 	constexpr int32 ContactThumbHeight = 256;
 
@@ -35,6 +38,9 @@ namespace
 		double ContinentalPlateFraction = 0.30;
 		ECarrierLabPhaseIIMotionFixture MotionFixture = ECarrierLabPhaseIIMotionFixture::Default;
 		EObservabilityMaterialFixture MaterialFixture = EObservabilityMaterialFixture::Default;
+		bool bSeedMixedElevation = false;
+		bool bEnableIIICProcessLayer = false;
+		bool bEnableIIICSlabPull = false;
 	};
 
 	FString JsonString(const FString& Value)
@@ -115,9 +121,26 @@ namespace
 		}
 	}
 
-	TArray<FObservabilityScenario> BuildScenarios()
+	TArray<FObservabilityScenario> BuildScenarios(const bool bIIICMode)
 	{
 		TArray<FObservabilityScenario> Scenarios;
+		if (bIIICMode)
+		{
+			FObservabilityScenario ProcessLayer;
+			ProcessLayer.Name = TEXT("process_layer_default");
+			ProcessLayer.Description = TEXT("Consolidated IIIC process-layer fixture: marks, trench elevation split, and overriding uplift enabled; slab pull remains off.");
+			ProcessLayer.SampleCount = 10000;
+			ProcessLayer.PlateCount = 2;
+			ProcessLayer.StepCount = 1;
+			ProcessLayer.ContinentalPlateFraction = 0.50;
+			ProcessLayer.MotionFixture = ECarrierLabPhaseIIMotionFixture::ForcedConvergence;
+			ProcessLayer.MaterialFixture = EObservabilityMaterialFixture::MixedPlate0Continental;
+			ProcessLayer.bSeedMixedElevation = true;
+			ProcessLayer.bEnableIIICProcessLayer = true;
+			ProcessLayer.bEnableIIICSlabPull = false;
+			Scenarios.Add(ProcessLayer);
+			return Scenarios;
+		}
 
 		FObservabilityScenario Baseline;
 		Baseline.Name = TEXT("default_40_plate_baseline");
@@ -144,18 +167,27 @@ namespace
 		return Scenarios;
 	}
 
-	FString GetOutputRoot(const FString& Params)
+	bool IsIIICMode(const FString& Params)
+	{
+		return Params.Contains(TEXT("-IIIC")) ||
+			Params.Contains(TEXT("Mode=IIIC")) ||
+			Params.Contains(TEXT("Mode=iiic"));
+	}
+
+	FString GetOutputRoot(const FString& Params, const bool bIIICMode)
 	{
 		FString OutputRoot;
 		if (!FParse::Value(*Params, TEXT("Out="), OutputRoot))
 		{
 			const FString Stamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
-			OutputRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("Observability"), TEXT("Maps"), Stamp);
+			OutputRoot = bIIICMode
+				? FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("IIICMapExport"), Stamp)
+				: FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("Observability"), TEXT("Maps"), Stamp);
 		}
 		return FPaths::ConvertRelativePathToFull(OutputRoot);
 	}
 
-	FString ResolveReportPath(const FString& Params)
+	FString ResolveReportPath(const FString& Params, const bool bIIICMode)
 	{
 		FString ReportPath;
 		if (!FParse::Value(*Params, TEXT("Report="), ReportPath))
@@ -164,7 +196,7 @@ namespace
 				FPaths::ProjectDir(),
 				TEXT("docs"),
 				TEXT("checkpoints"),
-				TEXT("phase-iii-observability-maps.md"));
+				bIIICMode ? TEXT("phase-iii-iiic-map-export.md") : TEXT("phase-iii-observability-maps.md"));
 		}
 		else if (FPaths::IsRelative(ReportPath))
 		{
@@ -212,6 +244,9 @@ namespace
 		Actor->VelocityMmPerYear = ObservabilityVelocityMmPerYear;
 		Actor->MultiHitPolicy = ECarrierLabMultiHitPolicy::Centroid;
 		Actor->VisualizationLayer = ECarrierLabVisualizationLayer::PlateId;
+		Actor->PhaseIIICSlabPullSpeedMmPerYear = ObservabilitySlabPullSpeedMmPerYear;
+		Actor->PhaseIIICReferenceVelocityMmPerYear = ObservabilityReferenceVelocityMmPerYear;
+		Actor->ConfigurePhaseIIICProcessLayer(Scenario.bEnableIIICProcessLayer, Scenario.bEnableIIICSlabPull);
 		Actor->FinishSpawning(FTransform::Identity);
 		return Actor;
 	}
@@ -221,8 +256,16 @@ namespace
 		switch (Scenario.MaterialFixture)
 		{
 		case EObservabilityMaterialFixture::MixedPlate0Continental:
-			return Actor.SetPlateContinentalForTest(0, true) &&
+		{
+			const bool bMaterialOk =
+				Actor.SetPlateContinentalForTest(0, true) &&
 				Actor.SetPlateContinentalForTest(1, false);
+			if (!bMaterialOk)
+			{
+				return false;
+			}
+			return !Scenario.bSeedMixedElevation || Actor.SetPlateElevationForTest(1, ObservabilitySeedElevationKm);
+		}
 		case EObservabilityMaterialFixture::Default:
 		default:
 			return true;
@@ -318,6 +361,11 @@ namespace
 		FCarrierLabPhaseIIIB4PolarityAudit PolarityAudit;
 		FCarrierLabPhaseIIIB6NeighborPropagationAudit PropagationAudit;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+		FCarrierLabPhaseIIIC1SubductingMarkAudit IIICMarkAudit;
+		FCarrierLabPhaseIIIC2ElevationAudit IIICElevationAudit;
+		FCarrierLabPhaseIIIC3UpliftAudit IIICUpliftAudit;
+		FCarrierLabPhaseIIIC4SlabPullAudit IIICSlabPullAudit;
+		FCarrierLabPhaseIIIC5ElevationLedgerAudit IIICLedgerAudit;
 		TArray<FLayerExport> LayerExports;
 		FString ContactSheetPath;
 		bool bExportReadOnly = false;
@@ -459,6 +507,11 @@ namespace
 		Actor->GetPhaseIIIB4PolarityAudit(OutResult.PolarityAudit);
 		Actor->GetPhaseIIIB6NeighborPropagationAudit(OutResult.PropagationAudit);
 		Actor->GetPhaseIIIB7HashClosureAudit(OutResult.ClosureAudit);
+		Actor->GetPhaseIIIC1SubductingMarkAudit(OutResult.IIICMarkAudit);
+		Actor->GetPhaseIIIC2ElevationAudit(OutResult.IIICElevationAudit);
+		Actor->GetPhaseIIIC3UpliftAudit(OutResult.IIICUpliftAudit);
+		Actor->GetPhaseIIIC4SlabPullAudit(OutResult.IIICSlabPullAudit);
+		Actor->GetPhaseIIIC5ElevationLedgerAudit(OutResult.IIICLedgerAudit);
 
 		OutResult.ProjectionHashBefore = Actor->CurrentMetrics.LastHash;
 		OutResult.StateHashBefore = Actor->CurrentMetrics.StateHash;
@@ -522,7 +575,11 @@ namespace
 			TEXT("\"convergence_tracking_hash_before\":%s,\"convergence_tracking_hash_after\":%s,")
 			TEXT("\"export_read_only\":%s,\"active_triangles\":%d,\"distance_records\":%d,")
 			TEXT("\"matrix_pairs\":%d,\"polarity_decisions\":%d,\"subduction_polarity_decisions\":%d,")
-			TEXT("\"propagation_seed_hits\":%d,\"propagation_added\":%d,\"map_exports\":[%s],\"contact_sheet\":%s}"),
+			TEXT("\"propagation_seed_hits\":%d,\"propagation_added\":%d,")
+			TEXT("\"iiic_process_layer\":%s,\"iiic_slab_pull\":%s,\"iiic_marks\":%d,")
+			TEXT("\"iiic_trench_records\":%d,\"iiic_uplift_records\":%d,\"iiic_ledger_records\":%d,")
+			TEXT("\"iiic_actual_delta_km\":%.15f,\"iiic_ledger_residual_km\":%.15e,")
+			TEXT("\"map_exports\":[%s],\"contact_sheet\":%s}"),
 			*JsonString(Result.ScenarioName),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -544,6 +601,14 @@ namespace
 			Result.PolarityAudit.SubductionPolarityCount,
 			Result.PropagationAudit.PropagationSeedHitCount,
 			Result.PropagationAudit.PropagationAddedCount,
+			Result.IIICMarkAudit.bEnabled ? TEXT("true") : TEXT("false"),
+			Result.IIICSlabPullAudit.bSlabPullEnabled ? TEXT("true") : TEXT("false"),
+			Result.IIICMarkAudit.MarkCount,
+			Result.IIICLedgerAudit.TrenchRecordCount,
+			Result.IIICLedgerAudit.UpliftRecordCount,
+			Result.IIICLedgerAudit.RecordCount,
+			Result.IIICLedgerAudit.ActualVisibleElevationDeltaKm,
+			Result.IIICLedgerAudit.VisibleElevationResidualKm,
 			*FString::Join(LayerJson, TEXT(",")),
 			*JsonString(Result.ContactSheetPath));
 	}
@@ -551,18 +616,25 @@ namespace
 	FString BuildReport(
 		const FString& OutputRoot,
 		const TArray<FObservabilityScenarioResult>& Results,
-		const bool bOverallPass)
+		const bool bOverallPass,
+		const bool bIIICMode)
 	{
 		FString Report;
-		Report += TEXT("# Phase III Observability Map Export Checkpoint\n\n");
-		Report += TEXT("Status: read-only observability patch before IIIC entry reconciliation.\n\n");
+		Report += bIIICMode
+			? TEXT("# Phase III IIIC Map Export Checkpoint\n\n")
+			: TEXT("# Phase III Observability Map Export Checkpoint\n\n");
+		Report += bIIICMode
+			? TEXT("Status: read-only spatial sanity export for the consolidated IIIC process layer.\n\n")
+			: TEXT("Status: read-only observability patch before IIIC entry reconciliation.\n\n");
 		Report += TEXT("## Scope\n\n");
-		Report += TEXT("This checkpoint exports the Phase III actor-only spatial sanity layers to filled Mollweide-style PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n");
+		Report += bIIICMode
+			? TEXT("This checkpoint exports filled Mollweide-style PNG artifacts after the consolidated IIIC process layer has run with slab pull off. The export path is read-only: it must not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n")
+			: TEXT("This checkpoint exports the Phase III actor-only spatial sanity layers to filled Mollweide-style PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n");
 		Report += TEXT("Fixtures:\n\n");
 		for (const FObservabilityScenarioResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d rigid steps / %s motion / %s material / centroid policy`).\n"),
+				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d rigid steps / %s motion / %s material / IIIC process %s / slab pull %s / centroid policy`).\n"),
 				*Result.Scenario.Name,
 				*Result.Scenario.Description,
 				Result.Scenario.SampleCount / 1000,
@@ -570,7 +642,9 @@ namespace
 				ObservabilitySeed,
 				Result.Scenario.StepCount,
 				*MotionFixtureName(Result.Scenario.MotionFixture),
-				*MaterialFixtureName(Result.Scenario.MaterialFixture));
+				*MaterialFixtureName(Result.Scenario.MaterialFixture),
+				Result.Scenario.bEnableIIICProcessLayer ? TEXT("on") : TEXT("off"),
+				Result.Scenario.bEnableIIICSlabPull ? TEXT("on") : TEXT("off"));
 		}
 		Report += TEXT("\n");
 		Report += TEXT("## Gate Summary\n\n");
@@ -618,6 +692,32 @@ namespace
 			}
 		}
 
+		Report += TEXT("\n## IIIC State Used For Maps\n\n");
+		Report += TEXT("| Scenario | Replay | Process layer | Slab pull | Marks | Trench records | Uplift records | Ledger records | Actual delta km | Ledger residual km | Mark hash | Elevation hash | Uplift hash | Ledger hash |\n");
+		Report += TEXT("|---|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---|\n");
+		for (const FObservabilityScenarioResult& ScenarioResult : Results)
+		{
+			for (const FObservabilityReplay* Result : { &ScenarioResult.A, &ScenarioResult.B })
+			{
+				Report += FString::Printf(
+					TEXT("| `%s` | %d | %s | %s | %d | %d | %d | %d | %.12f | %.12e | `%s` | `%s` | `%s` | `%s` |\n"),
+					*ScenarioResult.Scenario.Name,
+					Result->Replay,
+					Result->IIICMarkAudit.bEnabled ? TEXT("on") : TEXT("off"),
+					Result->IIICSlabPullAudit.bSlabPullEnabled ? TEXT("on") : TEXT("off"),
+					Result->IIICMarkAudit.MarkCount,
+					Result->IIICLedgerAudit.TrenchRecordCount,
+					Result->IIICLedgerAudit.UpliftRecordCount,
+					Result->IIICLedgerAudit.RecordCount,
+					Result->IIICLedgerAudit.ActualVisibleElevationDeltaKm,
+					Result->IIICLedgerAudit.VisibleElevationResidualKm,
+					*Result->IIICMarkAudit.SubductingMarkHash,
+					*Result->IIICElevationAudit.VisibleElevationHash,
+					*Result->IIICUpliftAudit.UpliftHash,
+					*Result->IIICLedgerAudit.ElevationLedgerHash);
+			}
+		}
+
 		Report += TEXT("\n## Exported Maps\n\n");
 		Report += TEXT("| Scenario | Replay | Layer | Hash | Non-background pixels | Path |\n");
 		Report += TEXT("|---|---:|---|---|---:|---|\n");
@@ -645,13 +745,28 @@ namespace
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
-		Report += TEXT("- `ElevationHeatmap` uses the filled continental/oceanic base map when elevation is still zero, then overlays positive/negative elevation once IIIC.2/IIIC.3 mutate the scalar field.\n");
-		Report += TEXT("- `SubductionMask` uses the filled base map plus IIIB polarity-derived role overlays; the forced-convergence fixture is the human-inspection map, not persistent IIIC subducting-triangle authority.\n");
-		Report += TEXT("- `DistanceToFrontHeatmap` uses the filled base map plus active boundary distance overlays; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.\n\n");
+		Report += bIIICMode
+			? TEXT("- `ElevationHeatmap` should show the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color overlays on the filled continental/oceanic base map.\n")
+			: TEXT("- `ElevationHeatmap` uses the filled continental/oceanic base map when elevation is still zero, then overlays positive/negative elevation once IIIC.2/IIIC.3 mutate the scalar field.\n");
+		Report += bIIICMode
+			? TEXT("- `SubductionMask` should show the consolidated IIIC subducting/overriding roles produced from persistent plate-local marks, not only the earlier pre-mutation IIIB inspection overlay.\n")
+			: TEXT("- `SubductionMask` uses the filled base map plus IIIB polarity-derived role overlays; the forced-convergence fixture is the human-inspection map, not persistent IIIC subducting-triangle authority.\n");
+		Report += bIIICMode
+			? TEXT("- `DistanceToFrontHeatmap` remains the front-distance spatial context for the same fixture; it is diagnostic context, not a source of authority.\n\n")
+			: TEXT("- `DistanceToFrontHeatmap` uses the filled base map plus active boundary distance overlays; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.\n\n");
 		Report += TEXT("## Recommendation\n\n");
-		Report += bOverallPass
-			? TEXT("Go for the docs-only IIIC entry reconciliation checkpoint. These exports are read-only and stable enough to serve as pre-mutation spatial sanity artifacts.\n")
-			: TEXT("No-go for IIIC entry reconciliation until the failed export/read-only/determinism gate is investigated.\n");
+		if (bIIICMode)
+		{
+			Report += bOverallPass
+				? TEXT("IIIC map export passes. These images are suitable human spatial sanity artifacts for the consolidated IIIC process layer before Phase IIID work begins.\n")
+				: TEXT("IIIC map export fails. Pause before Phase IIID and investigate the failed export/read-only/determinism gate.\n");
+		}
+		else
+		{
+			Report += bOverallPass
+				? TEXT("Go for the docs-only IIIC entry reconciliation checkpoint. These exports are read-only and stable enough to serve as pre-mutation spatial sanity artifacts.\n")
+				: TEXT("No-go for IIIC entry reconciliation until the failed export/read-only/determinism gate is investigated.\n");
+		}
 		return Report;
 	}
 }
@@ -666,14 +781,15 @@ UCarrierLabPhaseIIIObservabilityCommandlet::UCarrierLabPhaseIIIObservabilityComm
 
 int32 UCarrierLabPhaseIIIObservabilityCommandlet::Main(const FString& Params)
 {
-	const FString OutputRoot = GetOutputRoot(Params);
-	const FString ReportPath = ResolveReportPath(Params);
+	const bool bIIICMode = IsIIICMode(Params);
+	const FString OutputRoot = GetOutputRoot(Params, bIIICMode);
+	const FString ReportPath = ResolveReportPath(Params, bIIICMode);
 	IFileManager::Get().MakeDirectory(*OutputRoot, true);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
 
 	TArray<FObservabilityScenarioResult> Results;
 	bool bOverallPass = true;
-	for (const FObservabilityScenario& Scenario : BuildScenarios())
+	for (const FObservabilityScenario& Scenario : BuildScenarios(bIIICMode))
 	{
 		FObservabilityScenarioResult Result;
 		Result.Scenario = Scenario;
@@ -696,13 +812,13 @@ int32 UCarrierLabPhaseIIIObservabilityCommandlet::Main(const FString& Params)
 	}
 	FFileHelper::SaveStringToFile(MetricsJsonl, *MetricsPath);
 
-	const FString Report = BuildReport(OutputRoot, Results, bOverallPass);
+	const FString Report = BuildReport(OutputRoot, Results, bOverallPass, bIIICMode);
 	FFileHelper::SaveStringToFile(Report, *ReportPath);
 
 	UE_LOG(
 		LogTemp,
 		Display,
-		TEXT("CarrierLab Phase III observability maps %s. Metrics: %s Report: %s"),
+		TEXT("CarrierLab Phase III maps %s. Metrics: %s Report: %s"),
 		bOverallPass ? TEXT("passed") : TEXT("failed"),
 		*MetricsPath,
 		*ReportPath);
