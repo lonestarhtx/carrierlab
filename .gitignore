@@ -6,6 +6,7 @@ Saved/
 
 # IDE and local machine state
 .claude/
+.codex-pipeline/
 .vs/
 .vscode/
 .idea/

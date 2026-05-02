@@ -49,17 +49,36 @@ $duration = ((Get-Date) - $start).TotalSeconds
 
 $tail = @()
 $errors = @()
+$sandboxCacheHits = @()
 if (Test-Path -LiteralPath $logPath) {
-    $tail = @(Get-Content -LiteralPath $logPath -Tail 80)
-    $errors = @($tail | Select-String -Pattern 'error |fatal error|Result: Failed|Unhandled exception' -CaseSensitive:$false | ForEach-Object { $_.Line })
+    $logLines = @(Get-Content -LiteralPath $logPath | ForEach-Object { [string]$_ })
+    $tail = @($logLines | Select-Object -Last 80)
+    $errors = @($logLines | Select-String -Pattern 'error |fatal error|Result: Failed|Unhandled exception' -CaseSensitive:$false | Select-Object -Last 60 | ForEach-Object { $_.Line })
+
+    $sandboxCachePatterns = @(
+        'AppData\\Local\\UnrealBuildTool',
+        '\bLOCALAPPDATA\b',
+        'UnauthorizedAccessException',
+        'System\.UnauthorizedAccessException',
+        'Access to the path .*AppData',
+        'Unable to create directory .*AppData',
+        'Requested registry access is not allowed'
+    )
+    $sandboxCacheRegex = '(' + ($sandboxCachePatterns -join '|') + ')'
+    $sandboxCacheHits = @($logLines | Select-String -Pattern $sandboxCacheRegex -CaseSensitive:$false | Select-Object -Last 20 | ForEach-Object { $_.Line })
 }
 
+$status = if ($exitCode -eq 0) { 'succeeded' } elseif ($sandboxCacheHits.Count -gt 0) { 'sandbox_cache_wall' } else { 'failed' }
+$failureKind = if ($sandboxCacheHits.Count -gt 0) { 'ubt_appdata_sandbox' } elseif ($exitCode -ne 0) { 'build_failed' } else { $null }
+
 [ordered]@{
-    status = if ($exitCode -eq 0) { 'succeeded' } else { 'failed' }
+    status = $status
     exit_code = $exitCode
+    failure_kind = $failureKind
     duration_seconds = [math]::Round($duration, 3)
     log_path = $logPath
     notable_errors = $errors
+    sandbox_cache_hits = $sandboxCacheHits
     log_tail = $tail
 } | ConvertTo-Json -Depth 6
 
