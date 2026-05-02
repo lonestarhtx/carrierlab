@@ -367,9 +367,17 @@ struct FCarrierLabPhaseIIMaterialLedgerMetrics
 	double SubductionContinentalGain = 0.0;
 	double GapFillContinentalLoss = 0.0;
 	double GapFillContinentalGain = 0.0;
+	double UnresolvedSameMaterialContinentalLoss = 0.0;
+	double UnresolvedSameMaterialContinentalGain = 0.0;
 	double UnresolvedSameMaterialContinentalDelta = 0.0;
+	double UnresolvedTripleJunctionContinentalLoss = 0.0;
+	double UnresolvedTripleJunctionContinentalGain = 0.0;
 	double UnresolvedTripleJunctionContinentalDelta = 0.0;
+	double UnresolvedMixedMaterialContinentalLoss = 0.0;
+	double UnresolvedMixedMaterialContinentalGain = 0.0;
 	double UnresolvedMixedMaterialContinentalDelta = 0.0;
+	double FilterExhaustedContinentalLoss = 0.0;
+	double FilterExhaustedContinentalGain = 0.0;
 	double FilterExhaustedContinentalDelta = 0.0;
 	double MaxPerPlateContinentalResidual = 0.0;
 	int32 MaxPerPlateContinentalResidualPlateId = INDEX_NONE;

@@ -2023,18 +2023,22 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				break;
 			case ECarrierLabPhaseIIMaterialEventClass::UnresolvedSameMaterialMultiHit:
 				++LedgerMetrics.UnresolvedSameMaterialRecordCount;
+				AddLossGain(ContinentalDelta, LedgerMetrics.UnresolvedSameMaterialContinentalLoss, LedgerMetrics.UnresolvedSameMaterialContinentalGain);
 				LedgerMetrics.UnresolvedSameMaterialContinentalDelta += ContinentalDelta;
 				break;
 			case ECarrierLabPhaseIIMaterialEventClass::UnresolvedTripleJunctionMultiHit:
 				++LedgerMetrics.UnresolvedTripleJunctionRecordCount;
+				AddLossGain(ContinentalDelta, LedgerMetrics.UnresolvedTripleJunctionContinentalLoss, LedgerMetrics.UnresolvedTripleJunctionContinentalGain);
 				LedgerMetrics.UnresolvedTripleJunctionContinentalDelta += ContinentalDelta;
 				break;
 			case ECarrierLabPhaseIIMaterialEventClass::UnresolvedMixedMaterialMultiHit:
 				++LedgerMetrics.UnresolvedMixedMaterialRecordCount;
+				AddLossGain(ContinentalDelta, LedgerMetrics.UnresolvedMixedMaterialContinentalLoss, LedgerMetrics.UnresolvedMixedMaterialContinentalGain);
 				LedgerMetrics.UnresolvedMixedMaterialContinentalDelta += ContinentalDelta;
 				break;
 			case ECarrierLabPhaseIIMaterialEventClass::FilterExhaustedUnknown:
 				++LedgerMetrics.FilterExhaustedRecordCount;
+				AddLossGain(ContinentalDelta, LedgerMetrics.FilterExhaustedContinentalLoss, LedgerMetrics.FilterExhaustedContinentalGain);
 				LedgerMetrics.FilterExhaustedContinentalDelta += ContinentalDelta;
 				break;
 			case ECarrierLabPhaseIIMaterialEventClass::Preserved:
