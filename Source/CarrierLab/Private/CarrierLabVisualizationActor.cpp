@@ -297,6 +297,11 @@ namespace
 		return (static_cast<uint64>(MinPlateId) << 32) | static_cast<uint64>(MaxPlateId);
 	}
 
+	uint64 MakePlateTriangleKey(const int32 PlateId, const int32 LocalTriangleId)
+	{
+		return (static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) | static_cast<uint32>(LocalTriangleId);
+	}
+
 	void DecodePlatePairKey(const uint64 Key, int32& OutA, int32& OutB)
 	{
 		OutA = static_cast<int32>(static_cast<uint32>(Key >> 32));
@@ -2130,11 +2135,6 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	OutMetrics.ProjectionHashBefore = CurrentMetrics.LastHash;
 	OutMetrics.StateHashBefore = CurrentMetrics.StateHash;
 
-	auto TriangleKey = [](const int32 PlateId, const int32 LocalTriangleId) -> uint64
-	{
-		return (static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) | static_cast<uint32>(LocalTriangleId);
-	};
-
 	TMap<uint64, const FCarrierLabPhaseIITriangleLabelRecord*> SubductingLabelsByTriangle;
 	for (const FCarrierLabPhaseIITriangleLabelRecord& Label : Labels)
 	{
@@ -2157,11 +2157,31 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 		}
 
 		++OutMetrics.SubductingLabelInputCount;
-		const uint64 Key = TriangleKey(Label.PlateId, Label.LocalTriangleId);
+		const uint64 Key = MakePlateTriangleKey(Label.PlateId, Label.LocalTriangleId);
 		const FCarrierLabPhaseIITriangleLabelRecord** Existing = SubductingLabelsByTriangle.Find(Key);
 		if (Existing == nullptr || (*Existing != nullptr && Label.LabelId < (*Existing)->LabelId))
 		{
 			SubductingLabelsByTriangle.Add(Key, &Label);
+		}
+	}
+
+	TMap<uint64, const CarrierLab::FConvergenceSubductingTriangleMark*> PersistentMarksByTriangle;
+	if (bEnablePhaseIIICSubductingMarks)
+	{
+		for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+		{
+			if (!State.Plates.IsValidIndex(Mark.PlateId) ||
+				!State.Plates[Mark.PlateId].LocalTriangles.IsValidIndex(Mark.LocalTriangleId))
+			{
+				continue;
+			}
+			++OutMetrics.PersistentSubductingMarkInputCount;
+			const uint64 Key = MakePlateTriangleKey(Mark.PlateId, Mark.LocalTriangleId);
+			const CarrierLab::FConvergenceSubductingTriangleMark** Existing = PersistentMarksByTriangle.Find(Key);
+			if (Existing == nullptr || (*Existing != nullptr && Mark.MarkId < (*Existing)->MarkId))
+			{
+				PersistentMarksByTriangle.Add(Key, &Mark);
+			}
 		}
 	}
 
@@ -2373,20 +2393,26 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 		RemainingCandidates.Reset(Candidates.Num());
 		for (const FCarrierLabVizCandidate& Candidate : Candidates)
 		{
-			const FCarrierLabPhaseIITriangleLabelRecord* const* LabelPtr = SubductingLabelsByTriangle.Find(TriangleKey(Candidate.PlateId, Candidate.LocalTriangleId));
-			if (LabelPtr != nullptr && *LabelPtr != nullptr)
+			const uint64 CandidateTriangleKey = MakePlateTriangleKey(Candidate.PlateId, Candidate.LocalTriangleId);
+			const FCarrierLabPhaseIITriangleLabelRecord* const* LabelPtr = SubductingLabelsByTriangle.Find(CandidateTriangleKey);
+			const CarrierLab::FConvergenceSubductingTriangleMark* const* PersistentMarkPtr = PersistentMarksByTriangle.Find(CandidateTriangleKey);
+			if ((LabelPtr != nullptr && *LabelPtr != nullptr) ||
+				(PersistentMarkPtr != nullptr && *PersistentMarkPtr != nullptr))
 			{
 				++FilteredCandidateCount;
 				++OutMetrics.FilteredCandidateCount;
 				SamplesWithFilteredCandidates.Add(Sample.Id);
-				const FCarrierLabPhaseIITriangleLabelRecord& Label = **LabelPtr;
+				const FCarrierLabPhaseIITriangleLabelRecord* Label = LabelPtr != nullptr ? *LabelPtr : nullptr;
+				const CarrierLab::FConvergenceSubductingTriangleMark* Mark = PersistentMarkPtr != nullptr ? *PersistentMarkPtr : nullptr;
+				const int32 SourceContactId = Label != nullptr ? Label->ContactId : (Mark != nullptr ? Mark->EvidenceId : INDEX_NONE);
+				const int32 SourceLabelId = Label != nullptr ? Label->LabelId : INDEX_NONE;
 				if (MaterialSourceContactIdBySample.IsValidIndex(Sample.Id) &&
 					MaterialSourceContactIdBySample[Sample.Id] == INDEX_NONE)
 				{
-					MaterialSourceContactIdBySample[Sample.Id] = Label.ContactId;
-					MaterialSourceLabelIdBySample[Sample.Id] = Label.LabelId;
+					MaterialSourceContactIdBySample[Sample.Id] = SourceContactId;
+					MaterialSourceLabelIdBySample[Sample.Id] = SourceLabelId;
 				}
-				if (Label.bFromThirdPlateContact)
+				if (Label != nullptr && Label->bFromThirdPlateContact)
 				{
 					++OutMetrics.DecisionsFromThirdPlateLabelCount;
 				}
@@ -2401,8 +2427,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				Decision.FilteredCandidateCount = FilteredCandidateCount;
 				Decision.FilteredPlateId = Candidate.PlateId;
 				Decision.FilteredLocalTriangleId = Candidate.LocalTriangleId;
-				Decision.SourceContactId = Label.ContactId;
-				Decision.SourceLabelId = Label.LabelId;
+				Decision.SourceContactId = SourceContactId;
+				Decision.SourceLabelId = SourceLabelId;
 				Decision.bBoundaryEvidence = bAnyBoundary || Candidate.bBoundary;
 				Decision.bThirdPlateEvidence = RawPlateCount >= 3;
 				Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::CandidateFiltered;
@@ -3822,6 +3848,103 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB7HashClosureAudit(FCarrierLabPha
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIC1SubductingMarkAudit(FCarrierLabPhaseIIIC1SubductingMarkAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIC1SubductingMarkAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.bEnabled = bEnablePhaseIIICSubductingMarks;
+	OutAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	OutAudit.DuplicateMarkCount = State.ConvergenceSubductingTriangleMarkDuplicateCount;
+	OutAudit.InvalidMarkCount = State.ConvergenceSubductingTriangleMarkInvalidCount;
+
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+
+	TSet<uint64> SeenTriangleKeys;
+	TArray<CarrierLab::FConvergenceSubductingTriangleMark> SortedMarks = State.ConvergenceSubductingTriangleMarks;
+	SortedMarks.Sort([](
+		const CarrierLab::FConvergenceSubductingTriangleMark& A,
+		const CarrierLab::FConvergenceSubductingTriangleMark& B)
+	{
+		if (A.PlateId != B.PlateId)
+		{
+			return A.PlateId < B.PlateId;
+		}
+		if (A.LocalTriangleId != B.LocalTriangleId)
+		{
+			return A.LocalTriangleId < B.LocalTriangleId;
+		}
+		return A.MarkId < B.MarkId;
+	});
+
+	uint64 MarkHash = 1469598103934665603ull;
+	HashMix(MarkHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(MarkHash, static_cast<uint64>(OutAudit.EventCount + 1));
+	HashMix(MarkHash, static_cast<uint64>(OutAudit.ResetSerial + 1));
+	HashMix(MarkHash, OutAudit.bEnabled ? 1ull : 0ull);
+	HashMix(MarkHash, static_cast<uint64>(SortedMarks.Num() + 1));
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : SortedMarks)
+	{
+		const uint64 TriangleKey = MakePlateTriangleKey(Mark.PlateId, Mark.LocalTriangleId);
+		if (SeenTriangleKeys.Contains(TriangleKey))
+		{
+			++OutAudit.DuplicateMarkCount;
+		}
+		SeenTriangleKeys.Add(TriangleKey);
+		if (!State.Plates.IsValidIndex(Mark.PlateId) ||
+			!State.Plates[Mark.PlateId].LocalTriangles.IsValidIndex(Mark.LocalTriangleId))
+		{
+			++OutAudit.InvalidMarkCount;
+		}
+
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Mark.PairKey);
+		if (Decision == nullptr || !IsSubductionPolarityDecision(*Decision))
+		{
+			++OutAudit.NonSubductionDecisionCount;
+		}
+		else if (Decision->UnderPlate != Mark.PlateId)
+		{
+			++OutAudit.UnderPlateMismatchCount;
+		}
+
+		HashMix(MarkHash, static_cast<uint64>(Mark.MarkId + 1));
+		HashMix(MarkHash, Mark.PairKey + 1ull);
+		HashMix(MarkHash, static_cast<uint64>(Mark.PlateId + 1));
+		HashMix(MarkHash, static_cast<uint64>(Mark.OtherPlateId + 1));
+		HashMix(MarkHash, static_cast<uint64>(Mark.LocalTriangleId + 1));
+		HashMix(MarkHash, static_cast<uint64>(Mark.EvidenceId + 1));
+		HashMixDouble(MarkHash, Mark.SignedConvergenceVelocity);
+		HashMix(MarkHash, static_cast<uint64>(Mark.DecisionClass) + 1ull);
+
+		if (OutAudit.Records.Num() < 16)
+		{
+			FCarrierLabPhaseIIIC1SubductingMarkAuditRecord& Record = OutAudit.Records.AddDefaulted_GetRef();
+			Record.MarkId = Mark.MarkId;
+			Record.PairKey = Mark.PairKey;
+			Record.PlateId = Mark.PlateId;
+			Record.OtherPlateId = Mark.OtherPlateId;
+			Record.LocalTriangleId = Mark.LocalTriangleId;
+			Record.EvidenceId = Mark.EvidenceId;
+			Record.SignedConvergenceVelocity = Mark.SignedConvergenceVelocity;
+			Record.DecisionClass = Mark.DecisionClass;
+		}
+	}
+
+	OutAudit.SubductingMarkHash = HashToString(MarkHash);
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())
@@ -3909,6 +4032,7 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(F
 	State.ConvergenceSubductionPolarityDecisions.Reset();
 	State.ConvergenceSubductionTriangleHits.Reset();
 	State.ConvergenceSubductionMatrixEvidence.Reset();
+	State.ConvergenceSubductingTriangleMarks.Reset();
 	State.ConvergenceSubductionMatrixRayTestCount = 1;
 	State.ConvergenceSubductionMatrixHitCount = 0;
 	State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
@@ -3918,6 +4042,8 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(F
 	State.ConvergenceNeighborPropagationDuplicateCount = 0;
 	State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
 	State.ConvergenceNeighborPropagationInvalidCount = 0;
+	State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
+	State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
 
 	CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence =
 		State.ConvergenceSubductionMatrixEvidence.AddDefaulted_GetRef();
@@ -4030,6 +4156,7 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			State.ConvergenceSubductionPolarityDecisions.Reset();
 			State.ConvergenceSubductionTriangleHits.Reset();
 			State.ConvergenceSubductionMatrixEvidence.Reset();
+			State.ConvergenceSubductingTriangleMarks.Reset();
 			State.ConvergenceSubductionMatrixRayTestCount = 0;
 			State.ConvergenceSubductionMatrixHitCount = 1;
 			State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
@@ -4039,6 +4166,8 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			State.ConvergenceNeighborPropagationDuplicateCount = 0;
 			State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
 			State.ConvergenceNeighborPropagationInvalidCount = 0;
+			State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
+			State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
 
 			CarrierLab::FConvergenceSubductionTriangleHit& TriangleHit = State.ConvergenceSubductionTriangleHits.AddDefaulted_GetRef();
 			TriangleHit.PairKey = PairKey;
@@ -4729,6 +4858,58 @@ void ACarrierLabVisualizationActor::UpdateConvergenceNeighborPropagation()
 	}
 }
 
+void ACarrierLabVisualizationActor::UpdatePhaseIIICSubductingTriangleMarks()
+{
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+
+	TSet<uint64> ExistingTriangleKeys;
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		ExistingTriangleKeys.Add(MakePlateTriangleKey(Mark.PlateId, Mark.LocalTriangleId));
+	}
+
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : State.ConvergenceSubductionTriangleHits)
+	{
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision == nullptr || !IsSubductionPolarityDecision(*Decision))
+		{
+			continue;
+		}
+		if (Decision->UnderPlate != Hit.PlateId)
+		{
+			continue;
+		}
+		if (!State.Plates.IsValidIndex(Hit.PlateId) ||
+			!State.Plates[Hit.PlateId].LocalTriangles.IsValidIndex(Hit.LocalTriangleId))
+		{
+			++State.ConvergenceSubductingTriangleMarkInvalidCount;
+			continue;
+		}
+
+		const uint64 TriangleKey = MakePlateTriangleKey(Hit.PlateId, Hit.LocalTriangleId);
+		if (ExistingTriangleKeys.Contains(TriangleKey))
+		{
+			++State.ConvergenceSubductingTriangleMarkDuplicateCount;
+			continue;
+		}
+
+		CarrierLab::FConvergenceSubductingTriangleMark& Mark = State.ConvergenceSubductingTriangleMarks.AddDefaulted_GetRef();
+		Mark.MarkId = State.ConvergenceSubductingTriangleMarks.Num() - 1;
+		Mark.PairKey = Hit.PairKey;
+		Mark.PlateId = Hit.PlateId;
+		Mark.OtherPlateId = Hit.OtherPlateId;
+		Mark.LocalTriangleId = Hit.LocalTriangleId;
+		Mark.EvidenceId = Hit.EvidenceId;
+		Mark.SignedConvergenceVelocity = Hit.SignedConvergenceVelocity;
+		Mark.DecisionClass = Decision->DecisionClass;
+		ExistingTriangleKeys.Add(TriangleKey);
+	}
+}
+
 void ACarrierLabVisualizationActor::AdvanceOneStep()
 {
 	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -4753,6 +4934,10 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	UpdateConvergenceSubductionMatrix();
 	UpdateConvergenceSubductionPolarityDecisions();
 	UpdateConvergenceNeighborPropagation();
+	if (bEnablePhaseIIICSubductingMarks)
+	{
+		UpdatePhaseIIICSubductingTriangleMarks();
+	}
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;

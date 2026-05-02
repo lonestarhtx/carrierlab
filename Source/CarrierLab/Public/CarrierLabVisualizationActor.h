@@ -426,6 +426,7 @@ struct FCarrierLabPhaseIIResamplingFilterMetrics
 	int32 RawMissSampleCount = 0;
 	int32 RawThirdPlateSampleCount = 0;
 	int32 SubductingLabelInputCount = 0;
+	int32 PersistentSubductingMarkInputCount = 0;
 	int32 AmbiguousLabelInputCount = 0;
 	int32 ThirdPlateLabelInputCount = 0;
 	int32 FilteredCandidateCount = 0;
@@ -667,6 +668,34 @@ struct FCarrierLabPhaseIIIB7HashClosureAudit
 	bool bMetricsHashMatchesComputed = false;
 };
 
+struct FCarrierLabPhaseIIIC1SubductingMarkAuditRecord
+{
+	int32 MarkId = INDEX_NONE;
+	uint64 PairKey = 0;
+	int32 PlateId = INDEX_NONE;
+	int32 OtherPlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	int32 EvidenceId = INDEX_NONE;
+	double SignedConvergenceVelocity = 0.0;
+	CarrierLab::EConvergenceSubductionPolarityClass DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::None;
+};
+
+struct FCarrierLabPhaseIIIC1SubductingMarkAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	bool bEnabled = false;
+	int32 MarkCount = 0;
+	int32 DuplicateMarkCount = 0;
+	int32 InvalidMarkCount = 0;
+	int32 UnderPlateMismatchCount = 0;
+	int32 NonSubductionDecisionCount = 0;
+	TArray<FCarrierLabPhaseIIIC1SubductingMarkAuditRecord> Records;
+	FString SubductingMarkHash;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -711,6 +740,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Policy")
 	int32 RandomTieBreakSeed = 915042;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	bool bEnablePhaseIIICSubductingMarks = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
 	bool bAutoInitialize = true;
@@ -853,6 +885,7 @@ public:
 	bool GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseIIIB4PolarityAudit& OutAudit) const;
 	bool GetPhaseIIIB6NeighborPropagationAudit(FCarrierLabPhaseIIIB6NeighborPropagationAudit& OutAudit) const;
 	bool GetPhaseIIIB7HashClosureAudit(FCarrierLabPhaseIIIB7HashClosureAudit& OutAudit) const;
+	bool GetPhaseIIIC1SubductingMarkAudit(FCarrierLabPhaseIIIC1SubductingMarkAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
 	bool SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit);
@@ -867,6 +900,7 @@ private:
 	void UpdateConvergenceSubductionMatrix();
 	void UpdateConvergenceSubductionPolarityDecisions();
 	void UpdateConvergenceNeighborPropagation();
+	void UpdatePhaseIIICSubductingTriangleMarks();
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);

@@ -451,6 +451,7 @@ namespace CarrierLab
 		State.ConvergenceSubductionPolarityDecisions.Reset();
 		State.ConvergenceSubductionTriangleHits.Reset();
 		State.ConvergenceSubductionMatrixEvidence.Reset();
+		State.ConvergenceSubductingTriangleMarks.Reset();
 		State.ConvergenceTrackingDistanceCullCount = 0;
 		State.ConvergenceSubductionMatrixRayTestCount = 0;
 		State.ConvergenceSubductionMatrixHitCount = 0;
@@ -461,6 +462,8 @@ namespace CarrierLab
 		State.ConvergenceNeighborPropagationDuplicateCount = 0;
 		State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
 		State.ConvergenceNeighborPropagationInvalidCount = 0;
+		State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
+		State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
 
 		for (FCarrierPlate& Plate : State.Plates)
 		{
