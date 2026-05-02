@@ -75,6 +75,7 @@ namespace CarrierLab
 		TArray<FCarrierVertex> Vertices;
 		TArray<FCarrierPlateTriangle> LocalTriangles;
 		TArray<int32> ActiveBoundaryTriangles;
+		TArray<double> ActiveBoundaryTriangleDistancesKm;
 		TMap<int32, int32> GlobalSampleIdToLocalVertexId;
 	};
 
@@ -88,6 +89,7 @@ namespace CarrierLab
 		TArray<TArray<int32>> SampleNeighborIds;
 		TArray<TArray<FCarrierRayTriangleRef>> SampleRayCandidateTriangles;
 		int32 ConvergenceTrackingResetSerial = 0;
+		int32 ConvergenceTrackingDistanceCullCount = 0;
 	};
 
 	enum class EStage0MissClass : uint8

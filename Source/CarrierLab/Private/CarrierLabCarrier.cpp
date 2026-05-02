@@ -447,12 +447,14 @@ namespace CarrierLab
 	{
 		State.SampleRayCandidateTriangles.Reset();
 		State.SampleRayCandidateTriangles.SetNum(State.Samples.Num());
+		State.ConvergenceTrackingDistanceCullCount = 0;
 
 		for (FCarrierPlate& Plate : State.Plates)
 		{
 			Plate.Vertices.Reset();
 			Plate.LocalTriangles.Reset();
 			Plate.ActiveBoundaryTriangles.Reset();
+			Plate.ActiveBoundaryTriangleDistancesKm.Reset();
 			Plate.GlobalSampleIdToLocalVertexId.Reset();
 		}
 
@@ -475,6 +477,7 @@ namespace CarrierLab
 			if (LocalTriangle.bBoundary)
 			{
 				Plate.ActiveBoundaryTriangles.Add(LocalTriangleId);
+				Plate.ActiveBoundaryTriangleDistancesKm.Add(0.0);
 			}
 
 			const int32 SourceVerts[3] = {Triangle.A, Triangle.B, Triangle.C};
@@ -579,6 +582,7 @@ namespace CarrierLab
 			Plate.Vertices.Reset();
 			Plate.LocalTriangles.Reset();
 			Plate.ActiveBoundaryTriangles.Reset();
+			Plate.ActiveBoundaryTriangleDistancesKm.Reset();
 			Plate.GlobalSampleIdToLocalVertexId.Reset();
 		}
 

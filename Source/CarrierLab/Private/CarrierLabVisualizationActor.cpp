@@ -27,6 +27,7 @@ namespace
 	constexpr double DeltaTimeMa = 2.0;
 	constexpr double BoundaryBarycentricEpsilon = 1.0e-7;
 	constexpr double PhaseIIContactVelocityMargin = 1.0e-6;
+	constexpr double PhaseIIIBDistanceToFrontLimitKm = 1800.0;
 	constexpr int32 BoundaryLonBins = 72;
 	constexpr int32 BoundaryLatBins = 36;
 	constexpr int32 BoundarySearchRadiusBins = 2;
@@ -139,22 +140,56 @@ namespace
 	{
 		uint64 Hash = 1469598103934665603ull;
 		HashMix(Hash, static_cast<uint64>(State.ConvergenceTrackingResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(State.ConvergenceTrackingDistanceCullCount + 1));
 		HashMix(Hash, static_cast<uint64>(State.Plates.Num() + 1));
 		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 		{
 			HashMix(Hash, static_cast<uint64>(Plate.PlateId + 1));
 			HashMix(Hash, static_cast<uint64>(Plate.ActiveBoundaryTriangles.Num() + 1));
-			for (const int32 LocalTriangleId : Plate.ActiveBoundaryTriangles)
+			HashMix(Hash, static_cast<uint64>(Plate.ActiveBoundaryTriangleDistancesKm.Num() + 1));
+			for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
 			{
+				const int32 LocalTriangleId = Plate.ActiveBoundaryTriangles[ActiveIndex];
 				HashMix(Hash, static_cast<uint64>(LocalTriangleId + 1));
 				const CarrierLab::FCarrierPlateTriangle* Triangle = Plate.LocalTriangles.IsValidIndex(LocalTriangleId)
 					? &Plate.LocalTriangles[LocalTriangleId]
 					: nullptr;
 				HashMix(Hash, static_cast<uint64>((Triangle != nullptr ? Triangle->SourceTriangleId : INDEX_NONE) + 1));
 				HashMix(Hash, Triangle != nullptr && Triangle->bBoundary ? 1ull : 0ull);
+				HashMixDouble(Hash, Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(ActiveIndex)
+					? Plate.ActiveBoundaryTriangleDistancesKm[ActiveIndex]
+					: 0.0);
 			}
 		}
 		return Hash;
+	}
+
+	double ComputeActiveTriangleDistanceStepKm(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 LocalTriangleId,
+		const FCarrierLabVisualizationMotion& Motion)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return 0.0;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return 0.0;
+		}
+
+		const FVector3d Barycenter = NormalizeOrFallback(
+			Plate.Vertices[Triangle.A].UnitPosition +
+			Plate.Vertices[Triangle.B].UnitPosition +
+			Plate.Vertices[Triangle.C].UnitPosition,
+			Plate.Vertices[Triangle.A].UnitPosition);
+		const double SinToAxis = FVector3d::CrossProduct(Motion.Axis, Barycenter).Length();
+		const double StepRadians = SinToAxis * FMath::Abs(Motion.AngularSpeedRadiansPerStep);
+		return StepRadians * EarthRadiusKm;
 	}
 
 	bool IntersectRayWithTriangle(
@@ -2928,6 +2963,94 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseI
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIB2DistanceAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.DistanceThresholdKm = PhaseIIIBDistanceToFrontLimitKm;
+	OutAudit.DistanceCulledTriangleCount = State.ConvergenceTrackingDistanceCullCount;
+
+	double DistanceSumKm = 0.0;
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		for (const CarrierLab::FCarrierPlateTriangle& Triangle : Plate.LocalTriangles)
+		{
+			if (Triangle.bBoundary)
+			{
+				++OutAudit.SourceBoundaryTriangleCount;
+			}
+		}
+
+		if (Plate.ActiveBoundaryTriangles.IsEmpty())
+		{
+			++OutAudit.EmptyActivePlateCount;
+		}
+
+		for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
+		{
+			const int32 LocalTriangleId = Plate.ActiveBoundaryTriangles[ActiveIndex];
+			++OutAudit.ActiveBoundaryTriangleCount;
+			if (!Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(ActiveIndex))
+			{
+				++OutAudit.MissingDistanceRecordCount;
+				continue;
+			}
+
+			const double DistanceKm = Plate.ActiveBoundaryTriangleDistancesKm[ActiveIndex];
+			++OutAudit.DistanceRecordCount;
+			if (!FMath::IsFinite(DistanceKm))
+			{
+				++OutAudit.NonFiniteDistanceCount;
+				continue;
+			}
+			if (DistanceKm < 0.0)
+			{
+				++OutAudit.NegativeDistanceCount;
+			}
+			if (DistanceKm > PhaseIIIBDistanceToFrontLimitKm)
+			{
+				++OutAudit.OverThresholdActiveTriangleCount;
+			}
+
+			if (OutAudit.DistanceRecordCount == 1)
+			{
+				OutAudit.MinDistanceKm = DistanceKm;
+				OutAudit.MaxDistanceKm = DistanceKm;
+			}
+			else
+			{
+				OutAudit.MinDistanceKm = FMath::Min(OutAudit.MinDistanceKm, DistanceKm);
+				OutAudit.MaxDistanceKm = FMath::Max(OutAudit.MaxDistanceKm, DistanceKm);
+			}
+			DistanceSumKm += DistanceKm;
+
+			if (OutAudit.ProbePlateId == INDEX_NONE &&
+				Plate.LocalTriangles.IsValidIndex(LocalTriangleId) &&
+				Motions.IsValidIndex(Plate.PlateId))
+			{
+				OutAudit.ProbePlateId = Plate.PlateId;
+				OutAudit.ProbeLocalTriangleId = LocalTriangleId;
+				OutAudit.ProbeDistanceKm = DistanceKm;
+				OutAudit.ProbeStepDistanceKm = ComputeActiveTriangleDistanceStepKm(Plate, LocalTriangleId, Motions[Plate.PlateId]);
+			}
+		}
+	}
+
+	OutAudit.MeanDistanceKm = OutAudit.DistanceRecordCount > 0
+		? DistanceSumKm / static_cast<double>(OutAudit.DistanceRecordCount)
+		: 0.0;
+	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -3220,6 +3343,43 @@ void ACarrierLabVisualizationActor::BindInputControls()
 	InputComponent->BindKey(EKeys::Five, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowBoundaryMaskLayer);
 }
 
+void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
+{
+	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		TArray<int32> KeptActiveTriangles;
+		TArray<double> KeptDistancesKm;
+		KeptActiveTriangles.Reserve(Plate.ActiveBoundaryTriangles.Num());
+		KeptDistancesKm.Reserve(Plate.ActiveBoundaryTriangles.Num());
+
+		const FCarrierLabVisualizationMotion* Motion = Motions.IsValidIndex(Plate.PlateId)
+			? &Motions[Plate.PlateId]
+			: nullptr;
+		for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
+		{
+			const int32 LocalTriangleId = Plate.ActiveBoundaryTriangles[ActiveIndex];
+			const double PreviousDistanceKm = Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(ActiveIndex)
+				? Plate.ActiveBoundaryTriangleDistancesKm[ActiveIndex]
+				: 0.0;
+			const double StepDistanceKm = Motion != nullptr
+				? ComputeActiveTriangleDistanceStepKm(Plate, LocalTriangleId, *Motion)
+				: 0.0;
+			const double NewDistanceKm = PreviousDistanceKm + StepDistanceKm;
+			if (!FMath::IsFinite(NewDistanceKm) || NewDistanceKm > PhaseIIIBDistanceToFrontLimitKm)
+			{
+				++State.ConvergenceTrackingDistanceCullCount;
+				continue;
+			}
+
+			KeptActiveTriangles.Add(LocalTriangleId);
+			KeptDistancesKm.Add(NewDistanceKm);
+		}
+
+		Plate.ActiveBoundaryTriangles = MoveTemp(KeptActiveTriangles);
+		Plate.ActiveBoundaryTriangleDistancesKm = MoveTemp(KeptDistancesKm);
+	}
+}
+
 void ACarrierLabVisualizationActor::AdvanceOneStep()
 {
 	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -3240,6 +3400,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	{
 		Motion.CurrentCenter = NormalizeOrFallback(RotateVector(Motion.CurrentCenter, Motion.Axis, Motion.AngularSpeedRadiansPerStep), Motion.CurrentCenter);
 	}
+	UpdateConvergenceTrackingDistances();
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
