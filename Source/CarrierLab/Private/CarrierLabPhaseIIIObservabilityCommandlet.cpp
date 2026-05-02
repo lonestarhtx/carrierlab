@@ -258,7 +258,7 @@ namespace
 	int32 CountNonBackgroundPixels(const TArray<FColor>& Pixels)
 	{
 		int32 Count = 0;
-		const FColor Background(5, 8, 12, 255);
+		const FColor Background(0, 0, 0, 255);
 		for (const FColor& Pixel : Pixels)
 		{
 			if (Pixel != Background)
@@ -557,7 +557,7 @@ namespace
 		Report += TEXT("# Phase III Observability Map Export Checkpoint\n\n");
 		Report += TEXT("Status: read-only observability patch before IIIC entry reconciliation.\n\n");
 		Report += TEXT("## Scope\n\n");
-		Report += TEXT("This checkpoint exports the Phase III actor-only spatial sanity layers to PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n");
+		Report += TEXT("This checkpoint exports the Phase III actor-only spatial sanity layers to filled Mollweide-style PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n");
 		Report += TEXT("Fixtures:\n\n");
 		for (const FObservabilityScenarioResult& Result : Results)
 		{
@@ -645,9 +645,9 @@ namespace
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
-		Report += TEXT("- `ElevationHeatmap` is expected to show the pre-IIIC zero-elevation baseline; it should become visually informative once IIIC.2/IIIC.3 mutate elevation.\n");
-		Report += TEXT("- `SubductionMask` visualizes IIIB polarity-derived roles from current read-only tracking state; the forced-convergence fixture is the human-inspection map, not persistent IIIC subducting-triangle authority.\n");
-		Report += TEXT("- `DistanceToFrontHeatmap` visualizes active boundary distance-to-front records; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.\n\n");
+		Report += TEXT("- `ElevationHeatmap` uses the filled continental/oceanic base map when elevation is still zero, then overlays positive/negative elevation once IIIC.2/IIIC.3 mutate the scalar field.\n");
+		Report += TEXT("- `SubductionMask` uses the filled base map plus IIIB polarity-derived role overlays; the forced-convergence fixture is the human-inspection map, not persistent IIIC subducting-triangle authority.\n");
+		Report += TEXT("- `DistanceToFrontHeatmap` uses the filled base map plus active boundary distance overlays; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.\n\n");
 		Report += TEXT("## Recommendation\n\n");
 		Report += bOverallPass
 			? TEXT("Go for the docs-only IIIC entry reconciliation checkpoint. These exports are read-only and stable enough to serve as pre-mutation spatial sanity artifacts.\n")

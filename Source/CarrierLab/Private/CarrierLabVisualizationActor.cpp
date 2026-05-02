@@ -30,6 +30,8 @@ namespace
 	constexpr double PhaseIIIBDistanceToFrontLimitKm = 1800.0;
 	constexpr int32 PhaseIIIObservabilityMapWidth = 2048;
 	constexpr int32 PhaseIIIObservabilityMapHeight = 1024;
+	constexpr int32 PhaseIIIObservabilityLookupLonBins = 360;
+	constexpr int32 PhaseIIIObservabilityLookupLatBins = 180;
 	constexpr int32 BoundaryLonBins = 72;
 	constexpr int32 BoundaryLatBins = 36;
 	constexpr int32 BoundarySearchRadiusBins = 2;
@@ -88,6 +90,133 @@ namespace
 	{
 		const double DistanceKmPerStep = VelocityMmPerYear * 1.0e-6 * DeltaTimeMa * 1000000.0;
 		return DistanceKmPerStep / EarthRadiusKm;
+	}
+
+	int32 ObservabilityLookupBin(const int32 LonBin, const int32 LatBin)
+	{
+		const int32 WrappedLon = (LonBin % PhaseIIIObservabilityLookupLonBins + PhaseIIIObservabilityLookupLonBins) % PhaseIIIObservabilityLookupLonBins;
+		const int32 ClampedLat = FMath::Clamp(LatBin, 0, PhaseIIIObservabilityLookupLatBins - 1);
+		return ClampedLat * PhaseIIIObservabilityLookupLonBins + WrappedLon;
+	}
+
+	FIntPoint ObservabilityLookupPixelBin(const FVector3d& UnitPosition)
+	{
+		double Lon = FMath::Atan2(UnitPosition.Y, UnitPosition.X);
+		if (Lon < 0.0)
+		{
+			Lon += UE_DOUBLE_PI * 2.0;
+		}
+		const double Lat = FMath::Asin(FMath::Clamp(UnitPosition.Z, -1.0, 1.0));
+		return FIntPoint(
+			FMath::Clamp(
+				static_cast<int32>(FMath::FloorToDouble((Lon / (UE_DOUBLE_PI * 2.0)) * PhaseIIIObservabilityLookupLonBins)),
+				0,
+				PhaseIIIObservabilityLookupLonBins - 1),
+			FMath::Clamp(
+				static_cast<int32>(FMath::FloorToDouble(((Lat + UE_DOUBLE_PI * 0.5) / UE_DOUBLE_PI) * PhaseIIIObservabilityLookupLatBins)),
+				0,
+				PhaseIIIObservabilityLookupLatBins - 1));
+	}
+
+	bool InverseMollweidePixel(const int32 X, const int32 Y, FVector3d& OutUnitPosition)
+	{
+		const double NormalizedX = 2.0 * (static_cast<double>(X) + 0.5) / static_cast<double>(PhaseIIIObservabilityMapWidth) - 1.0;
+		const double NormalizedY = 1.0 - 2.0 * (static_cast<double>(Y) + 0.5) / static_cast<double>(PhaseIIIObservabilityMapHeight);
+		if (NormalizedX * NormalizedX + NormalizedY * NormalizedY > 1.0)
+		{
+			return false;
+		}
+
+		const double Theta = FMath::Asin(FMath::Clamp(NormalizedY, -1.0, 1.0));
+		const double CosTheta = FMath::Cos(Theta);
+		const double Longitude = FMath::Abs(CosTheta) > 1.0e-10
+			? FMath::Clamp(UE_DOUBLE_PI * NormalizedX / CosTheta, -UE_DOUBLE_PI, UE_DOUBLE_PI)
+			: 0.0;
+		const double LatitudeArgument = FMath::Clamp((2.0 * Theta + FMath::Sin(2.0 * Theta)) / UE_DOUBLE_PI, -1.0, 1.0);
+		const double Latitude = FMath::Asin(LatitudeArgument);
+		const double CosLatitude = FMath::Cos(Latitude);
+		OutUnitPosition = FVector3d(
+			CosLatitude * FMath::Cos(Longitude),
+			CosLatitude * FMath::Sin(Longitude),
+			FMath::Sin(Latitude));
+		return true;
+	}
+
+	int32 FindNearestObservabilitySample(
+		const FVector3d& UnitPosition,
+		const TArray<CarrierLab::FSphereSample>& Samples,
+		const TArray<TArray<int32>>& SampleBins)
+	{
+		const FIntPoint Bin = ObservabilityLookupPixelBin(UnitPosition);
+		double BestDot = -TNumericLimits<double>::Max();
+		int32 BestSampleId = INDEX_NONE;
+
+		for (int32 Radius = 0; Radius <= 4 && BestSampleId == INDEX_NONE; ++Radius)
+		{
+			for (int32 LatOffset = -Radius; LatOffset <= Radius; ++LatOffset)
+			{
+				const int32 LatBin = Bin.Y + LatOffset;
+				if (LatBin < 0 || LatBin >= PhaseIIIObservabilityLookupLatBins)
+				{
+					continue;
+				}
+				for (int32 LonOffset = -Radius; LonOffset <= Radius; ++LonOffset)
+				{
+					if (FMath::Max(FMath::Abs(LonOffset), FMath::Abs(LatOffset)) != Radius)
+					{
+						continue;
+					}
+					const TArray<int32>& Candidates = SampleBins[ObservabilityLookupBin(Bin.X + LonOffset, LatBin)];
+					for (const int32 SampleId : Candidates)
+					{
+						if (!Samples.IsValidIndex(SampleId))
+						{
+							continue;
+						}
+						const double Dot = FVector3d::DotProduct(UnitPosition, Samples[SampleId].UnitPosition);
+						if (Dot > BestDot)
+						{
+							BestDot = Dot;
+							BestSampleId = SampleId;
+						}
+					}
+				}
+			}
+		}
+
+		if (BestSampleId != INDEX_NONE)
+		{
+			return BestSampleId;
+		}
+
+		for (const CarrierLab::FSphereSample& Sample : Samples)
+		{
+			const double Dot = FVector3d::DotProduct(UnitPosition, Sample.UnitPosition);
+			if (Dot > BestDot)
+			{
+				BestDot = Dot;
+				BestSampleId = Sample.Id;
+			}
+		}
+		return BestSampleId;
+	}
+
+	FLinearColor DimMapBase(const FLinearColor& Color)
+	{
+		return FLinearColor(
+			FMath::Clamp(Color.R * 0.62f, 0.0f, 1.0f),
+			FMath::Clamp(Color.G * 0.62f, 0.0f, 1.0f),
+			FMath::Clamp(Color.B * 0.62f, 0.0f, 1.0f),
+			1.0f);
+	}
+
+	FLinearColor BlendMapOverlay(const FLinearColor& Base, const FLinearColor& Overlay, const float Alpha = 0.82f)
+	{
+		return FLinearColor(
+			FMath::Lerp(Base.R, Overlay.R, Alpha),
+			FMath::Lerp(Base.G, Overlay.G, Alpha),
+			FMath::Lerp(Base.B, Overlay.B, Alpha),
+			1.0f);
 	}
 
 	FIntPoint ObservabilitySamplePixel(const FVector3d& UnitPosition)
@@ -5094,13 +5223,69 @@ bool ACarrierLabVisualizationActor::BuildVisualizationLayerMap(
 
 	OutWidth = PhaseIIIObservabilityMapWidth;
 	OutHeight = PhaseIIIObservabilityMapHeight;
-	OutPixels.Init(FColor(5, 8, 12, 255), OutWidth * OutHeight);
-	const int32 Radius = State.Samples.Num() <= 100000 ? 1 : 0;
+	OutPixels.Init(FColor(0, 0, 0, 255), OutWidth * OutHeight);
+
+	TArray<TArray<int32>> SampleBins;
+	SampleBins.SetNum(PhaseIIIObservabilityLookupLonBins * PhaseIIIObservabilityLookupLatBins);
 	for (const CarrierLab::FSphereSample& Sample : State.Samples)
 	{
-		FColor Color = ColorForSampleLayer(Sample.Id, Layer).ToFColor(true);
-		Color.A = 255;
-		PaintObservabilitySample(OutPixels, ObservabilitySamplePixel(Sample.UnitPosition), Color, Radius);
+		if (!State.Samples.IsValidIndex(Sample.Id))
+		{
+			continue;
+		}
+		const FIntPoint Bin = ObservabilityLookupPixelBin(Sample.UnitPosition);
+		SampleBins[ObservabilityLookupBin(Bin.X, Bin.Y)].Add(Sample.Id);
+	}
+
+	auto MapColorForSample = [this, Layer](const int32 SampleId)
+	{
+		const FLinearColor Base = ContinentalColor(RenderContinentalFractions.IsValidIndex(SampleId) ? RenderContinentalFractions[SampleId] : 0.0);
+		switch (Layer)
+		{
+		case ECarrierLabVisualizationLayer::ElevationHeatmap:
+		{
+			const double ElevationKm = State.Samples.IsValidIndex(SampleId) ? State.Samples[SampleId].Elevation : 0.0;
+			return FMath::Abs(ElevationKm) <= 1.0e-9
+				? Base
+				: BlendMapOverlay(DimMapBase(Base), ElevationColor(ElevationKm));
+		}
+		case ECarrierLabVisualizationLayer::SubductionMask:
+		{
+			const uint8 Role = SubductionRoleMask.IsValidIndex(SampleId) ? SubductionRoleMask[SampleId] : 0;
+			return Role == 0 ? DimMapBase(Base) : BlendMapOverlay(DimMapBase(Base), SubductionRoleColor(Role));
+		}
+		case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
+		{
+			const double DistanceKm = DistanceToFrontKmBySample.IsValidIndex(SampleId) ? DistanceToFrontKmBySample[SampleId] : -1.0;
+			return (DistanceKm < 0.0 || !FMath::IsFinite(DistanceKm))
+				? DimMapBase(Base)
+				: BlendMapOverlay(DimMapBase(Base), DistanceToFrontColor(DistanceKm));
+		}
+		default:
+			return ColorForSampleLayer(SampleId, Layer);
+		}
+	};
+
+	for (int32 Y = 0; Y < OutHeight; ++Y)
+	{
+		for (int32 X = 0; X < OutWidth; ++X)
+		{
+			FVector3d UnitPosition;
+			if (!InverseMollweidePixel(X, Y, UnitPosition))
+			{
+				continue;
+			}
+
+			const int32 SampleId = FindNearestObservabilitySample(UnitPosition, State.Samples, SampleBins);
+			if (SampleId == INDEX_NONE)
+			{
+				continue;
+			}
+
+			FColor Color = MapColorForSample(SampleId).ToFColor(true);
+			Color.A = 255;
+			OutPixels[Y * OutWidth + X] = Color;
+		}
 	}
 	return true;
 }

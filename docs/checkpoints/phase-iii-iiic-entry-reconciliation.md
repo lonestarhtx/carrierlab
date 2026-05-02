@@ -73,6 +73,8 @@ These gates apply before Phase IIIC can advance beyond each slice checkpoint:
 | Report-claim gate | IIIC reports may claim only subduction/elevation/slab-pull behavior. They may not claim Stage 1.5 carrier success or Slice 5.5 asymmetry resolution. |
 | Stop gate | If IIIC improves projection metrics by weakening authority conservation or depending on projection history, pause for investigation. |
 
+Formula-specific oracle details are intentionally per-slice: IIIC.1 has mark/locality oracles only, while IIIC.3 must restate the uplift formula oracle and IIIC.4 must restate the slab-pull rotation-axis oracle before either slice can land.
+
 ## IIIC.1 Entry Decision
 
 Recommendation: go for IIIC.1 only.

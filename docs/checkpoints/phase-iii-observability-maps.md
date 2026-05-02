@@ -4,7 +4,7 @@ Status: read-only observability patch before IIIC entry reconciliation.
 
 ## Scope
 
-This checkpoint exports the Phase III actor-only spatial sanity layers to PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.
+This checkpoint exports the Phase III actor-only spatial sanity layers to filled Mollweide-style PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.
 
 Fixtures:
 
@@ -15,7 +15,7 @@ Fixtures:
 
 | Gate | Result | Evidence |
 |---|---:|---|
-| map exports written | pass | output root `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z` |
+| map exports written | pass | output root `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z` |
 | `default_40_plate_baseline` export read-only | pass | replay 0 `unchanged hashes`, replay 1 `unchanged hashes` |
 | `default_40_plate_baseline` same-seed map hashes | pass | replay hashes byte-identical per layer |
 | `forced_convergence_mixed` export read-only | pass | replay 0 `unchanged hashes`, replay 1 `unchanged hashes` |
@@ -34,28 +34,29 @@ Fixtures:
 
 | Scenario | Replay | Layer | Hash | Non-background pixels | Path |
 |---|---:|---|---|---:|---|
-| `default_40_plate_baseline` | 0 | `ElevationHeatmap` | `f7cd0d6761fba4c7` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_0/ElevationHeatmap.png` |
-| `default_40_plate_baseline` | 0 | `SubductionMask` | `687449314ef0ccf5` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_0/SubductionMask.png` |
-| `default_40_plate_baseline` | 0 | `DistanceToFrontHeatmap` | `687449314ef0ccf5` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_0/DistanceToFrontHeatmap.png` |
-| `default_40_plate_baseline` | 0 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_0/ContactSheet.png` |
-| `default_40_plate_baseline` | 1 | `ElevationHeatmap` | `f7cd0d6761fba4c7` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_1/ElevationHeatmap.png` |
-| `default_40_plate_baseline` | 1 | `SubductionMask` | `687449314ef0ccf5` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_1/SubductionMask.png` |
-| `default_40_plate_baseline` | 1 | `DistanceToFrontHeatmap` | `687449314ef0ccf5` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_1/DistanceToFrontHeatmap.png` |
-| `default_40_plate_baseline` | 1 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/default_40_plate_baseline/replay_1/ContactSheet.png` |
-| `forced_convergence_mixed` | 0 | `ElevationHeatmap` | `f7cd0d6761fba4c7` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_0/ElevationHeatmap.png` |
-| `forced_convergence_mixed` | 0 | `SubductionMask` | `b98fda446b9db95d` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_0/SubductionMask.png` |
-| `forced_convergence_mixed` | 0 | `DistanceToFrontHeatmap` | `bce0b861492d1000` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_0/DistanceToFrontHeatmap.png` |
-| `forced_convergence_mixed` | 0 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_0/ContactSheet.png` |
-| `forced_convergence_mixed` | 1 | `ElevationHeatmap` | `f7cd0d6761fba4c7` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_1/ElevationHeatmap.png` |
-| `forced_convergence_mixed` | 1 | `SubductionMask` | `b98fda446b9db95d` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_1/SubductionMask.png` |
-| `forced_convergence_mixed` | 1 | `DistanceToFrontHeatmap` | `bce0b861492d1000` | 539913 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_1/DistanceToFrontHeatmap.png` |
-| `forced_convergence_mixed` | 1 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T204636Z/forced_convergence_mixed/replay_1/ContactSheet.png` |
+| `default_40_plate_baseline` | 0 | `ElevationHeatmap` | `a6040b8125a0949a` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_0/ElevationHeatmap.png` |
+| `default_40_plate_baseline` | 0 | `SubductionMask` | `9bce3bfd71b26341` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_0/SubductionMask.png` |
+| `default_40_plate_baseline` | 0 | `DistanceToFrontHeatmap` | `9bce3bfd71b26341` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_0/DistanceToFrontHeatmap.png` |
+| `default_40_plate_baseline` | 0 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_0/ContactSheet.png` |
+| `default_40_plate_baseline` | 1 | `ElevationHeatmap` | `a6040b8125a0949a` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_1/ElevationHeatmap.png` |
+| `default_40_plate_baseline` | 1 | `SubductionMask` | `9bce3bfd71b26341` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_1/SubductionMask.png` |
+| `default_40_plate_baseline` | 1 | `DistanceToFrontHeatmap` | `9bce3bfd71b26341` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_1/DistanceToFrontHeatmap.png` |
+| `default_40_plate_baseline` | 1 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/default_40_plate_baseline/replay_1/ContactSheet.png` |
+| `forced_convergence_mixed` | 0 | `ElevationHeatmap` | `bbf82929834b949e` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_0/ElevationHeatmap.png` |
+| `forced_convergence_mixed` | 0 | `SubductionMask` | `2faf03a80b4e4744` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_0/SubductionMask.png` |
+| `forced_convergence_mixed` | 0 | `DistanceToFrontHeatmap` | `547a4c97791a8b68` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_0/DistanceToFrontHeatmap.png` |
+| `forced_convergence_mixed` | 0 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_0/ContactSheet.png` |
+| `forced_convergence_mixed` | 1 | `ElevationHeatmap` | `bbf82929834b949e` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_1/ElevationHeatmap.png` |
+| `forced_convergence_mixed` | 1 | `SubductionMask` | `2faf03a80b4e4744` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_1/SubductionMask.png` |
+| `forced_convergence_mixed` | 1 | `DistanceToFrontHeatmap` | `547a4c97791a8b68` | 1647140 | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_1/DistanceToFrontHeatmap.png` |
+| `forced_convergence_mixed` | 1 | `ContactSheet` | n/a | n/a | `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/Observability/Maps/20260502T205358Z/forced_convergence_mixed/replay_1/ContactSheet.png` |
 
 ## Interpretation
 
-- `ElevationHeatmap` is expected to show the pre-IIIC zero-elevation baseline; it should become visually informative once IIIC.2/IIIC.3 mutate elevation.
-- `SubductionMask` visualizes IIIB polarity-derived roles from current read-only tracking state; the forced-convergence fixture is the human-inspection map, not persistent IIIC subducting-triangle authority.
-- `DistanceToFrontHeatmap` visualizes active boundary distance-to-front records; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.
+- `ElevationHeatmap` uses the filled continental/oceanic base map when elevation is still zero, then overlays positive/negative elevation once IIIC.2/IIIC.3 mutate the scalar field.
+- `SubductionMask` uses the filled base map plus IIIB polarity-derived role overlays; the forced-convergence fixture is the human-inspection map, not persistent IIIC subducting-triangle authority.
+- `DistanceToFrontHeatmap` uses the filled base map plus active boundary distance overlays; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.
+- Identical `SubductionMask` and `DistanceToFrontHeatmap` hashes under `default_40_plate_baseline` reflect empty IIIB active-triangle/distance state in both overlay layers; the `forced_convergence_mixed` fixture demonstrates the layers diverge as soon as tracking has content.
 
 ## Recommendation
 
