@@ -798,6 +798,58 @@ struct FCarrierLabPhaseIIIC3UpliftAudit
 	TArray<FCarrierLabPhaseIIIC3UpliftAuditRecord> Records;
 };
 
+struct FCarrierLabPhaseIIIC4SlabPullContributionRecord
+{
+	int32 MarkId = INDEX_NONE;
+	int32 PlateId = INDEX_NONE;
+	int32 OtherPlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	FVector3d PlateCenter = FVector3d::ZeroVector;
+	FVector3d FrontBarycenter = FVector3d::ZeroVector;
+	FVector3d ContributionUnit = FVector3d::ZeroVector;
+	double SignedConvergenceVelocity = 0.0;
+};
+
+struct FCarrierLabPhaseIIIC4SlabPullPlateRecord
+{
+	int32 PlateId = INDEX_NONE;
+	int32 ContributionCount = 0;
+	FVector3d OldAxis = FVector3d::UnitZ();
+	FVector3d NewAxis = FVector3d::UnitZ();
+	FVector3d ContributionSum = FVector3d::ZeroVector;
+	double OldAngularSpeedRadiansPerStep = 0.0;
+	double RawAngularSpeedRadiansPerStep = 0.0;
+	double NewAngularSpeedRadiansPerStep = 0.0;
+	double MaxAllowedAngularSpeedRadiansPerStep = 0.0;
+	double NewVelocityMmPerYear = 0.0;
+	bool bClampedToReferenceSpeed = false;
+};
+
+struct FCarrierLabPhaseIIIC4SlabPullAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	bool bMarksEnabled = false;
+	bool bSlabPullEnabled = false;
+	int32 MarkCount = 0;
+	int32 ContributionCount = 0;
+	int32 AffectedPlateCount = 0;
+	int32 InvalidInputCount = 0;
+	double SlabPullSpeedMmPerYear = 8.0;
+	double ReferenceVelocityMmPerYear = 100.0;
+	double SlabPullAngularStep = 0.0;
+	double MaxAllowedAngularStep = 0.0;
+	double MaxOracleResidual = 0.0;
+	double MaxVelocityMmPerYear = 0.0;
+	FString MotionHashBefore;
+	FString MotionHashAfter;
+	FString SlabPullHash;
+	TArray<FCarrierLabPhaseIIIC4SlabPullContributionRecord> Contributions;
+	TArray<FCarrierLabPhaseIIIC4SlabPullPlateRecord> PlateRecords;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -866,6 +918,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICSubductionEffectRadiusKm = 1800.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	bool bEnablePhaseIIICSlabPull = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIICSlabPullSpeedMmPerYear = 8.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
 	bool bAutoInitialize = true;
@@ -1011,6 +1069,7 @@ public:
 	bool GetPhaseIIIC1SubductingMarkAudit(FCarrierLabPhaseIIIC1SubductingMarkAudit& OutAudit) const;
 	bool GetPhaseIIIC2ElevationAudit(FCarrierLabPhaseIIIC2ElevationAudit& OutAudit) const;
 	bool GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const;
+	bool GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
@@ -1029,6 +1088,7 @@ private:
 	void UpdatePhaseIIICSubductingTriangleMarks();
 	bool ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark);
 	void ApplyPhaseIIIC3OverridingPlateUplift();
+	void ApplyPhaseIIIC4SlabPull();
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);
@@ -1055,6 +1115,7 @@ private:
 	TArray<uint8> SubductionRoleMask;
 	TArray<double> DistanceToFrontKmBySample;
 	FCarrierLabPhaseIIIC3UpliftAudit LastPhaseIIIC3UpliftAudit;
+	FCarrierLabPhaseIIIC4SlabPullAudit LastPhaseIIIC4SlabPullAudit;
 	int32 CachedRenderMeshSampleCount = 0;
 	int32 CachedRenderMeshTriangleCount = 0;
 	double StepAccumulator = 0.0;

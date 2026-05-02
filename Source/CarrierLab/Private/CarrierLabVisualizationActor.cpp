@@ -93,6 +93,11 @@ namespace
 		return DistanceKmPerStep / EarthRadiusKm;
 	}
 
+	double VelocityMmPerYearFromAngularSpeed(const double AngularSpeedRadiansPerStep)
+	{
+		return FMath::Abs(AngularSpeedRadiansPerStep) * EarthRadiusKm / DeltaTimeMa;
+	}
+
 	int32 ObservabilityLookupBin(const int32 LonBin, const int32 LatBin)
 	{
 		const int32 WrappedLon = (LonBin % PhaseIIIObservabilityLookupLonBins + PhaseIIIObservabilityLookupLonBins) % PhaseIIIObservabilityLookupLonBins;
@@ -378,6 +383,23 @@ namespace
 	FString HashToString(const uint64 Hash)
 	{
 		return FString::Printf(TEXT("%016llx"), static_cast<unsigned long long>(Hash));
+	}
+
+	FString ComputeMotionStateHash(const TArray<FCarrierLabVisualizationMotion>& Motions)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMix(Hash, static_cast<uint64>(Motions.Num() + 1));
+		for (const FCarrierLabVisualizationMotion& Motion : Motions)
+		{
+			HashMixDouble(Hash, Motion.Axis.X);
+			HashMixDouble(Hash, Motion.Axis.Y);
+			HashMixDouble(Hash, Motion.Axis.Z);
+			HashMixDouble(Hash, Motion.CurrentCenter.X);
+			HashMixDouble(Hash, Motion.CurrentCenter.Y);
+			HashMixDouble(Hash, Motion.CurrentCenter.Z);
+			HashMixDouble(Hash, Motion.AngularSpeedRadiansPerStep);
+		}
+		return HashToString(Hash);
 	}
 
 	uint64 ComputeConvergenceTrackingHash(const CarrierLab::FCarrierState& State)
@@ -1740,6 +1762,7 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	State = MoveTemp(NewState);
 	CurrentMetrics = FCarrierLabVisualizationMetrics();
 	LastPhaseIIIC3UpliftAudit = FCarrierLabPhaseIIIC3UpliftAudit();
+	LastPhaseIIIC4SlabPullAudit = FCarrierLabPhaseIIIC4SlabPullAudit();
 	RenderPlateIds.SetNum(State.Samples.Num());
 	RenderContinentalFractions.SetNum(State.Samples.Num());
 	DriftErrorKmBySample.SetNum(State.Samples.Num());
@@ -4167,6 +4190,24 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIII
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const
+{
+	OutAudit = LastPhaseIIIC4SlabPullAudit;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	OutAudit.bSlabPullEnabled = bEnablePhaseIIICSlabPull;
+	OutAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())
@@ -5421,6 +5462,194 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 	LastPhaseIIIC3UpliftAudit.UpliftHash = HashToString(UpliftHash);
 }
 
+void ACarrierLabVisualizationActor::ApplyPhaseIIIC4SlabPull()
+{
+	LastPhaseIIIC4SlabPullAudit = FCarrierLabPhaseIIIC4SlabPullAudit();
+	LastPhaseIIIC4SlabPullAudit.Step = CurrentMetrics.Step + 1;
+	LastPhaseIIIC4SlabPullAudit.EventCount = CurrentMetrics.EventCount;
+	LastPhaseIIIC4SlabPullAudit.PlateCount = State.Plates.Num();
+	LastPhaseIIIC4SlabPullAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	LastPhaseIIIC4SlabPullAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	LastPhaseIIIC4SlabPullAudit.bSlabPullEnabled = bEnablePhaseIIICSlabPull;
+	LastPhaseIIIC4SlabPullAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	LastPhaseIIIC4SlabPullAudit.SlabPullSpeedMmPerYear = PhaseIIICSlabPullSpeedMmPerYear;
+	LastPhaseIIIC4SlabPullAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	LastPhaseIIIC4SlabPullAudit.SlabPullAngularStep = AngularSpeedRadiansPerStep(PhaseIIICSlabPullSpeedMmPerYear);
+	LastPhaseIIIC4SlabPullAudit.MaxAllowedAngularStep = AngularSpeedRadiansPerStep(PhaseIIICReferenceVelocityMmPerYear);
+	LastPhaseIIIC4SlabPullAudit.MotionHashBefore = ComputeMotionStateHash(Motions);
+
+	uint64 SlabPullHash = 1469598103934665603ull;
+	HashMix(SlabPullHash, static_cast<uint64>(LastPhaseIIIC4SlabPullAudit.Step + 1));
+	HashMix(SlabPullHash, static_cast<uint64>(State.ConvergenceSubductingTriangleMarks.Num() + 1));
+	HashMix(SlabPullHash, bEnablePhaseIIICSlabPull ? 1ull : 0ull);
+	HashMixDouble(SlabPullHash, PhaseIIICSlabPullSpeedMmPerYear);
+	HashMixDouble(SlabPullHash, PhaseIIICReferenceVelocityMmPerYear);
+	HashMixDouble(SlabPullHash, LastPhaseIIIC4SlabPullAudit.SlabPullAngularStep);
+	HashMixDouble(SlabPullHash, LastPhaseIIIC4SlabPullAudit.MaxAllowedAngularStep);
+
+	if (!bEnablePhaseIIICSlabPull ||
+		!bEnablePhaseIIICSubductingMarks ||
+		State.ConvergenceSubductingTriangleMarks.IsEmpty())
+	{
+		LastPhaseIIIC4SlabPullAudit.MotionHashAfter = LastPhaseIIIC4SlabPullAudit.MotionHashBefore;
+		LastPhaseIIIC4SlabPullAudit.SlabPullHash = HashToString(SlabPullHash);
+		return;
+	}
+
+	TMap<int32, FVector3d> ContributionSumsByPlate;
+	TMap<int32, int32> ContributionCountsByPlate;
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		if (!State.Plates.IsValidIndex(Mark.PlateId) ||
+			!State.Plates[Mark.PlateId].LocalTriangles.IsValidIndex(Mark.LocalTriangleId) ||
+			!Motions.IsValidIndex(Mark.PlateId))
+		{
+			++LastPhaseIIIC4SlabPullAudit.InvalidInputCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[Mark.PlateId];
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[Mark.LocalTriangleId];
+		const int32 VertexIds[3] = { Triangle.A, Triangle.B, Triangle.C };
+		FVector3d FrontBarycenter = FVector3d::ZeroVector;
+		bool bAllVerticesValid = true;
+		for (const int32 VertexId : VertexIds)
+		{
+			if (!Plate.Vertices.IsValidIndex(VertexId))
+			{
+				bAllVerticesValid = false;
+				break;
+			}
+			FrontBarycenter += Plate.Vertices[VertexId].UnitPosition;
+		}
+		if (!bAllVerticesValid)
+		{
+			++LastPhaseIIIC4SlabPullAudit.InvalidInputCount;
+			continue;
+		}
+		FrontBarycenter = NormalizeOrFallback(FrontBarycenter, Plate.Vertices[VertexIds[0]].UnitPosition);
+
+		const FVector3d PlateCenter = Motions[Mark.PlateId].CurrentCenter;
+		const FVector3d ContributionRaw = FVector3d::CrossProduct(PlateCenter, FrontBarycenter);
+		if (ContributionRaw.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			++LastPhaseIIIC4SlabPullAudit.InvalidInputCount;
+			continue;
+		}
+		const FVector3d ContributionUnit = ContributionRaw.GetSafeNormal();
+		ContributionSumsByPlate.FindOrAdd(Mark.PlateId) += ContributionUnit;
+		ContributionCountsByPlate.FindOrAdd(Mark.PlateId) += 1;
+		++LastPhaseIIIC4SlabPullAudit.ContributionCount;
+
+		FCarrierLabPhaseIIIC4SlabPullContributionRecord& Record =
+			LastPhaseIIIC4SlabPullAudit.Contributions.AddDefaulted_GetRef();
+		Record.MarkId = Mark.MarkId;
+		Record.PlateId = Mark.PlateId;
+		Record.OtherPlateId = Mark.OtherPlateId;
+		Record.LocalTriangleId = Mark.LocalTriangleId;
+		Record.PlateCenter = PlateCenter;
+		Record.FrontBarycenter = FrontBarycenter;
+		Record.ContributionUnit = ContributionUnit;
+		Record.SignedConvergenceVelocity = Mark.SignedConvergenceVelocity;
+
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.MarkId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.PlateId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.OtherPlateId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.LocalTriangleId + 1));
+		HashMixDouble(SlabPullHash, PlateCenter.X);
+		HashMixDouble(SlabPullHash, PlateCenter.Y);
+		HashMixDouble(SlabPullHash, PlateCenter.Z);
+		HashMixDouble(SlabPullHash, FrontBarycenter.X);
+		HashMixDouble(SlabPullHash, FrontBarycenter.Y);
+		HashMixDouble(SlabPullHash, FrontBarycenter.Z);
+		HashMixDouble(SlabPullHash, ContributionUnit.X);
+		HashMixDouble(SlabPullHash, ContributionUnit.Y);
+		HashMixDouble(SlabPullHash, ContributionUnit.Z);
+		HashMixDouble(SlabPullHash, Mark.SignedConvergenceVelocity);
+	}
+
+	TArray<int32> AffectedPlateIds;
+	ContributionSumsByPlate.GetKeys(AffectedPlateIds);
+	AffectedPlateIds.Sort();
+	LastPhaseIIIC4SlabPullAudit.AffectedPlateCount = AffectedPlateIds.Num();
+	for (const int32 PlateId : AffectedPlateIds)
+	{
+		if (!Motions.IsValidIndex(PlateId))
+		{
+			++LastPhaseIIIC4SlabPullAudit.InvalidInputCount;
+			continue;
+		}
+
+		FCarrierLabVisualizationMotion& Motion = Motions[PlateId];
+		const FVector3d OldAxis = Motion.Axis;
+		const double OldAngularSpeed = Motion.AngularSpeedRadiansPerStep;
+		const FVector3d OldOmega = OldAxis * OldAngularSpeed;
+		const FVector3d ContributionSum = ContributionSumsByPlate[PlateId];
+		const FVector3d RawOmega = OldOmega + ContributionSum * LastPhaseIIIC4SlabPullAudit.SlabPullAngularStep;
+		const double RawAngularSpeed = RawOmega.Size();
+
+		FVector3d NewOmega = RawOmega;
+		bool bClamped = false;
+		if (RawAngularSpeed > LastPhaseIIIC4SlabPullAudit.MaxAllowedAngularStep &&
+			RawAngularSpeed > UE_DOUBLE_SMALL_NUMBER)
+		{
+			NewOmega = RawOmega / RawAngularSpeed * LastPhaseIIIC4SlabPullAudit.MaxAllowedAngularStep;
+			bClamped = true;
+		}
+
+		const double NewAngularSpeed = NewOmega.Size();
+		if (NewAngularSpeed > UE_DOUBLE_SMALL_NUMBER)
+		{
+			Motion.Axis = NewOmega / NewAngularSpeed;
+			Motion.AngularSpeedRadiansPerStep = NewAngularSpeed;
+		}
+		else
+		{
+			Motion.Axis = OldAxis;
+			Motion.AngularSpeedRadiansPerStep = 0.0;
+		}
+
+		const double NewVelocity = VelocityMmPerYearFromAngularSpeed(Motion.AngularSpeedRadiansPerStep);
+		LastPhaseIIIC4SlabPullAudit.MaxVelocityMmPerYear = FMath::Max(
+			LastPhaseIIIC4SlabPullAudit.MaxVelocityMmPerYear,
+			NewVelocity);
+
+		FCarrierLabPhaseIIIC4SlabPullPlateRecord& Record =
+			LastPhaseIIIC4SlabPullAudit.PlateRecords.AddDefaulted_GetRef();
+		Record.PlateId = PlateId;
+		Record.ContributionCount = ContributionCountsByPlate.Contains(PlateId) ? ContributionCountsByPlate[PlateId] : 0;
+		Record.OldAxis = OldAxis;
+		Record.NewAxis = Motion.Axis;
+		Record.ContributionSum = ContributionSum;
+		Record.OldAngularSpeedRadiansPerStep = OldAngularSpeed;
+		Record.RawAngularSpeedRadiansPerStep = RawAngularSpeed;
+		Record.NewAngularSpeedRadiansPerStep = Motion.AngularSpeedRadiansPerStep;
+		Record.MaxAllowedAngularSpeedRadiansPerStep = LastPhaseIIIC4SlabPullAudit.MaxAllowedAngularStep;
+		Record.NewVelocityMmPerYear = NewVelocity;
+		Record.bClampedToReferenceSpeed = bClamped;
+
+		HashMix(SlabPullHash, static_cast<uint64>(PlateId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Record.ContributionCount + 1));
+		HashMixDouble(SlabPullHash, OldAxis.X);
+		HashMixDouble(SlabPullHash, OldAxis.Y);
+		HashMixDouble(SlabPullHash, OldAxis.Z);
+		HashMixDouble(SlabPullHash, OldAngularSpeed);
+		HashMixDouble(SlabPullHash, ContributionSum.X);
+		HashMixDouble(SlabPullHash, ContributionSum.Y);
+		HashMixDouble(SlabPullHash, ContributionSum.Z);
+		HashMixDouble(SlabPullHash, RawAngularSpeed);
+		HashMixDouble(SlabPullHash, Motion.Axis.X);
+		HashMixDouble(SlabPullHash, Motion.Axis.Y);
+		HashMixDouble(SlabPullHash, Motion.Axis.Z);
+		HashMixDouble(SlabPullHash, Motion.AngularSpeedRadiansPerStep);
+		HashMixDouble(SlabPullHash, NewVelocity);
+		HashMix(SlabPullHash, bClamped ? 1ull : 0ull);
+	}
+
+	LastPhaseIIIC4SlabPullAudit.MotionHashAfter = ComputeMotionStateHash(Motions);
+	LastPhaseIIIC4SlabPullAudit.SlabPullHash = HashToString(SlabPullHash);
+}
+
 void ACarrierLabVisualizationActor::AdvanceOneStep()
 {
 	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -5465,6 +5694,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 		LastPhaseIIIC3UpliftAudit.bUpliftEnabled = false;
 		LastPhaseIIIC3UpliftAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
 	}
+	ApplyPhaseIIIC4SlabPull();
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
