@@ -749,6 +749,55 @@ struct FCarrierLabPhaseIIIC2ElevationAudit
 	TArray<FCarrierLabPhaseIIIC2ElevationAuditRecord> Records;
 };
 
+struct FCarrierLabPhaseIIIC3UpliftAuditRecord
+{
+	int32 MarkId = INDEX_NONE;
+	int32 UnderPlateId = INDEX_NONE;
+	int32 OverPlateId = INDEX_NONE;
+	int32 UnderLocalTriangleId = INDEX_NONE;
+	int32 OverLocalVertexId = INDEX_NONE;
+	int32 OverGlobalSampleId = INDEX_NONE;
+	double DistanceKm = 0.0;
+	double SignedConvergenceVelocity = 0.0;
+	double HistoricalElevationKm = 0.0;
+	double PreviousElevationKm = 0.0;
+	double AppliedDeltaKm = 0.0;
+	double NewElevationKm = 0.0;
+	double DistanceTransfer = 0.0;
+	double SpeedTransfer = 0.0;
+	double ReliefTransfer = 0.0;
+	double FoldDirectionMagnitude = 0.0;
+};
+
+struct FCarrierLabPhaseIIIC3UpliftAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	bool bMarksEnabled = false;
+	bool bElevationSplitEnabled = false;
+	bool bUpliftEnabled = false;
+	int32 MarkCount = 0;
+	int32 UpliftRecordCount = 0;
+	int32 UniqueUpliftedVertexCount = 0;
+	int32 SkippedNonContinentalVertexCount = 0;
+	int32 SkippedOutsideRadiusCount = 0;
+	int32 InvalidInputCount = 0;
+	double EffectRadiusKm = 1800.0;
+	double UpliftRateMmPerYear = 0.6;
+	double ReferenceVelocityMmPerYear = 100.0;
+	double TrenchDepthKm = -10.0;
+	double ContinentalMaxElevationKm = 10.0;
+	double TotalAppliedDeltaKm = 0.0;
+	double MaxAppliedDeltaKm = 0.0;
+	FString UpliftHash;
+	FString VisibleElevationHash;
+	FString HistoricalElevationHash;
+	FString CrustStateHash;
+	TArray<FCarrierLabPhaseIIIC3UpliftAuditRecord> Records;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -802,6 +851,21 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICTrenchDepthKm = -10.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	bool bEnablePhaseIIICOverridingPlateUplift = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIICSubductionUpliftMmPerYear = 0.6;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIICReferenceVelocityMmPerYear = 100.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIICMaxContinentalElevationKm = 10.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIICSubductionEffectRadiusKm = 1800.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
 	bool bAutoInitialize = true;
@@ -946,6 +1010,7 @@ public:
 	bool GetPhaseIIIB7HashClosureAudit(FCarrierLabPhaseIIIB7HashClosureAudit& OutAudit) const;
 	bool GetPhaseIIIC1SubductingMarkAudit(FCarrierLabPhaseIIIC1SubductingMarkAudit& OutAudit) const;
 	bool GetPhaseIIIC2ElevationAudit(FCarrierLabPhaseIIIC2ElevationAudit& OutAudit) const;
+	bool GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
@@ -963,6 +1028,7 @@ private:
 	void UpdateConvergenceNeighborPropagation();
 	void UpdatePhaseIIICSubductingTriangleMarks();
 	bool ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark);
+	void ApplyPhaseIIIC3OverridingPlateUplift();
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);
@@ -988,6 +1054,7 @@ private:
 	TArray<uint8> PlateBoundaryMask;
 	TArray<uint8> SubductionRoleMask;
 	TArray<double> DistanceToFrontKmBySample;
+	FCarrierLabPhaseIIIC3UpliftAudit LastPhaseIIIC3UpliftAudit;
 	int32 CachedRenderMeshSampleCount = 0;
 	int32 CachedRenderMeshTriangleCount = 0;
 	double StepAccumulator = 0.0;

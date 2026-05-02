@@ -303,6 +303,72 @@ namespace
 		return (static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) | static_cast<uint32>(LocalTriangleId);
 	}
 
+	uint64 MakePlateVertexKey(const int32 PlateId, const int32 LocalVertexId)
+	{
+		return (static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) | static_cast<uint32>(LocalVertexId);
+	}
+
+	double PhaseIIIC3DistanceTransfer(const double DistanceKm, const double EffectRadiusKm)
+	{
+		if (!FMath::IsFinite(DistanceKm) ||
+			!FMath::IsFinite(EffectRadiusKm) ||
+			EffectRadiusKm <= UE_DOUBLE_SMALL_NUMBER ||
+			DistanceKm < 0.0 ||
+			DistanceKm > EffectRadiusKm)
+		{
+			return 0.0;
+		}
+		const double NormalizedDistance = DistanceKm / EffectRadiusKm;
+		return FMath::Exp(3.0 * NormalizedDistance) *
+			FMath::Exp(-9.0 * NormalizedDistance * NormalizedDistance);
+	}
+
+	double PhaseIIIC3SpeedTransfer(
+		const double SignedConvergenceVelocity,
+		const double ReferenceVelocityMmPerYear)
+	{
+		if (!FMath::IsFinite(SignedConvergenceVelocity) ||
+			!FMath::IsFinite(ReferenceVelocityMmPerYear) ||
+			ReferenceVelocityMmPerYear <= UE_DOUBLE_SMALL_NUMBER ||
+			SignedConvergenceVelocity <= 0.0)
+		{
+			return 0.0;
+		}
+		const double VelocityMmPerYear = SignedConvergenceVelocity * EarthRadiusKm / DeltaTimeMa;
+		return FMath::Clamp(VelocityMmPerYear / ReferenceVelocityMmPerYear, 0.0, 1.0);
+	}
+
+	double PhaseIIIC3ReliefTransfer(
+		const double HistoricalElevationKm,
+		const double TrenchDepthKm,
+		const double ContinentalMaxElevationKm)
+	{
+		const double Denominator = ContinentalMaxElevationKm - TrenchDepthKm;
+		if (!FMath::IsFinite(HistoricalElevationKm) ||
+			!FMath::IsFinite(TrenchDepthKm) ||
+			!FMath::IsFinite(ContinentalMaxElevationKm) ||
+			Denominator <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			return 0.0;
+		}
+		const double NormalizedElevation = FMath::Clamp((HistoricalElevationKm - TrenchDepthKm) / Denominator, 0.0, 1.0);
+		return NormalizedElevation * NormalizedElevation;
+	}
+
+	double PhaseIIIC3UpliftDeltaKm(
+		const double UpliftRateMmPerYear,
+		const double DistanceTransfer,
+		const double SpeedTransfer,
+		const double ReliefTransfer)
+	{
+		if (!FMath::IsFinite(UpliftRateMmPerYear) ||
+			UpliftRateMmPerYear <= 0.0)
+		{
+			return 0.0;
+		}
+		return UpliftRateMmPerYear * DeltaTimeMa * DistanceTransfer * SpeedTransfer * ReliefTransfer;
+	}
+
 	void DecodePlatePairKey(const uint64 Key, int32& OutA, int32& OutB)
 	{
 		OutA = static_cast<int32>(static_cast<uint32>(Key >> 32));
@@ -1673,6 +1739,7 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 
 	State = MoveTemp(NewState);
 	CurrentMetrics = FCarrierLabVisualizationMetrics();
+	LastPhaseIIIC3UpliftAudit = FCarrierLabPhaseIIIC3UpliftAudit();
 	RenderPlateIds.SetNum(State.Samples.Num());
 	RenderContinentalFractions.SetNum(State.Samples.Num());
 	DriftErrorKmBySample.SetNum(State.Samples.Num());
@@ -4073,6 +4140,33 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIC2ElevationAudit(FCarrierLabPhase
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const
+{
+	OutAudit = LastPhaseIIIC3UpliftAudit;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	OutAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
+	OutAudit.bUpliftEnabled = bEnablePhaseIIICOverridingPlateUplift;
+	OutAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	OutAudit.EffectRadiusKm = PhaseIIICSubductionEffectRadiusKm;
+	OutAudit.UpliftRateMmPerYear = PhaseIIICSubductionUpliftMmPerYear;
+	OutAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	OutAudit.TrenchDepthKm = PhaseIIICTrenchDepthKm;
+	OutAudit.ContinentalMaxElevationKm = PhaseIIICMaxContinentalElevationKm;
+	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
+	OutAudit.HistoricalElevationHash = CurrentMetrics.HistoricalElevationHash;
+	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())
@@ -5145,6 +5239,188 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIC2ElevationSplitToMark(CarrierL
 	return true;
 }
 
+void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
+{
+	LastPhaseIIIC3UpliftAudit = FCarrierLabPhaseIIIC3UpliftAudit();
+	LastPhaseIIIC3UpliftAudit.Step = CurrentMetrics.Step + 1;
+	LastPhaseIIIC3UpliftAudit.EventCount = CurrentMetrics.EventCount;
+	LastPhaseIIIC3UpliftAudit.PlateCount = State.Plates.Num();
+	LastPhaseIIIC3UpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	LastPhaseIIIC3UpliftAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	LastPhaseIIIC3UpliftAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
+	LastPhaseIIIC3UpliftAudit.bUpliftEnabled = bEnablePhaseIIICOverridingPlateUplift;
+	LastPhaseIIIC3UpliftAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	LastPhaseIIIC3UpliftAudit.EffectRadiusKm = PhaseIIICSubductionEffectRadiusKm;
+	LastPhaseIIIC3UpliftAudit.UpliftRateMmPerYear = PhaseIIICSubductionUpliftMmPerYear;
+	LastPhaseIIIC3UpliftAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	LastPhaseIIIC3UpliftAudit.TrenchDepthKm = PhaseIIICTrenchDepthKm;
+	LastPhaseIIIC3UpliftAudit.ContinentalMaxElevationKm = PhaseIIICMaxContinentalElevationKm;
+
+	uint64 UpliftHash = 1469598103934665603ull;
+	HashMix(UpliftHash, static_cast<uint64>(LastPhaseIIIC3UpliftAudit.Step + 1));
+	HashMix(UpliftHash, static_cast<uint64>(State.ConvergenceSubductingTriangleMarks.Num() + 1));
+	HashMixDouble(UpliftHash, PhaseIIICSubductionUpliftMmPerYear);
+	HashMixDouble(UpliftHash, PhaseIIICReferenceVelocityMmPerYear);
+	HashMixDouble(UpliftHash, PhaseIIICTrenchDepthKm);
+	HashMixDouble(UpliftHash, PhaseIIICMaxContinentalElevationKm);
+	HashMixDouble(UpliftHash, PhaseIIICSubductionEffectRadiusKm);
+
+	if (!bEnablePhaseIIICOverridingPlateUplift ||
+		!bEnablePhaseIIICSubductingMarks ||
+		!bEnablePhaseIIICVisibleHistoricalElevation)
+	{
+		LastPhaseIIIC3UpliftAudit.UpliftHash = HashToString(UpliftHash);
+		return;
+	}
+
+	TSet<uint64> UpliftedVertexKeys;
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		if (!Mark.bHistoricalElevationSnapshotTaken ||
+			!State.Plates.IsValidIndex(Mark.PlateId) ||
+			!State.Plates.IsValidIndex(Mark.OtherPlateId))
+		{
+			++LastPhaseIIIC3UpliftAudit.InvalidInputCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& UnderPlate = State.Plates[Mark.PlateId];
+		CarrierLab::FCarrierPlate& OverPlate = State.Plates[Mark.OtherPlateId];
+		if (!UnderPlate.LocalTriangles.IsValidIndex(Mark.LocalTriangleId))
+		{
+			++LastPhaseIIIC3UpliftAudit.InvalidInputCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& UnderTriangle = UnderPlate.LocalTriangles[Mark.LocalTriangleId];
+		const int32 UnderVertexIds[3] = { UnderTriangle.A, UnderTriangle.B, UnderTriangle.C };
+		bool bUnderVerticesValid = true;
+		FVector3d UnderBarycenter = FVector3d::ZeroVector;
+		double HistoricalElevationKm = 0.0;
+		for (const int32 UnderVertexId : UnderVertexIds)
+		{
+			if (!UnderPlate.Vertices.IsValidIndex(UnderVertexId))
+			{
+				bUnderVerticesValid = false;
+				break;
+			}
+			const CarrierLab::FCarrierVertex& UnderVertex = UnderPlate.Vertices[UnderVertexId];
+			UnderBarycenter += UnderVertex.UnitPosition;
+			HistoricalElevationKm += UnderVertex.HistoricalElevation;
+		}
+		if (!bUnderVerticesValid)
+		{
+			++LastPhaseIIIC3UpliftAudit.InvalidInputCount;
+			continue;
+		}
+		UnderBarycenter = NormalizeOrFallback(UnderBarycenter, UnderPlate.Vertices[UnderVertexIds[0]].UnitPosition);
+		HistoricalElevationKm /= 3.0;
+
+		const double SpeedTransfer = PhaseIIIC3SpeedTransfer(
+			Mark.SignedConvergenceVelocity,
+			PhaseIIICReferenceVelocityMmPerYear);
+		const double ReliefTransfer = PhaseIIIC3ReliefTransfer(
+			HistoricalElevationKm,
+			PhaseIIICTrenchDepthKm,
+			PhaseIIICMaxContinentalElevationKm);
+		if (SpeedTransfer <= 0.0 || ReliefTransfer <= 0.0)
+		{
+			++LastPhaseIIIC3UpliftAudit.InvalidInputCount;
+			continue;
+		}
+
+		for (int32 OverVertexId = 0; OverVertexId < OverPlate.Vertices.Num(); ++OverVertexId)
+		{
+			CarrierLab::FCarrierVertex& OverVertex = OverPlate.Vertices[OverVertexId];
+			if (OverVertex.ContinentalFraction <= 0.5)
+			{
+				++LastPhaseIIIC3UpliftAudit.SkippedNonContinentalVertexCount;
+				continue;
+			}
+
+			const double Dot = FMath::Clamp(FVector3d::DotProduct(UnderBarycenter, OverVertex.UnitPosition), -1.0, 1.0);
+			const double DistanceKm = FMath::Acos(Dot) * EarthRadiusKm;
+			if (!FMath::IsFinite(DistanceKm) || DistanceKm > PhaseIIICSubductionEffectRadiusKm)
+			{
+				++LastPhaseIIIC3UpliftAudit.SkippedOutsideRadiusCount;
+				continue;
+			}
+
+			const double DistanceTransfer = PhaseIIIC3DistanceTransfer(DistanceKm, PhaseIIICSubductionEffectRadiusKm);
+			const double DeltaKm = PhaseIIIC3UpliftDeltaKm(
+				PhaseIIICSubductionUpliftMmPerYear,
+				DistanceTransfer,
+				SpeedTransfer,
+				ReliefTransfer);
+			if (!FMath::IsFinite(DeltaKm) || DeltaKm <= 0.0)
+			{
+				++LastPhaseIIIC3UpliftAudit.InvalidInputCount;
+				continue;
+			}
+
+			const double PreviousElevationKm = OverVertex.Elevation;
+			OverVertex.Elevation += DeltaKm;
+
+			if (Motions.IsValidIndex(Mark.PlateId) && Motions.IsValidIndex(Mark.OtherPlateId))
+			{
+				const FVector3d UnderVelocity = FVector3d::CrossProduct(Motions[Mark.PlateId].Axis, OverVertex.UnitPosition) *
+					Motions[Mark.PlateId].AngularSpeedRadiansPerStep;
+				const FVector3d OverVelocity = FVector3d::CrossProduct(Motions[Mark.OtherPlateId].Axis, OverVertex.UnitPosition) *
+					Motions[Mark.OtherPlateId].AngularSpeedRadiansPerStep;
+				const FVector3d RelativeConvergence = RetangentAndNormalizeVectorField(UnderVelocity - OverVelocity, OverVertex.UnitPosition);
+				if (RelativeConvergence.SquaredLength() > UE_DOUBLE_SMALL_NUMBER)
+				{
+					OverVertex.FoldDirection = RetangentAndNormalizeVectorField(
+						OverVertex.FoldDirection + RelativeConvergence * DeltaKm,
+						OverVertex.UnitPosition);
+				}
+			}
+
+			const uint64 VertexKey = MakePlateVertexKey(Mark.OtherPlateId, OverVertexId);
+			UpliftedVertexKeys.Add(VertexKey);
+			++LastPhaseIIIC3UpliftAudit.UpliftRecordCount;
+			LastPhaseIIIC3UpliftAudit.TotalAppliedDeltaKm += DeltaKm;
+			LastPhaseIIIC3UpliftAudit.MaxAppliedDeltaKm = FMath::Max(
+				LastPhaseIIIC3UpliftAudit.MaxAppliedDeltaKm,
+				DeltaKm);
+
+			HashMix(UpliftHash, static_cast<uint64>(Mark.MarkId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(Mark.PlateId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(Mark.OtherPlateId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(Mark.LocalTriangleId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(OverVertexId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(OverVertex.GlobalSampleId + 1));
+			HashMixDouble(UpliftHash, DistanceKm);
+			HashMixDouble(UpliftHash, Mark.SignedConvergenceVelocity);
+			HashMixDouble(UpliftHash, HistoricalElevationKm);
+			HashMixDouble(UpliftHash, PreviousElevationKm);
+			HashMixDouble(UpliftHash, DeltaKm);
+			HashMixDouble(UpliftHash, OverVertex.Elevation);
+
+			FCarrierLabPhaseIIIC3UpliftAuditRecord& Record = LastPhaseIIIC3UpliftAudit.Records.AddDefaulted_GetRef();
+			Record.MarkId = Mark.MarkId;
+			Record.UnderPlateId = Mark.PlateId;
+			Record.OverPlateId = Mark.OtherPlateId;
+			Record.UnderLocalTriangleId = Mark.LocalTriangleId;
+			Record.OverLocalVertexId = OverVertexId;
+			Record.OverGlobalSampleId = OverVertex.GlobalSampleId;
+			Record.DistanceKm = DistanceKm;
+			Record.SignedConvergenceVelocity = Mark.SignedConvergenceVelocity;
+			Record.HistoricalElevationKm = HistoricalElevationKm;
+			Record.PreviousElevationKm = PreviousElevationKm;
+			Record.AppliedDeltaKm = DeltaKm;
+			Record.NewElevationKm = OverVertex.Elevation;
+			Record.DistanceTransfer = DistanceTransfer;
+			Record.SpeedTransfer = SpeedTransfer;
+			Record.ReliefTransfer = ReliefTransfer;
+			Record.FoldDirectionMagnitude = OverVertex.FoldDirection.Size();
+		}
+	}
+
+	LastPhaseIIIC3UpliftAudit.UniqueUpliftedVertexCount = UpliftedVertexKeys.Num();
+	LastPhaseIIIC3UpliftAudit.UpliftHash = HashToString(UpliftHash);
+}
+
 void ACarrierLabVisualizationActor::AdvanceOneStep()
 {
 	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -5172,6 +5448,22 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	if (bEnablePhaseIIICSubductingMarks)
 	{
 		UpdatePhaseIIICSubductingTriangleMarks();
+	}
+	if (bEnablePhaseIIICOverridingPlateUplift)
+	{
+		ApplyPhaseIIIC3OverridingPlateUplift();
+	}
+	else
+	{
+		LastPhaseIIIC3UpliftAudit = FCarrierLabPhaseIIIC3UpliftAudit();
+		LastPhaseIIIC3UpliftAudit.Step = CurrentMetrics.Step + 1;
+		LastPhaseIIIC3UpliftAudit.EventCount = CurrentMetrics.EventCount;
+		LastPhaseIIIC3UpliftAudit.PlateCount = State.Plates.Num();
+		LastPhaseIIIC3UpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+		LastPhaseIIIC3UpliftAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+		LastPhaseIIIC3UpliftAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
+		LastPhaseIIIC3UpliftAudit.bUpliftEnabled = false;
+		LastPhaseIIIC3UpliftAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
 	}
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
