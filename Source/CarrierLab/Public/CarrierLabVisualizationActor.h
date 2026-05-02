@@ -545,6 +545,44 @@ struct FCarrierLabPhaseIIIB3SubductionMatrixAudit
 	FString ConvergenceTrackingHash;
 };
 
+struct FCarrierLabPhaseIIIB4PolarityDecisionAudit
+{
+	uint64 PairKey = 0;
+	int32 PlateA = INDEX_NONE;
+	int32 PlateB = INDEX_NONE;
+	int32 UnderPlate = INDEX_NONE;
+	int32 OverPlate = INDEX_NONE;
+	double PlateAContinentalFraction = 0.0;
+	double PlateBContinentalFraction = 0.0;
+	CarrierLab::EConvergenceSubductionPolarityClass DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::None;
+};
+
+struct FCarrierLabPhaseIIIB4PolarityAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	int32 MatrixPairCount = 0;
+	int32 DecisionCount = 0;
+	int32 OceanicUnderContinentalCount = 0;
+	int32 CollisionCandidateCount = 0;
+	int32 OceanOceanDeferredCount = 0;
+	int32 InvalidDecisionCount = 0;
+	int32 MissingDecisionCount = 0;
+	int32 SubductionPolarityCount = 0;
+	int32 ProbePlateA = INDEX_NONE;
+	int32 ProbePlateB = INDEX_NONE;
+	int32 ProbeUnderPlate = INDEX_NONE;
+	int32 ProbeOverPlate = INDEX_NONE;
+	double ProbePlateAContinentalFraction = 0.0;
+	double ProbePlateBContinentalFraction = 0.0;
+	CarrierLab::EConvergenceSubductionPolarityClass ProbeDecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::None;
+	TArray<FCarrierLabPhaseIIIB4PolarityDecisionAudit> Decisions;
+	FString PolarityHash;
+	FString ConvergenceTrackingHash;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -713,12 +751,15 @@ public:
 	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
+	bool GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseIIIB4PolarityAudit& OutAudit) const;
+	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 
 private:
 	void BindInputControls();
 	void AdvanceOneStep();
 	void UpdateConvergenceTrackingDistances();
 	void UpdateConvergenceSubductionMatrix();
+	void UpdateConvergenceSubductionPolarityDecisions();
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);

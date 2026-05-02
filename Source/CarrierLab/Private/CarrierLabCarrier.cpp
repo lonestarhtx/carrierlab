@@ -448,6 +448,7 @@ namespace CarrierLab
 		State.SampleRayCandidateTriangles.Reset();
 		State.SampleRayCandidateTriangles.SetNum(State.Samples.Num());
 		State.ConvergenceSubductionMatrixPairKeys.Reset();
+		State.ConvergenceSubductionPolarityDecisions.Reset();
 		State.ConvergenceTrackingDistanceCullCount = 0;
 		State.ConvergenceSubductionMatrixRayTestCount = 0;
 		State.ConvergenceSubductionMatrixHitCount = 0;

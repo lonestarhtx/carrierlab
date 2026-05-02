@@ -79,6 +79,27 @@ namespace CarrierLab
 		TMap<int32, int32> GlobalSampleIdToLocalVertexId;
 	};
 
+	enum class EConvergenceSubductionPolarityClass : uint8
+	{
+		None = 0,
+		OceanicUnderContinental = 1,
+		CollisionCandidate = 2,
+		OceanOceanDeferred = 3,
+		Invalid = 4
+	};
+
+	struct FConvergenceSubductionPolarityDecision
+	{
+		uint64 PairKey = 0;
+		int32 PlateA = INDEX_NONE;
+		int32 PlateB = INDEX_NONE;
+		int32 UnderPlate = INDEX_NONE;
+		int32 OverPlate = INDEX_NONE;
+		double PlateAContinentalFraction = 0.0;
+		double PlateBContinentalFraction = 0.0;
+		EConvergenceSubductionPolarityClass DecisionClass = EConvergenceSubductionPolarityClass::None;
+	};
+
 	struct FCarrierState
 	{
 		FStage0Config Config;
@@ -89,6 +110,7 @@ namespace CarrierLab
 		TArray<TArray<int32>> SampleNeighborIds;
 		TArray<TArray<FCarrierRayTriangleRef>> SampleRayCandidateTriangles;
 		TSet<uint64> ConvergenceSubductionMatrixPairKeys;
+		TArray<FConvergenceSubductionPolarityDecision> ConvergenceSubductionPolarityDecisions;
 		int32 ConvergenceTrackingResetSerial = 0;
 		int32 ConvergenceTrackingDistanceCullCount = 0;
 		int32 ConvergenceSubductionMatrixRayTestCount = 0;

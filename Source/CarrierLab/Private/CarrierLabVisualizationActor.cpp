@@ -162,6 +162,25 @@ namespace
 		{
 			HashMix(Hash, PairKey + 1ull);
 		}
+		TArray<CarrierLab::FConvergenceSubductionPolarityDecision> PolarityDecisions = State.ConvergenceSubductionPolarityDecisions;
+		PolarityDecisions.Sort([](
+			const CarrierLab::FConvergenceSubductionPolarityDecision& A,
+			const CarrierLab::FConvergenceSubductionPolarityDecision& B)
+		{
+			return A.PairKey < B.PairKey;
+		});
+		HashMix(Hash, static_cast<uint64>(PolarityDecisions.Num() + 1));
+		for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : PolarityDecisions)
+		{
+			HashMix(Hash, Decision.PairKey + 1ull);
+			HashMix(Hash, static_cast<uint64>(Decision.PlateA + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.PlateB + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.UnderPlate + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.OverPlate + 1));
+			HashMixDouble(Hash, Decision.PlateAContinentalFraction);
+			HashMixDouble(Hash, Decision.PlateBContinentalFraction);
+			HashMix(Hash, static_cast<uint64>(Decision.DecisionClass) + 1ull);
+		}
 		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 		{
 			HashMix(Hash, static_cast<uint64>(Plate.PlateId + 1));
@@ -210,6 +229,32 @@ namespace
 		const double SinToAxis = FVector3d::CrossProduct(Motion.Axis, Barycenter).Length();
 		const double StepRadians = SinToAxis * FMath::Abs(Motion.AngularSpeedRadiansPerStep);
 		return StepRadians * EarthRadiusKm;
+	}
+
+	double ComputePlateContinentalFraction(
+		const CarrierLab::FCarrierState& State,
+		const int32 PlateId)
+	{
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			return 0.0;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+		double WeightedFraction = 0.0;
+		double TotalWeight = 0.0;
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			const double Weight = FMath::Max(Vertex.AreaWeight, 0.0);
+			WeightedFraction += Weight * FMath::Clamp(Vertex.ContinentalFraction, 0.0, 1.0);
+			TotalWeight += Weight;
+		}
+
+		if (TotalWeight > UE_DOUBLE_SMALL_NUMBER)
+		{
+			return WeightedFraction / TotalWeight;
+		}
+		return Plate.bContinental ? 1.0 : 0.0;
 	}
 
 	bool IntersectRayWithTriangle(
@@ -3123,6 +3168,131 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB3SubductionMatrixAudit(FCarrierL
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseIIIB4PolarityAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIB4PolarityAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.MatrixPairCount = State.ConvergenceSubductionMatrixPairKeys.Num();
+
+	TSet<uint64> DecisionKeys;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionKeys.Add(Decision.PairKey);
+		FCarrierLabPhaseIIIB4PolarityDecisionAudit& AuditDecision = OutAudit.Decisions.AddDefaulted_GetRef();
+		AuditDecision.PairKey = Decision.PairKey;
+		AuditDecision.PlateA = Decision.PlateA;
+		AuditDecision.PlateB = Decision.PlateB;
+		AuditDecision.UnderPlate = Decision.UnderPlate;
+		AuditDecision.OverPlate = Decision.OverPlate;
+		AuditDecision.PlateAContinentalFraction = Decision.PlateAContinentalFraction;
+		AuditDecision.PlateBContinentalFraction = Decision.PlateBContinentalFraction;
+		AuditDecision.DecisionClass = Decision.DecisionClass;
+
+		switch (Decision.DecisionClass)
+		{
+		case CarrierLab::EConvergenceSubductionPolarityClass::OceanicUnderContinental:
+			++OutAudit.OceanicUnderContinentalCount;
+			++OutAudit.SubductionPolarityCount;
+			break;
+		case CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate:
+			++OutAudit.CollisionCandidateCount;
+			break;
+		case CarrierLab::EConvergenceSubductionPolarityClass::OceanOceanDeferred:
+			++OutAudit.OceanOceanDeferredCount;
+			break;
+		case CarrierLab::EConvergenceSubductionPolarityClass::Invalid:
+			++OutAudit.InvalidDecisionCount;
+			break;
+		case CarrierLab::EConvergenceSubductionPolarityClass::None:
+		default:
+			break;
+		}
+
+		if (OutAudit.ProbePlateA == INDEX_NONE)
+		{
+			OutAudit.ProbePlateA = Decision.PlateA;
+			OutAudit.ProbePlateB = Decision.PlateB;
+			OutAudit.ProbeUnderPlate = Decision.UnderPlate;
+			OutAudit.ProbeOverPlate = Decision.OverPlate;
+			OutAudit.ProbePlateAContinentalFraction = Decision.PlateAContinentalFraction;
+			OutAudit.ProbePlateBContinentalFraction = Decision.PlateBContinentalFraction;
+			OutAudit.ProbeDecisionClass = Decision.DecisionClass;
+		}
+	}
+	OutAudit.DecisionCount = OutAudit.Decisions.Num();
+
+	for (const uint64 PairKey : State.ConvergenceSubductionMatrixPairKeys)
+	{
+		if (!DecisionKeys.Contains(PairKey))
+		{
+			++OutAudit.MissingDecisionCount;
+		}
+	}
+
+	uint64 PolarityHash = 1469598103934665603ull;
+	TArray<FCarrierLabPhaseIIIB4PolarityDecisionAudit> SortedDecisions = OutAudit.Decisions;
+	SortedDecisions.Sort([](
+		const FCarrierLabPhaseIIIB4PolarityDecisionAudit& A,
+		const FCarrierLabPhaseIIIB4PolarityDecisionAudit& B)
+	{
+		return A.PairKey < B.PairKey;
+	});
+	HashMix(PolarityHash, static_cast<uint64>(SortedDecisions.Num() + 1));
+	for (const FCarrierLabPhaseIIIB4PolarityDecisionAudit& Decision : SortedDecisions)
+	{
+		HashMix(PolarityHash, Decision.PairKey + 1ull);
+		HashMix(PolarityHash, static_cast<uint64>(Decision.PlateA + 1));
+		HashMix(PolarityHash, static_cast<uint64>(Decision.PlateB + 1));
+		HashMix(PolarityHash, static_cast<uint64>(Decision.UnderPlate + 1));
+		HashMix(PolarityHash, static_cast<uint64>(Decision.OverPlate + 1));
+		HashMixDouble(PolarityHash, Decision.PlateAContinentalFraction);
+		HashMixDouble(PolarityHash, Decision.PlateBContinentalFraction);
+		HashMix(PolarityHash, static_cast<uint64>(Decision.DecisionClass) + 1ull);
+	}
+	OutAudit.PolarityHash = HashToString(PolarityHash);
+	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
+{
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+	if (!State.Plates.IsValidIndex(PlateId))
+	{
+		return false;
+	}
+
+	const double Fraction = bContinental ? 1.0 : 0.0;
+	CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+	Plate.bContinental = bContinental;
+	for (CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+	{
+		Vertex.ContinentalFraction = Fraction;
+		Vertex.bContinental = bContinental;
+	}
+	for (CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (Sample.PlateId == PlateId)
+		{
+			Sample.ContinentalFraction = Fraction;
+			Sample.bContinental = bContinental;
+		}
+	}
+	ProjectCurrentCarrier();
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -3542,6 +3712,49 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 	}
 }
 
+void ACarrierLabVisualizationActor::UpdateConvergenceSubductionPolarityDecisions()
+{
+	State.ConvergenceSubductionPolarityDecisions.Reset();
+	TArray<uint64> PairKeys = State.ConvergenceSubductionMatrixPairKeys.Array();
+	PairKeys.Sort();
+	State.ConvergenceSubductionPolarityDecisions.Reserve(PairKeys.Num());
+
+	for (const uint64 PairKey : PairKeys)
+	{
+		CarrierLab::FConvergenceSubductionPolarityDecision& Decision = State.ConvergenceSubductionPolarityDecisions.AddDefaulted_GetRef();
+		Decision.PairKey = PairKey;
+		DecodePlatePairKey(PairKey, Decision.PlateA, Decision.PlateB);
+
+		if (!State.Plates.IsValidIndex(Decision.PlateA) ||
+			!State.Plates.IsValidIndex(Decision.PlateB) ||
+			Decision.PlateA == Decision.PlateB)
+		{
+			Decision.DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::Invalid;
+			continue;
+		}
+
+		Decision.PlateAContinentalFraction = ComputePlateContinentalFraction(State, Decision.PlateA);
+		Decision.PlateBContinentalFraction = ComputePlateContinentalFraction(State, Decision.PlateB);
+		const bool bAContinental = Decision.PlateAContinentalFraction >= 0.5;
+		const bool bBContinental = Decision.PlateBContinentalFraction >= 0.5;
+
+		if (bAContinental != bBContinental)
+		{
+			Decision.DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::OceanicUnderContinental;
+			Decision.UnderPlate = bAContinental ? Decision.PlateB : Decision.PlateA;
+			Decision.OverPlate = bAContinental ? Decision.PlateA : Decision.PlateB;
+		}
+		else if (bAContinental && bBContinental)
+		{
+			Decision.DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate;
+		}
+		else
+		{
+			Decision.DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::OceanOceanDeferred;
+		}
+	}
+}
+
 void ACarrierLabVisualizationActor::AdvanceOneStep()
 {
 	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -3564,6 +3777,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	}
 	UpdateConvergenceTrackingDistances();
 	UpdateConvergenceSubductionMatrix();
+	UpdateConvergenceSubductionPolarityDecisions();
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
