@@ -1502,9 +1502,19 @@ bool ACarrierLabVisualizationActor::BuildPhaseIITriangleLabels(
 bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	const TArray<FCarrierLabPhaseIITriangleLabelRecord>& Labels,
 	TArray<FCarrierLabPhaseIIFilterDecisionRecord>& OutDecisions,
-	FCarrierLabPhaseIIResamplingFilterMetrics& OutMetrics)
+	FCarrierLabPhaseIIResamplingFilterMetrics& OutMetrics,
+	TArray<FCarrierLabPhaseIIMaterialRecord>* OutMaterialRecords,
+	FCarrierLabPhaseIIMaterialLedgerMetrics* OutMaterialMetrics)
 {
 	OutDecisions.Reset();
+	if (OutMaterialRecords != nullptr)
+	{
+		OutMaterialRecords->Reset();
+	}
+	if (OutMaterialMetrics != nullptr)
+	{
+		*OutMaterialMetrics = FCarrierLabPhaseIIMaterialLedgerMetrics();
+	}
 	OutMetrics = FCarrierLabPhaseIIResamplingFilterMetrics();
 	if (!bInitialized && !InitializeCarrier())
 	{
@@ -1580,6 +1590,22 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	TArray<double> NewFractions;
 	NewPlateIds.SetNum(State.Samples.Num());
 	NewFractions.SetNum(State.Samples.Num());
+	TArray<ECarrierLabPhaseIIMaterialEventClass> MaterialClassBySample;
+	TArray<ECarrierLabPhaseIIFilterDecisionClass> MaterialDecisionClassBySample;
+	TArray<int32> MaterialRawPlateCountBySample;
+	TArray<int32> MaterialPostPlateCountBySample;
+	TArray<int32> MaterialSourceContactIdBySample;
+	TArray<int32> MaterialSourceLabelIdBySample;
+	TArray<bool> MaterialThirdPlateBySample;
+	TArray<bool> MaterialNonSeparatingGapBySample;
+	MaterialClassBySample.Init(ECarrierLabPhaseIIMaterialEventClass::Preserved, State.Samples.Num());
+	MaterialDecisionClassBySample.Init(ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle, State.Samples.Num());
+	MaterialRawPlateCountBySample.Init(0, State.Samples.Num());
+	MaterialPostPlateCountBySample.Init(0, State.Samples.Num());
+	MaterialSourceContactIdBySample.Init(INDEX_NONE, State.Samples.Num());
+	MaterialSourceLabelIdBySample.Init(INDEX_NONE, State.Samples.Num());
+	MaterialThirdPlateBySample.Init(false, State.Samples.Num());
+	MaterialNonSeparatingGapBySample.Init(false, State.Samples.Num());
 	for (const CarrierLab::FSphereSample& Sample : State.Samples)
 	{
 		NewPlateIds[Sample.Id] = Sample.PlateId;
@@ -1589,6 +1615,65 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	TSet<int32> SamplesWithFilteredCandidates;
 	TArray<FCarrierLabVizCandidate> Candidates;
 	TArray<FCarrierLabVizCandidate> RemainingCandidates;
+	auto SetMaterialClass = [&MaterialClassBySample, &MaterialDecisionClassBySample, &MaterialRawPlateCountBySample, &MaterialPostPlateCountBySample, &MaterialSourceContactIdBySample, &MaterialSourceLabelIdBySample, &MaterialThirdPlateBySample, &MaterialNonSeparatingGapBySample](
+		const int32 SampleId,
+		const ECarrierLabPhaseIIMaterialEventClass EventClass,
+		const ECarrierLabPhaseIIFilterDecisionClass DecisionClass,
+		const int32 RawPlateCount,
+		const int32 PostPlateCount,
+		const bool bThirdPlate,
+		const bool bNonSeparatingGap,
+		const int32 SourceContactId,
+		const int32 SourceLabelId)
+	{
+		if (!MaterialClassBySample.IsValidIndex(SampleId))
+		{
+			return;
+		}
+		MaterialClassBySample[SampleId] = EventClass;
+		MaterialDecisionClassBySample[SampleId] = DecisionClass;
+		MaterialRawPlateCountBySample[SampleId] = RawPlateCount;
+		MaterialPostPlateCountBySample[SampleId] = PostPlateCount;
+		MaterialThirdPlateBySample[SampleId] = bThirdPlate;
+		MaterialNonSeparatingGapBySample[SampleId] = bNonSeparatingGap;
+		if (SourceContactId != INDEX_NONE)
+		{
+			MaterialSourceContactIdBySample[SampleId] = SourceContactId;
+		}
+		if (SourceLabelId != INDEX_NONE)
+		{
+			MaterialSourceLabelIdBySample[SampleId] = SourceLabelId;
+		}
+	};
+	auto ClassifyUnresolvedMaterial = [this](const int32 RawPlateCount, const TArray<FCarrierLabVizCandidate>& Remaining)
+	{
+		if (RawPlateCount >= 3)
+		{
+			return ECarrierLabPhaseIIMaterialEventClass::UnresolvedTripleJunctionMultiHit;
+		}
+
+		bool bHasContinental = false;
+		bool bHasOceanic = false;
+		for (const FCarrierLabVizCandidate& Candidate : Remaining)
+		{
+			if (!State.Plates.IsValidIndex(Candidate.PlateId))
+			{
+				continue;
+			}
+			const double Fraction = InterpolateContinentalFraction(State.Plates[Candidate.PlateId], Candidate);
+			if (Fraction >= 0.5)
+			{
+				bHasContinental = true;
+			}
+			else
+			{
+				bHasOceanic = true;
+			}
+		}
+		return (bHasContinental && bHasOceanic)
+			? ECarrierLabPhaseIIMaterialEventClass::UnresolvedMixedMaterialMultiHit
+			: ECarrierLabPhaseIIMaterialEventClass::UnresolvedSameMaterialMultiHit;
+	};
 	for (const CarrierLab::FSphereSample& Sample : State.Samples)
 	{
 		uint64 RawPlateMask = 0;
@@ -1605,6 +1690,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				const FVector3d RidgePoint = NormalizeOrFallback(Q1.UnitPosition + Q2.UnitPosition, Sample.UnitPosition);
 				const double SignedVelocity = SignedPairSeparationVelocityForPlatePair(RidgePoint, Motions, Q1.PlateId, Q2.PlateId);
 				++OutMetrics.GapFillCount;
+				const bool bNonSeparatingGap = SignedVelocity <= 0.0;
 				if (SignedVelocity <= 0.0)
 				{
 					++OutMetrics.NonSeparatingGapFillCount;
@@ -1619,6 +1705,16 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				Decision.SampleId = Sample.Id;
 				Decision.ResolvedPlateId = Q1.PlateId;
 				Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::GapFill;
+				SetMaterialClass(
+					Sample.Id,
+					ECarrierLabPhaseIIMaterialEventClass::OverwrittenByGapFill,
+					ECarrierLabPhaseIIFilterDecisionClass::GapFill,
+					RawPlateCount,
+					0,
+					false,
+					bNonSeparatingGap,
+					INDEX_NONE,
+					INDEX_NONE);
 			}
 			continue;
 		}
@@ -1644,6 +1740,12 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 				++OutMetrics.FilteredCandidateCount;
 				SamplesWithFilteredCandidates.Add(Sample.Id);
 				const FCarrierLabPhaseIITriangleLabelRecord& Label = **LabelPtr;
+				if (MaterialSourceContactIdBySample.IsValidIndex(Sample.Id) &&
+					MaterialSourceContactIdBySample[Sample.Id] == INDEX_NONE)
+				{
+					MaterialSourceContactIdBySample[Sample.Id] = Label.ContactId;
+					MaterialSourceLabelIdBySample[Sample.Id] = Label.LabelId;
+				}
 				if (Label.bFromThirdPlateContact)
 				{
 					++OutMetrics.DecisionsFromThirdPlateLabelCount;
@@ -1689,6 +1791,16 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			Decision.bBoundaryEvidence = bAnyBoundary;
 			Decision.bThirdPlateEvidence = RawPlateCount >= 3;
 			Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::FilterExhausted;
+			SetMaterialClass(
+				Sample.Id,
+				ECarrierLabPhaseIIMaterialEventClass::FilterExhaustedUnknown,
+				ECarrierLabPhaseIIFilterDecisionClass::FilterExhausted,
+				RawPlateCount,
+				PostPlateCount,
+				RawPlateCount >= 3,
+				false,
+				MaterialSourceContactIdBySample.IsValidIndex(Sample.Id) ? MaterialSourceContactIdBySample[Sample.Id] : INDEX_NONE,
+				MaterialSourceLabelIdBySample.IsValidIndex(Sample.Id) ? MaterialSourceLabelIdBySample[Sample.Id] : INDEX_NONE);
 			continue;
 		}
 
@@ -1715,6 +1827,16 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			Decision.bBoundaryEvidence = bAnyBoundary;
 			Decision.bThirdPlateEvidence = RawPlateCount >= 3;
 			Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::UnresolvedMultiHit;
+			SetMaterialClass(
+				Sample.Id,
+				ClassifyUnresolvedMaterial(RawPlateCount, RemainingCandidates),
+				ECarrierLabPhaseIIFilterDecisionClass::UnresolvedMultiHit,
+				RawPlateCount,
+				PostPlateCount,
+				RawPlateCount >= 3,
+				false,
+				MaterialSourceContactIdBySample.IsValidIndex(Sample.Id) ? MaterialSourceContactIdBySample[Sample.Id] : INDEX_NONE,
+				MaterialSourceLabelIdBySample.IsValidIndex(Sample.Id) ? MaterialSourceLabelIdBySample[Sample.Id] : INDEX_NONE);
 			continue;
 		}
 
@@ -1745,10 +1867,234 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			Decision.bBoundaryEvidence = bAnyBoundary;
 			Decision.bThirdPlateEvidence = RawPlateCount >= 3;
 			Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+			SetMaterialClass(
+				Sample.Id,
+				ECarrierLabPhaseIIMaterialEventClass::ConsumedBySubduction,
+				ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle,
+				RawPlateCount,
+				PostPlateCount,
+				RawPlateCount >= 3,
+				false,
+				MaterialSourceContactIdBySample.IsValidIndex(Sample.Id) ? MaterialSourceContactIdBySample[Sample.Id] : INDEX_NONE,
+				MaterialSourceLabelIdBySample.IsValidIndex(Sample.Id) ? MaterialSourceLabelIdBySample[Sample.Id] : INDEX_NONE);
 		}
 	}
 	OutMetrics.FilteredSampleCount = SamplesWithFilteredCandidates.Num();
 	OutMetrics.FilterSeconds = FPlatformTime::Seconds() - FilterStartSeconds;
+
+	if (OutMaterialRecords != nullptr || OutMaterialMetrics != nullptr)
+	{
+		FCarrierLabPhaseIIMaterialLedgerMetrics LedgerMetrics;
+		LedgerMetrics.EventId = OutMetrics.EventId;
+		LedgerMetrics.Step = OutMetrics.Step;
+		LedgerMetrics.SampleCount = State.Samples.Num();
+		TArray<double> PlateBefore;
+		TArray<double> PlateAfter;
+		TArray<double> PlateRecordDelta;
+		PlateBefore.Init(0.0, State.Plates.Num());
+		PlateAfter.Init(0.0, State.Plates.Num());
+		PlateRecordDelta.Init(0.0, State.Plates.Num());
+
+		auto AddLossGain = [](const double Delta, double& Loss, double& Gain)
+		{
+			if (Delta < 0.0)
+			{
+				Loss += -Delta;
+			}
+			else
+			{
+				Gain += Delta;
+			}
+		};
+
+		uint64 LedgerHash = 1469598103934665603ull;
+		HashMix(LedgerHash, static_cast<uint64>(OutMetrics.EventId + 1));
+		HashMix(LedgerHash, static_cast<uint64>(OutMetrics.Step + 1));
+		HashMix(LedgerHash, static_cast<uint64>(State.Samples.Num() + 1));
+		for (const CarrierLab::FSphereSample& Sample : State.Samples)
+		{
+			const int32 SampleId = Sample.Id;
+			const int32 TargetPlateId = NewPlateIds.IsValidIndex(SampleId) ? NewPlateIds[SampleId] : Sample.PlateId;
+			const double AfterFraction = FMath::Clamp(NewFractions.IsValidIndex(SampleId) ? NewFractions[SampleId] : Sample.ContinentalFraction, 0.0, 1.0);
+			const double ContinentalBefore = Sample.AreaWeight * Sample.ContinentalFraction;
+			const double ContinentalAfter = Sample.AreaWeight * AfterFraction;
+			const double OceanicBefore = Sample.AreaWeight - ContinentalBefore;
+			const double OceanicAfter = Sample.AreaWeight - ContinentalAfter;
+			const double ContinentalDelta = ContinentalAfter - ContinentalBefore;
+			const double OceanicDelta = OceanicAfter - OceanicBefore;
+			ECarrierLabPhaseIIMaterialEventClass EventClass = MaterialClassBySample.IsValidIndex(SampleId)
+				? MaterialClassBySample[SampleId]
+				: ECarrierLabPhaseIIMaterialEventClass::Preserved;
+			const bool bMaterialChanged = FMath::Abs(ContinentalDelta) > 1.0e-15 || FMath::Abs(OceanicDelta) > 1.0e-15;
+			const bool bPlateChanged = TargetPlateId != Sample.PlateId;
+			if (EventClass == ECarrierLabPhaseIIMaterialEventClass::Preserved && (bMaterialChanged || bPlateChanged))
+			{
+				EventClass = ECarrierLabPhaseIIMaterialEventClass::SingleHitTransfer;
+			}
+
+			LedgerMetrics.TotalArea += Sample.AreaWeight;
+			LedgerMetrics.ContinentalMassBefore += ContinentalBefore;
+			LedgerMetrics.ContinentalMassAfter += ContinentalAfter;
+			LedgerMetrics.OceanicMassBefore += OceanicBefore;
+			LedgerMetrics.OceanicMassAfter += OceanicAfter;
+			if (PlateBefore.IsValidIndex(Sample.PlateId))
+			{
+				PlateBefore[Sample.PlateId] += ContinentalBefore;
+			}
+			if (PlateAfter.IsValidIndex(TargetPlateId))
+			{
+				PlateAfter[TargetPlateId] += ContinentalAfter;
+			}
+
+			const bool bNeedsRecord =
+				EventClass != ECarrierLabPhaseIIMaterialEventClass::Preserved ||
+				bMaterialChanged ||
+				bPlateChanged;
+			if (!bNeedsRecord)
+			{
+				++LedgerMetrics.PreservedRecordCount;
+				continue;
+			}
+
+			FCarrierLabPhaseIIMaterialRecord Record;
+			Record.RecordId = LedgerMetrics.RecordCount;
+			Record.EventId = OutMetrics.EventId;
+			Record.Step = OutMetrics.Step;
+			Record.SampleId = SampleId;
+			Record.SourcePlateId = Sample.PlateId;
+			Record.TargetPlateId = TargetPlateId;
+			Record.SourceContactId = MaterialSourceContactIdBySample.IsValidIndex(SampleId) ? MaterialSourceContactIdBySample[SampleId] : INDEX_NONE;
+			Record.SourceLabelId = MaterialSourceLabelIdBySample.IsValidIndex(SampleId) ? MaterialSourceLabelIdBySample[SampleId] : INDEX_NONE;
+			Record.RawPlateCount = MaterialRawPlateCountBySample.IsValidIndex(SampleId) ? MaterialRawPlateCountBySample[SampleId] : 0;
+			Record.PostFilterPlateCount = MaterialPostPlateCountBySample.IsValidIndex(SampleId) ? MaterialPostPlateCountBySample[SampleId] : 0;
+			Record.AreaWeight = Sample.AreaWeight;
+			Record.ContinentalBefore = ContinentalBefore;
+			Record.ContinentalAfter = ContinentalAfter;
+			Record.ContinentalDelta = ContinentalDelta;
+			Record.OceanicBefore = OceanicBefore;
+			Record.OceanicAfter = OceanicAfter;
+			Record.OceanicDelta = OceanicDelta;
+			Record.bMaterialChanged = bMaterialChanged;
+			Record.bPlateChanged = bPlateChanged;
+			Record.bThirdPlateEvidence = MaterialThirdPlateBySample.IsValidIndex(SampleId) && MaterialThirdPlateBySample[SampleId];
+			Record.bNonSeparatingGap = MaterialNonSeparatingGapBySample.IsValidIndex(SampleId) && MaterialNonSeparatingGapBySample[SampleId];
+			Record.EventClass = EventClass;
+			Record.DecisionClass = MaterialDecisionClassBySample.IsValidIndex(SampleId)
+				? MaterialDecisionClassBySample[SampleId]
+				: ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+
+			++LedgerMetrics.RecordCount;
+			if (bMaterialChanged)
+			{
+				++LedgerMetrics.ChangedRecordCount;
+			}
+			if (bPlateChanged)
+			{
+				++LedgerMetrics.PlateChangedRecordCount;
+			}
+			LedgerMetrics.LedgerContinentalDelta += ContinentalDelta;
+			LedgerMetrics.LedgerOceanicDelta += OceanicDelta;
+			if (PlateRecordDelta.IsValidIndex(Sample.PlateId))
+			{
+				PlateRecordDelta[Sample.PlateId] -= ContinentalBefore;
+			}
+			if (PlateRecordDelta.IsValidIndex(TargetPlateId))
+			{
+				PlateRecordDelta[TargetPlateId] += ContinentalAfter;
+			}
+
+			switch (EventClass)
+			{
+			case ECarrierLabPhaseIIMaterialEventClass::SingleHitTransfer:
+				++LedgerMetrics.SingleHitTransferRecordCount;
+				AddLossGain(ContinentalDelta, LedgerMetrics.SingleHitTransferContinentalLoss, LedgerMetrics.SingleHitTransferContinentalGain);
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::ConsumedBySubduction:
+				++LedgerMetrics.SubductionRecordCount;
+				AddLossGain(ContinentalDelta, LedgerMetrics.SubductionContinentalLoss, LedgerMetrics.SubductionContinentalGain);
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::OverwrittenByGapFill:
+				++LedgerMetrics.GapFillRecordCount;
+				if (Record.bNonSeparatingGap)
+				{
+					++LedgerMetrics.NonSeparatingGapFillRecordCount;
+				}
+				AddLossGain(ContinentalDelta, LedgerMetrics.GapFillContinentalLoss, LedgerMetrics.GapFillContinentalGain);
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::UnresolvedSameMaterialMultiHit:
+				++LedgerMetrics.UnresolvedSameMaterialRecordCount;
+				LedgerMetrics.UnresolvedSameMaterialContinentalDelta += ContinentalDelta;
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::UnresolvedTripleJunctionMultiHit:
+				++LedgerMetrics.UnresolvedTripleJunctionRecordCount;
+				LedgerMetrics.UnresolvedTripleJunctionContinentalDelta += ContinentalDelta;
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::UnresolvedMixedMaterialMultiHit:
+				++LedgerMetrics.UnresolvedMixedMaterialRecordCount;
+				LedgerMetrics.UnresolvedMixedMaterialContinentalDelta += ContinentalDelta;
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::FilterExhaustedUnknown:
+				++LedgerMetrics.FilterExhaustedRecordCount;
+				LedgerMetrics.FilterExhaustedContinentalDelta += ContinentalDelta;
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::Preserved:
+				++LedgerMetrics.PreservedRecordCount;
+				break;
+			case ECarrierLabPhaseIIMaterialEventClass::NumericResidual:
+			default:
+				break;
+			}
+
+			HashMix(LedgerHash, static_cast<uint64>(Record.RecordId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.SampleId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.SourcePlateId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.TargetPlateId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.SourceContactId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.SourceLabelId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.RawPlateCount + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.PostFilterPlateCount + 1));
+			HashMixDouble(LedgerHash, Record.AreaWeight);
+			HashMixDouble(LedgerHash, Record.ContinentalBefore);
+			HashMixDouble(LedgerHash, Record.ContinentalAfter);
+			HashMixDouble(LedgerHash, Record.OceanicBefore);
+			HashMixDouble(LedgerHash, Record.OceanicAfter);
+			HashMix(LedgerHash, Record.bMaterialChanged ? 1ull : 0ull);
+			HashMix(LedgerHash, Record.bPlateChanged ? 1ull : 0ull);
+			HashMix(LedgerHash, Record.bThirdPlateEvidence ? 1ull : 0ull);
+			HashMix(LedgerHash, Record.bNonSeparatingGap ? 1ull : 0ull);
+			HashMix(LedgerHash, static_cast<uint64>(Record.EventClass) + 1);
+			HashMix(LedgerHash, static_cast<uint64>(Record.DecisionClass) + 1);
+
+			if (OutMaterialRecords != nullptr)
+			{
+				OutMaterialRecords->Add(Record);
+			}
+		}
+
+		const double ActiveContinentalDelta = LedgerMetrics.ContinentalMassAfter - LedgerMetrics.ContinentalMassBefore;
+		const double ActiveOceanicDelta = LedgerMetrics.OceanicMassAfter - LedgerMetrics.OceanicMassBefore;
+		LedgerMetrics.ContinentalDeltaResidual = ActiveContinentalDelta - LedgerMetrics.LedgerContinentalDelta;
+		LedgerMetrics.OceanicDeltaResidual = ActiveOceanicDelta - LedgerMetrics.LedgerOceanicDelta;
+		for (int32 PlateId = 0; PlateId < PlateBefore.Num() && PlateId < PlateAfter.Num(); ++PlateId)
+		{
+			const double PlateResidual = (PlateAfter[PlateId] - PlateBefore[PlateId]) - (PlateRecordDelta.IsValidIndex(PlateId) ? PlateRecordDelta[PlateId] : 0.0);
+			if (FMath::Abs(PlateResidual) > FMath::Abs(LedgerMetrics.MaxPerPlateContinentalResidual))
+			{
+				LedgerMetrics.MaxPerPlateContinentalResidual = PlateResidual;
+				LedgerMetrics.MaxPerPlateContinentalResidualPlateId = PlateId;
+			}
+		}
+		HashMixDouble(LedgerHash, LedgerMetrics.ContinentalMassBefore);
+		HashMixDouble(LedgerHash, LedgerMetrics.ContinentalMassAfter);
+		HashMixDouble(LedgerHash, LedgerMetrics.LedgerContinentalDelta);
+		HashMixDouble(LedgerHash, LedgerMetrics.ContinentalDeltaResidual);
+		LedgerMetrics.MaterialLedgerHash = HashToString(LedgerHash);
+		OutMetrics.MaterialLedgerHash = LedgerMetrics.MaterialLedgerHash;
+		if (OutMaterialMetrics != nullptr)
+		{
+			*OutMaterialMetrics = LedgerMetrics;
+		}
+	}
 
 	for (CarrierLab::FSphereSample& Sample : State.Samples)
 	{

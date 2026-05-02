@@ -274,6 +274,19 @@ enum class ECarrierLabPhaseIIFilterDecisionClass : uint8
 	FilterExhausted
 };
 
+enum class ECarrierLabPhaseIIMaterialEventClass : uint8
+{
+	Preserved,
+	SingleHitTransfer,
+	ConsumedBySubduction,
+	OverwrittenByGapFill,
+	UnresolvedSameMaterialMultiHit,
+	UnresolvedTripleJunctionMultiHit,
+	UnresolvedMixedMaterialMultiHit,
+	FilterExhaustedUnknown,
+	NumericResidual
+};
+
 struct FCarrierLabPhaseIIFilterDecisionRecord
 {
 	int32 DecisionId = INDEX_NONE;
@@ -293,6 +306,74 @@ struct FCarrierLabPhaseIIFilterDecisionRecord
 	bool bBoundaryEvidence = false;
 	bool bThirdPlateEvidence = false;
 	ECarrierLabPhaseIIFilterDecisionClass DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+};
+
+struct FCarrierLabPhaseIIMaterialRecord
+{
+	int32 RecordId = INDEX_NONE;
+	int32 EventId = 0;
+	int32 Step = 0;
+	int32 SampleId = INDEX_NONE;
+	int32 SourcePlateId = INDEX_NONE;
+	int32 TargetPlateId = INDEX_NONE;
+	int32 SourceContactId = INDEX_NONE;
+	int32 SourceLabelId = INDEX_NONE;
+	int32 RawPlateCount = 0;
+	int32 PostFilterPlateCount = 0;
+	double AreaWeight = 0.0;
+	double ContinentalBefore = 0.0;
+	double ContinentalAfter = 0.0;
+	double ContinentalDelta = 0.0;
+	double OceanicBefore = 0.0;
+	double OceanicAfter = 0.0;
+	double OceanicDelta = 0.0;
+	bool bMaterialChanged = false;
+	bool bPlateChanged = false;
+	bool bThirdPlateEvidence = false;
+	bool bNonSeparatingGap = false;
+	ECarrierLabPhaseIIMaterialEventClass EventClass = ECarrierLabPhaseIIMaterialEventClass::Preserved;
+	ECarrierLabPhaseIIFilterDecisionClass DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+};
+
+struct FCarrierLabPhaseIIMaterialLedgerMetrics
+{
+	int32 EventId = 0;
+	int32 Step = 0;
+	int32 SampleCount = 0;
+	int32 RecordCount = 0;
+	int32 ChangedRecordCount = 0;
+	int32 PlateChangedRecordCount = 0;
+	int32 PreservedRecordCount = 0;
+	int32 SingleHitTransferRecordCount = 0;
+	int32 SubductionRecordCount = 0;
+	int32 GapFillRecordCount = 0;
+	int32 NonSeparatingGapFillRecordCount = 0;
+	int32 UnresolvedSameMaterialRecordCount = 0;
+	int32 UnresolvedTripleJunctionRecordCount = 0;
+	int32 UnresolvedMixedMaterialRecordCount = 0;
+	int32 FilterExhaustedRecordCount = 0;
+	double TotalArea = 0.0;
+	double ContinentalMassBefore = 0.0;
+	double ContinentalMassAfter = 0.0;
+	double OceanicMassBefore = 0.0;
+	double OceanicMassAfter = 0.0;
+	double LedgerContinentalDelta = 0.0;
+	double LedgerOceanicDelta = 0.0;
+	double ContinentalDeltaResidual = 0.0;
+	double OceanicDeltaResidual = 0.0;
+	double SingleHitTransferContinentalLoss = 0.0;
+	double SingleHitTransferContinentalGain = 0.0;
+	double SubductionContinentalLoss = 0.0;
+	double SubductionContinentalGain = 0.0;
+	double GapFillContinentalLoss = 0.0;
+	double GapFillContinentalGain = 0.0;
+	double UnresolvedSameMaterialContinentalDelta = 0.0;
+	double UnresolvedTripleJunctionContinentalDelta = 0.0;
+	double UnresolvedMixedMaterialContinentalDelta = 0.0;
+	double FilterExhaustedContinentalDelta = 0.0;
+	double MaxPerPlateContinentalResidual = 0.0;
+	int32 MaxPerPlateContinentalResidualPlateId = INDEX_NONE;
+	FString MaterialLedgerHash;
 };
 
 struct FCarrierLabPhaseIIResamplingFilterMetrics
@@ -330,6 +411,7 @@ struct FCarrierLabPhaseIIResamplingFilterMetrics
 	FString StateHashBefore;
 	FString StateHashAfter;
 	FString FilterDecisionHash;
+	FString MaterialLedgerHash;
 };
 
 UCLASS(Blueprintable)
@@ -450,7 +532,9 @@ public:
 	bool ApplyPhaseIIResamplingFilterEvent(
 		const TArray<FCarrierLabPhaseIITriangleLabelRecord>& Labels,
 		TArray<FCarrierLabPhaseIIFilterDecisionRecord>& OutDecisions,
-		FCarrierLabPhaseIIResamplingFilterMetrics& OutMetrics);
+		FCarrierLabPhaseIIResamplingFilterMetrics& OutMetrics,
+		TArray<FCarrierLabPhaseIIMaterialRecord>* OutMaterialRecords = nullptr,
+		FCarrierLabPhaseIIMaterialLedgerMetrics* OutMaterialMetrics = nullptr);
 	bool GetPhaseIIMotion(int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const;
 	double ComputePhaseIIPairSignedConvergenceVelocity(int32 PlateA, int32 PlateB) const;
 
