@@ -3394,6 +3394,39 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB3SubductionMatrixAudit(FCarrierL
 		break;
 	}
 
+	uint64 MatrixEvidenceHash = 1469598103934665603ull;
+	HashMix(MatrixEvidenceHash, static_cast<uint64>(State.ConvergenceSubductionMatrixEvidence.Num() + 1));
+	for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : State.ConvergenceSubductionMatrixEvidence)
+	{
+		HashMix(MatrixEvidenceHash, static_cast<uint64>(Evidence.EvidenceId + 1));
+		HashMix(MatrixEvidenceHash, static_cast<uint64>(Evidence.ContactId + 1));
+		HashMix(MatrixEvidenceHash, Evidence.PairKey + 1ull);
+		HashMix(MatrixEvidenceHash, static_cast<uint64>(Evidence.PlateId + 1));
+		HashMix(MatrixEvidenceHash, static_cast<uint64>(Evidence.OtherPlateId + 1));
+		HashMix(MatrixEvidenceHash, static_cast<uint64>(Evidence.LocalTriangleId + 1));
+		HashMix(MatrixEvidenceHash, static_cast<uint64>(Evidence.OtherLocalTriangleId + 1));
+		HashMixDouble(MatrixEvidenceHash, Evidence.SignedConvergenceVelocity);
+		HashMix(MatrixEvidenceHash, Evidence.bAccepted ? 1ull : 0ull);
+
+		if (Evidence.bAccepted && Evidence.SignedConvergenceVelocity > PhaseIIContactVelocityMargin)
+		{
+			++OutAudit.AcceptedLocalPositiveHitCount;
+			if (OutAudit.AcceptedEvidence.Num() < 8)
+			{
+				OutAudit.AcceptedEvidence.Add(Evidence);
+			}
+		}
+		else if (!Evidence.bAccepted && Evidence.SignedConvergenceVelocity <= PhaseIIContactVelocityMargin)
+		{
+			++OutAudit.RejectedLocalNonPositiveHitCount;
+			if (OutAudit.RejectedEvidence.Num() < 8)
+			{
+				OutAudit.RejectedEvidence.Add(Evidence);
+			}
+		}
+	}
+
+	OutAudit.MatrixEvidenceHash = HashToString(MatrixEvidenceHash);
 	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
 	return true;
 }
@@ -3559,6 +3592,31 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB6NeighborPropagationAudit(FCarri
 		}
 	}
 
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : State.ConvergenceSubductionTriangleHits)
+	{
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision == nullptr ||
+			!IsSubductionPolarityDecision(*Decision) ||
+			Decision->UnderPlate != Hit.PlateId ||
+			!State.Plates.IsValidIndex(Hit.PlateId) ||
+			!State.Plates[Hit.PlateId].LocalTriangles.IsValidIndex(Hit.LocalTriangleId))
+		{
+			continue;
+		}
+
+		OutAudit.SeedEvidenceId = Hit.EvidenceId;
+		OutAudit.SeedPlateId = Hit.PlateId;
+		OutAudit.SeedOtherPlateId = Hit.OtherPlateId;
+		OutAudit.SeedLocalTriangleId = Hit.LocalTriangleId;
+		OutAudit.SeedSignedConvergenceVelocity = Hit.SignedConvergenceVelocity;
+		break;
+	}
+
 	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
 	return true;
 }
@@ -3664,6 +3722,62 @@ bool ACarrierLabVisualizationActor::SetPlateOceanicAgeForTest(const int32 PlateI
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit)
+{
+	OutAudit = FCarrierLabPhaseIIIB3SubductionMatrixAudit();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+	if (!State.Plates.IsValidIndex(0) || !State.Plates.IsValidIndex(1))
+	{
+		return false;
+	}
+
+	const CarrierLab::FCarrierPlate& Plate = State.Plates[0];
+	const CarrierLab::FCarrierPlate& OtherPlate = State.Plates[1];
+	const int32 LocalTriangleId = !Plate.ActiveBoundaryTriangles.IsEmpty()
+		? Plate.ActiveBoundaryTriangles[0]
+		: (Plate.LocalTriangles.IsValidIndex(0) ? 0 : INDEX_NONE);
+	const int32 OtherLocalTriangleId = OtherPlate.LocalTriangles.IsValidIndex(0) ? 0 : INDEX_NONE;
+	if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId) ||
+		!OtherPlate.LocalTriangles.IsValidIndex(OtherLocalTriangleId))
+	{
+		return false;
+	}
+
+	State.ConvergenceSubductionMatrixPairKeys.Reset();
+	State.ConvergenceSubductionPolarityDecisions.Reset();
+	State.ConvergenceSubductionTriangleHits.Reset();
+	State.ConvergenceSubductionMatrixEvidence.Reset();
+	State.ConvergenceSubductionMatrixRayTestCount = 1;
+	State.ConvergenceSubductionMatrixHitCount = 0;
+	State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
+	State.ConvergenceSubductionMatrixNonConvergentHitCount = 1;
+	State.ConvergenceNeighborPropagationSeedCount = 0;
+	State.ConvergenceNeighborPropagationAddedCount = 0;
+	State.ConvergenceNeighborPropagationDuplicateCount = 0;
+	State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
+	State.ConvergenceNeighborPropagationInvalidCount = 0;
+
+	CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence =
+		State.ConvergenceSubductionMatrixEvidence.AddDefaulted_GetRef();
+	Evidence.EvidenceId = 0;
+	Evidence.ContactId = 0;
+	Evidence.PairKey = MakePlatePairKey(0, 1);
+	Evidence.PlateId = 0;
+	Evidence.OtherPlateId = 1;
+	Evidence.LocalTriangleId = LocalTriangleId;
+	Evidence.OtherLocalTriangleId = OtherLocalTriangleId;
+	Evidence.SignedConvergenceVelocity = -0.01;
+	Evidence.bAccepted = false;
+
+	UpdateConvergenceSubductionPolarityDecisions();
+	UpdateConvergenceNeighborPropagation();
+	CurrentMetrics.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
+	return GetPhaseIIIB3SubductionMatrixAudit(OutAudit);
+}
+
 bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTest(
 	const int32 PreferredUnderPlateId,
 	FCarrierLabPhaseIIIB6SeedMetrics& OutSeedMetrics)
@@ -3756,6 +3870,7 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			State.ConvergenceSubductionMatrixPairKeys.Add(PairKey);
 			State.ConvergenceSubductionPolarityDecisions.Reset();
 			State.ConvergenceSubductionTriangleHits.Reset();
+			State.ConvergenceSubductionMatrixEvidence.Reset();
 			State.ConvergenceSubductionMatrixRayTestCount = 0;
 			State.ConvergenceSubductionMatrixHitCount = 1;
 			State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
@@ -3771,6 +3886,18 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			TriangleHit.PlateId = PreferredUnderPlateId;
 			TriangleHit.OtherPlateId = OtherPlate.PlateId;
 			TriangleHit.LocalTriangleId = LocalTriangleId;
+			TriangleHit.EvidenceId = 0;
+			TriangleHit.SignedConvergenceVelocity = PairSignedConvergenceVelocity;
+			CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence = State.ConvergenceSubductionMatrixEvidence.AddDefaulted_GetRef();
+			Evidence.EvidenceId = 0;
+			Evidence.ContactId = 0;
+			Evidence.PairKey = PairKey;
+			Evidence.PlateId = PreferredUnderPlateId;
+			Evidence.OtherPlateId = OtherPlate.PlateId;
+			Evidence.LocalTriangleId = LocalTriangleId;
+			Evidence.OtherLocalTriangleId = OtherPlate.LocalTriangles.IsValidIndex(0) ? 0 : INDEX_NONE;
+			Evidence.SignedConvergenceVelocity = PairSignedConvergenceVelocity;
+			Evidence.bAccepted = true;
 			UpdateConvergenceSubductionPolarityDecisions();
 			UpdateConvergenceNeighborPropagation();
 
@@ -4138,6 +4265,7 @@ void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
 void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 {
 	State.ConvergenceSubductionTriangleHits.Reset();
+	State.ConvergenceSubductionMatrixEvidence.Reset();
 	FString MeshError;
 	if (!RefreshPlateRayMeshes(MeshError))
 	{
@@ -4195,7 +4323,8 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 					{
 						continue;
 					}
-					if (!PlateRayMeshes[OtherPlate.PlateId].MeshTriangleIdToLocalTriangleId.Contains(Hit.TriangleId))
+					const int32* OtherLocalTriangleId = PlateRayMeshes[OtherPlate.PlateId].MeshTriangleIdToLocalTriangleId.Find(Hit.TriangleId);
+					if (OtherLocalTriangleId == nullptr)
 					{
 						continue;
 					}
@@ -4207,18 +4336,41 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 
 					const double LocalSignedConvergenceVelocity =
 						-SignedPairSeparationVelocityForPlatePair(Barycenter, Motions, Plate.PlateId, OtherPlate.PlateId);
+					const int32 EvidenceId = State.ConvergenceSubductionMatrixEvidence.Num();
 					if (LocalSignedConvergenceVelocity <= PhaseIIContactVelocityMargin)
 					{
+						State.ConvergenceSubductionMatrixEvidence.Add(CarrierLab::FConvergenceSubductionMatrixEvidence{
+							EvidenceId,
+							EvidenceId,
+							MakePlatePairKey(Plate.PlateId, OtherPlate.PlateId),
+							Plate.PlateId,
+							OtherPlate.PlateId,
+							LocalTriangleId,
+							*OtherLocalTriangleId,
+							LocalSignedConvergenceVelocity,
+							false});
 						++State.ConvergenceSubductionMatrixNonConvergentHitCount;
 						continue;
 					}
 
 					State.ConvergenceSubductionMatrixPairKeys.Add(MakePlatePairKey(Plate.PlateId, OtherPlate.PlateId));
+					State.ConvergenceSubductionMatrixEvidence.Add(CarrierLab::FConvergenceSubductionMatrixEvidence{
+						EvidenceId,
+						EvidenceId,
+						MakePlatePairKey(Plate.PlateId, OtherPlate.PlateId),
+						Plate.PlateId,
+						OtherPlate.PlateId,
+						LocalTriangleId,
+						*OtherLocalTriangleId,
+						LocalSignedConvergenceVelocity,
+						true});
 					State.ConvergenceSubductionTriangleHits.Add(CarrierLab::FConvergenceSubductionTriangleHit{
 						MakePlatePairKey(Plate.PlateId, OtherPlate.PlateId),
 						Plate.PlateId,
 						OtherPlate.PlateId,
-						LocalTriangleId});
+						LocalTriangleId,
+						EvidenceId,
+						LocalSignedConvergenceVelocity});
 					++State.ConvergenceSubductionMatrixHitCount;
 					bAcceptedPair = true;
 					break;

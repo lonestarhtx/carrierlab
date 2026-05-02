@@ -450,6 +450,7 @@ namespace CarrierLab
 		State.ConvergenceSubductionMatrixPairKeys.Reset();
 		State.ConvergenceSubductionPolarityDecisions.Reset();
 		State.ConvergenceSubductionTriangleHits.Reset();
+		State.ConvergenceSubductionMatrixEvidence.Reset();
 		State.ConvergenceTrackingDistanceCullCount = 0;
 		State.ConvergenceSubductionMatrixRayTestCount = 0;
 		State.ConvergenceSubductionMatrixHitCount = 0;

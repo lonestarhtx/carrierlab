@@ -542,9 +542,14 @@ struct FCarrierLabPhaseIIIB3SubductionMatrixAudit
 	int32 HitCount = 0;
 	int32 BoundaryHitCount = 0;
 	int32 NonConvergentHitCount = 0;
+	int32 AcceptedLocalPositiveHitCount = 0;
+	int32 RejectedLocalNonPositiveHitCount = 0;
 	int32 ProbePlateA = INDEX_NONE;
 	int32 ProbePlateB = INDEX_NONE;
 	double ProbeSignedConvergenceVelocity = 0.0;
+	TArray<CarrierLab::FConvergenceSubductionMatrixEvidence> AcceptedEvidence;
+	TArray<CarrierLab::FConvergenceSubductionMatrixEvidence> RejectedEvidence;
+	FString MatrixEvidenceHash;
 	FString ConvergenceTrackingHash;
 };
 
@@ -622,6 +627,11 @@ struct FCarrierLabPhaseIIIB6NeighborPropagationAudit
 	int32 MaxActiveTrianglesOnPlate = 0;
 	int32 ProbePlateId = INDEX_NONE;
 	int32 ProbeLocalTriangleId = INDEX_NONE;
+	int32 SeedEvidenceId = INDEX_NONE;
+	int32 SeedPlateId = INDEX_NONE;
+	int32 SeedOtherPlateId = INDEX_NONE;
+	int32 SeedLocalTriangleId = INDEX_NONE;
+	double SeedSignedConvergenceVelocity = 0.0;
 	double ProbeDistanceKm = 0.0;
 	double DistanceThresholdKm = 1800.0;
 	double MaxDistanceKm = 0.0;
@@ -839,6 +849,7 @@ public:
 	bool GetPhaseIIIB7HashClosureAudit(FCarrierLabPhaseIIIB7HashClosureAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
+	bool SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit);
 	bool SeedPhaseIIIB6SingleConvergentTriangleForTest(
 		int32 PreferredUnderPlateId,
 		FCarrierLabPhaseIIIB6SeedMetrics& OutSeedMetrics);

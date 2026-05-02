@@ -109,6 +109,21 @@ namespace CarrierLab
 		int32 PlateId = INDEX_NONE;
 		int32 OtherPlateId = INDEX_NONE;
 		int32 LocalTriangleId = INDEX_NONE;
+		int32 EvidenceId = INDEX_NONE;
+		double SignedConvergenceVelocity = 0.0;
+	};
+
+	struct FConvergenceSubductionMatrixEvidence
+	{
+		int32 EvidenceId = INDEX_NONE;
+		int32 ContactId = INDEX_NONE;
+		uint64 PairKey = 0;
+		int32 PlateId = INDEX_NONE;
+		int32 OtherPlateId = INDEX_NONE;
+		int32 LocalTriangleId = INDEX_NONE;
+		int32 OtherLocalTriangleId = INDEX_NONE;
+		double SignedConvergenceVelocity = 0.0;
+		bool bAccepted = false;
 	};
 
 	struct FCarrierState
@@ -123,6 +138,7 @@ namespace CarrierLab
 		TSet<uint64> ConvergenceSubductionMatrixPairKeys;
 		TArray<FConvergenceSubductionPolarityDecision> ConvergenceSubductionPolarityDecisions;
 		TArray<FConvergenceSubductionTriangleHit> ConvergenceSubductionTriangleHits;
+		TArray<FConvergenceSubductionMatrixEvidence> ConvergenceSubductionMatrixEvidence;
 		int32 ConvergenceTrackingResetSerial = 0;
 		int32 ConvergenceTrackingDistanceCullCount = 0;
 		int32 ConvergenceSubductionMatrixRayTestCount = 0;
