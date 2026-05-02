@@ -1055,6 +1055,7 @@ public:
 		int32& OutHeight) const;
 
 	void ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture Fixture);
+	void ConfigurePhaseIIICProcessLayer(bool bEnabled, bool bInEnableSlabPull = false);
 	bool DetectPhaseIIContacts(TArray<FCarrierLabPhaseIIContactRecord>& OutContacts, FCarrierLabPhaseIIContactMetrics& OutMetrics);
 	bool BuildPhaseIITriangleLabels(
 		const TArray<FCarrierLabPhaseIIContactRecord>& Contacts,

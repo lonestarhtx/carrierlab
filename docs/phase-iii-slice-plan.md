@@ -267,11 +267,11 @@ Exit gate:
 
 Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiic3-report.md`.
 
-### IIIC.4: Slab Pull (Opt-In, Default On)
+### IIIC.4: Slab Pull (Opt-In, Default Off)
 
 Work:
 
-- Add a config flag `bSlabPullEnabled`, default `true`.
+- Add a config flag `bSlabPullEnabled`, default `false`.
 - When enabled: for each subducting plate `P_i`, modify the geodetic rotation axis `w_i` per thesis §3.3.1.3:
   `w_i(t+δt) = w_i(t) + ε · Σ_k (c_i × q_k / ||c_i × q_k||) · δt`
   where `q_k` are subducting front triangle barycenters and `ε = vs/v0` (with `vs = 8 mm/yr` per Table 3.2). Renormalize `w_i` after.
@@ -301,7 +301,7 @@ Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiic5-report.md`.
 
 ### IIIC Consolidation
 
-Work: `docs/checkpoints/phase-iii-iiic-consolidated.md` summarizing IIIC.1–IIIC.5 with the slab-pull on/off differential explicitly documented.
+Work: `docs/checkpoints/phase-iii-iiic-consolidated.md` summarizing IIIC.1-IIIC.5 with the slab-pull on/off differential explicitly documented. Consolidate IIIC.1-IIIC.3 into one normal process-layer preset for future slices while keeping slab pull as a separate opt-in authority-feedback switch.
 
 ## Sub-Phase IIID: Continental Collision
 

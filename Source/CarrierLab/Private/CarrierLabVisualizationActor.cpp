@@ -1825,6 +1825,14 @@ void ACarrierLabVisualizationActor::ConfigurePhaseIIMotionFixture(const ECarrier
 	CaptureDriftReference();
 }
 
+void ACarrierLabVisualizationActor::ConfigurePhaseIIICProcessLayer(const bool bEnabled, const bool bInEnableSlabPull)
+{
+	bEnablePhaseIIICSubductingMarks = bEnabled;
+	bEnablePhaseIIICVisibleHistoricalElevation = bEnabled;
+	bEnablePhaseIIICOverridingPlateUplift = bEnabled;
+	bEnablePhaseIIICSlabPull = bEnabled && bInEnableSlabPull;
+}
+
 bool ACarrierLabVisualizationActor::DetectPhaseIIContacts(TArray<FCarrierLabPhaseIIContactRecord>& OutContacts, FCarrierLabPhaseIIContactMetrics& OutMetrics)
 {
 	OutContacts.Reset();
