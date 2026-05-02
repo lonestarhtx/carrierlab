@@ -73,6 +73,18 @@ namespace
 		}
 	}
 
+	const TCHAR* SourceTriangleUniformityName(const ECarrierLabPhaseIISourceTriangleUniformity Uniformity)
+	{
+		switch (Uniformity)
+		{
+		case ECarrierLabPhaseIISourceTriangleUniformity::UniformOceanic: return TEXT("uniform_oceanic");
+		case ECarrierLabPhaseIISourceTriangleUniformity::UniformContinental: return TEXT("uniform_continental");
+		case ECarrierLabPhaseIISourceTriangleUniformity::Mixed: return TEXT("mixed");
+		case ECarrierLabPhaseIISourceTriangleUniformity::Unknown:
+		default: return TEXT("unknown");
+		}
+	}
+
 	FString GetOutputRoot(const FString& Params)
 	{
 		FString OutputRoot;
@@ -194,7 +206,7 @@ namespace
 	FString MaterialRecordJson(const FString& FixtureName, const int32 Replay, const FCarrierLabPhaseIIMaterialRecord& Record)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"replay\":%d,\"record_id\":%d,\"event_id\":%d,\"step\":%d,\"sample_id\":%d,\"source_plate_id\":%d,\"target_plate_id\":%d,\"source_contact_id\":%d,\"source_label_id\":%d,\"raw_plate_count\":%d,\"post_filter_plate_count\":%d,\"area_weight\":%.15f,\"continental_before\":%.15f,\"continental_after\":%.15f,\"continental_delta\":%.15f,\"oceanic_before\":%.15f,\"oceanic_after\":%.15f,\"oceanic_delta\":%.15f,\"material_changed\":%s,\"plate_changed\":%s,\"third_plate_evidence\":%s,\"non_separating_gap\":%s,\"event_class\":%s,\"decision_class\":%s}"),
+			TEXT("{\"fixture\":%s,\"replay\":%d,\"record_id\":%d,\"event_id\":%d,\"step\":%d,\"sample_id\":%d,\"source_plate_id\":%d,\"target_plate_id\":%d,\"source_contact_id\":%d,\"source_label_id\":%d,\"hit_plate_id\":%d,\"hit_local_triangle_id\":%d,\"hit_triangle_continental_vertex_count\":%d,\"hit_triangle_uniformity\":%s,\"raw_plate_count\":%d,\"post_filter_plate_count\":%d,\"area_weight\":%.15f,\"continental_before\":%.15f,\"continental_after\":%.15f,\"continental_delta\":%.15f,\"oceanic_before\":%.15f,\"oceanic_after\":%.15f,\"oceanic_delta\":%.15f,\"material_changed\":%s,\"plate_changed\":%s,\"third_plate_evidence\":%s,\"non_separating_gap\":%s,\"event_class\":%s,\"decision_class\":%s}"),
 			*JsonString(FixtureName),
 			Replay,
 			Record.RecordId,
@@ -205,6 +217,10 @@ namespace
 			Record.TargetPlateId,
 			Record.SourceContactId,
 			Record.SourceLabelId,
+			Record.HitPlateId,
+			Record.HitLocalTriangleId,
+			Record.HitTriangleContinentalVertexCount,
+			*JsonString(SourceTriangleUniformityName(Record.HitTriangleUniformity)),
 			Record.RawPlateCount,
 			Record.PostFilterPlateCount,
 			Record.AreaWeight,

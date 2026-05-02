@@ -2,7 +2,7 @@
 
 Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseII/Slice5/target_20260502`
 
-This checkpoint runs the accepted Slice 3+4 contact-label-filter-material-accounting stack across 60k, 100k, 250k, and 500k samples. It does not add new process behavior. The purpose is to test whether the Slice 4 audit equation and destruction-source breakdown remain stable as sample density increases.
+This checkpoint runs the accepted Slice 3+4 contact-label-filter-material-accounting stack across 60k, 100k, 250k, and 500k samples. It does not add new process behavior. The purpose is to test whether the Slice 4 audit equation and material-delta breakdown remain stable as sample density increases.
 
 Audit equation: `active_after = active_before + single_hit_transfer + consumed_by_subduction + overwritten_by_gap_fill + unresolved_same_material + unresolved_triple_junction + unresolved_mixed_material + filter_exhausted_unknown + numeric_residual`.
 
@@ -55,12 +55,12 @@ Audit equation: `active_after = active_before + single_hit_transfer + consumed_b
 
 | Resolution | Avg step kernel s | Avg step wall s | Paper Table 2 s | Contact s | Label s | Filter event s | Total replay s | Auth CAF before | Auth CAF after | Projected CAF before | Projected CAF after | Runtime |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 60000 | 0.032305 | 0.040805 | 0.19 | 0.171097 | 0.003184 | 0.891983 | 2.758500 | 0.301050000000 | 0.273075416991 | 0.191342288749 | 0.273075416991 | pass |
-| 100000 | 0.058505 | 0.073577 | 0.28 | 0.291058 | 0.005730 | 1.549155 | 4.832297 | 0.301040000000 | 0.274937409838 | 0.191610795296 | 0.274937409838 | pass |
-| 250000 | 0.141558 | 0.173858 | 1.24 | 0.766808 | 0.012041 | 4.801562 | 12.729793 | 0.301056000000 | 0.274440107899 | 0.191540763189 | 0.274440107899 | pass |
-| 500000 | 0.301934 | 0.367856 | 1.90 | 1.573589 | 0.024140 | 14.074536 | 30.940227 | 0.301078000000 | 0.274776406898 | 0.191739569842 | 0.274776406898 | pass |
+| 60000 | 0.029110 | 0.036163 | 0.19 | 0.135934 | 0.002573 | 0.530410 | 2.129866 | 0.301050000000 | 0.273075416991 | 0.191342288749 | 0.273075416991 | pass |
+| 100000 | 0.057007 | 0.071866 | 0.28 | 0.287401 | 0.005487 | 1.253883 | 4.487619 | 0.301040000000 | 0.274937409838 | 0.191610795296 | 0.274937409838 | pass |
+| 250000 | 0.129427 | 0.157160 | 1.24 | 0.609775 | 0.011228 | 3.654040 | 10.673267 | 0.301056000000 | 0.274440107899 | 0.191540763189 | 0.274440107899 | pass |
+| 500000 | 0.275426 | 0.334727 | 1.90 | 1.315654 | 0.024621 | 9.668896 | 24.725947 | 0.301078000000 | 0.274776406898 | 0.191739569842 | 0.274776406898 | pass |
 
-## Primary Destruction Breakdown
+## Primary Material Delta Breakdown
 
 | Resolution | Net C delta | Single-hit loss/gain/net | Subduction loss/gain/net | Gap-fill loss/gain/net | Unresolved same loss/gain/net | Unresolved triple loss/gain/net | Unresolved mixed loss/gain/net | Gap-fill net % of net loss | Single-hit net % of net loss |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -73,10 +73,10 @@ Audit equation: `active_after = active_before + single_hit_transfer + consumed_b
 
 | Resolution | Contacts | Third-plate contacts | Labels | Material records | Material changed | Plate changed | Subduction | Gap fill | Non-sep gap | Unresolved same | Unresolved triple | Unresolved mixed | C residual | Max plate residual | Ledger hash |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 60000 | 29472 | 19813 | 10328 | 59955 | 6904 | 45586 | 2164 | 21273 | 10437 | 6478 | 5056 | 1017 | 3.830e-13 | 7.000e-15 | `ad1e2c0075ee2c52` |
-| 100000 | 49164 | 33020 | 17318 | 99929 | 11342 | 75973 | 3628 | 35506 | 17301 | 10810 | 8456 | 1706 | 4.550e-13 | 3.300e-14 | `6eb1861115689611` |
-| 250000 | 122869 | 82565 | 43274 | 249814 | 28172 | 189952 | 9076 | 88748 | 43107 | 27022 | 21139 | 4206 | 1.048e-12 | 1.090e-13 | `c45888d33d2e6be1` |
-| 500000 | 245677 | 165061 | 86492 | 499594 | 56271 | 379802 | 18137 | 177340 | 86463 | 54044 | 42261 | 8435 | 1.342e-12 | 5.600e-14 | `83a38cc3341d3186` |
+| 60000 | 29472 | 19813 | 10328 | 59955 | 6904 | 45586 | 2164 | 21273 | 10437 | 6478 | 5056 | 1017 | 3.827e-13 | 6.661e-15 | `ad1e2c0075ee2c52` |
+| 100000 | 49164 | 33020 | 17318 | 99929 | 11342 | 75973 | 3628 | 35506 | 17301 | 10810 | 8456 | 1706 | 4.552e-13 | 3.331e-14 | `6eb1861115689611` |
+| 250000 | 122869 | 82565 | 43274 | 249814 | 28172 | 189952 | 9076 | 88748 | 43107 | 27022 | 21139 | 4206 | 1.048e-12 | 1.094e-13 | `c45888d33d2e6be1` |
+| 500000 | 245677 | 165061 | 86492 | 499594 | 56271 | 379802 | 18137 | 177340 | 86463 | 54044 | 42261 | 8435 | 1.342e-12 | 5.596e-14 | `83a38cc3341d3186` |
 
 ## Notes
 

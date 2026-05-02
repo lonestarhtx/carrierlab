@@ -383,7 +383,7 @@ namespace
 		const double AvgStepKernel = Result.StepCount > 0 ? Result.StepProjectionSecondsTotal / static_cast<double>(Result.StepCount) : 0.0;
 		const double AvgStepWall = Result.StepCount > 0 ? Result.StepWallSecondsTotal / static_cast<double>(Result.StepCount) : 0.0;
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"family\":%s,\"replay\":%d,\"step_count\":%d,\"sample_count\":%d,\"plate_count\":%d,\"avg_step_kernel_seconds\":%.12f,\"avg_step_wall_seconds\":%.12f,\"step_projection_total_seconds\":%.12f,\"step_bvh_total_seconds\":%.12f,\"step_query_total_seconds\":%.12f,\"step_drift_total_seconds\":%.12f,\"step_boundary_total_seconds\":%.12f,\"step_hash_total_seconds\":%.12f,\"contact_seconds\":%.12f,\"label_seconds\":%.12f,\"filter_seconds\":%.12f,\"resample_event_seconds\":%.12f,\"total_replay_seconds\":%.12f,\"contact_hash\":%s,\"contact_record_count\":%d,\"third_plate_contact_count\":%d,\"subduction_candidate_count\":%d,\"label_hash\":%s,\"label_record_count\":%d,\"filter_decision_hash\":%s,\"material_ledger_hash\":%s,\"material_record_count\":%d,\"changed_record_count\":%d,\"plate_changed_record_count\":%d,\"single_hit_transfer_count\":%d,\"subduction_count\":%d,\"gap_fill_count\":%d,\"non_separating_gap_fill_count\":%d,\"unresolved_same_material_count\":%d,\"unresolved_triple_junction_count\":%d,\"unresolved_mixed_material_count\":%d,\"filter_exhausted_count\":%d,\"continental_mass_before\":%.15f,\"continental_mass_after\":%.15f,\"ledger_continental_delta\":%.15f,\"continental_delta_residual\":%.15f,\"max_per_plate_continental_residual\":%.15f,\"single_hit_continental_loss\":%.15f,\"single_hit_continental_gain\":%.15f,\"single_hit_continental_net\":%.15f,\"subduction_continental_loss\":%.15f,\"subduction_continental_gain\":%.15f,\"subduction_continental_net\":%.15f,\"gap_fill_continental_loss\":%.15f,\"gap_fill_continental_gain\":%.15f,\"gap_fill_continental_net\":%.15f,\"unresolved_same_continental_loss\":%.15f,\"unresolved_same_continental_gain\":%.15f,\"unresolved_same_continental_net\":%.15f,\"unresolved_triple_continental_loss\":%.15f,\"unresolved_triple_continental_gain\":%.15f,\"unresolved_triple_continental_net\":%.15f,\"unresolved_mixed_continental_loss\":%.15f,\"unresolved_mixed_continental_gain\":%.15f,\"unresolved_mixed_continental_net\":%.15f,\"auth_caf_before\":%.12f,\"auth_caf_after\":%.12f,\"projected_caf_before\":%.12f,\"projected_caf_after\":%.12f,\"state_hash_after\":%s,\"memory_gb\":%.12f}"),
+			TEXT("{\"fixture\":%s,\"family\":%s,\"replay\":%d,\"step_count\":%d,\"sample_count\":%d,\"plate_count\":%d,\"avg_step_kernel_seconds\":%.12f,\"avg_step_wall_seconds\":%.12f,\"step_projection_total_seconds\":%.12f,\"step_bvh_total_seconds\":%.12f,\"step_query_total_seconds\":%.12f,\"step_drift_total_seconds\":%.12f,\"step_boundary_total_seconds\":%.12f,\"step_hash_total_seconds\":%.12f,\"contact_seconds\":%.12f,\"label_seconds\":%.12f,\"filter_seconds\":%.12f,\"resample_event_seconds\":%.12f,\"total_replay_seconds\":%.12f,\"contact_hash\":%s,\"contact_record_count\":%d,\"third_plate_contact_count\":%d,\"subduction_candidate_count\":%d,\"label_hash\":%s,\"label_record_count\":%d,\"filter_decision_hash\":%s,\"material_ledger_hash\":%s,\"material_record_count\":%d,\"changed_record_count\":%d,\"plate_changed_record_count\":%d,\"single_hit_transfer_count\":%d,\"subduction_count\":%d,\"gap_fill_count\":%d,\"non_separating_gap_fill_count\":%d,\"unresolved_same_material_count\":%d,\"unresolved_triple_junction_count\":%d,\"unresolved_mixed_material_count\":%d,\"filter_exhausted_count\":%d,\"continental_mass_before\":%.15f,\"continental_mass_after\":%.15f,\"ledger_continental_delta\":%.15f,\"continental_delta_residual\":%.15f,\"max_per_plate_continental_residual\":%.15f,\"single_hit_continental_loss\":%.15f,\"single_hit_continental_gain\":%.15f,\"single_hit_continental_net\":%.15f,\"single_hit_uniform_continental_count\":%d,\"single_hit_uniform_continental_loss\":%.15f,\"single_hit_uniform_continental_gain\":%.15f,\"single_hit_uniform_continental_net\":%.15f,\"single_hit_uniform_oceanic_count\":%d,\"single_hit_uniform_oceanic_loss\":%.15f,\"single_hit_uniform_oceanic_gain\":%.15f,\"single_hit_uniform_oceanic_net\":%.15f,\"single_hit_mixed_triangle_count\":%d,\"single_hit_mixed_triangle_loss\":%.15f,\"single_hit_mixed_triangle_gain\":%.15f,\"single_hit_mixed_triangle_net\":%.15f,\"single_hit_unknown_triangle_count\":%d,\"single_hit_unknown_triangle_loss\":%.15f,\"single_hit_unknown_triangle_gain\":%.15f,\"single_hit_unknown_triangle_net\":%.15f,\"subduction_continental_loss\":%.15f,\"subduction_continental_gain\":%.15f,\"subduction_continental_net\":%.15f,\"gap_fill_continental_loss\":%.15f,\"gap_fill_continental_gain\":%.15f,\"gap_fill_continental_net\":%.15f,\"unresolved_same_continental_loss\":%.15f,\"unresolved_same_continental_gain\":%.15f,\"unresolved_same_continental_net\":%.15f,\"unresolved_triple_continental_loss\":%.15f,\"unresolved_triple_continental_gain\":%.15f,\"unresolved_triple_continental_net\":%.15f,\"unresolved_mixed_continental_loss\":%.15f,\"unresolved_mixed_continental_gain\":%.15f,\"unresolved_mixed_continental_net\":%.15f,\"auth_caf_before\":%.12f,\"auth_caf_after\":%.12f,\"projected_caf_before\":%.12f,\"projected_caf_after\":%.12f,\"state_hash_after\":%s,\"memory_gb\":%.12f}"),
 			*JsonString(Result.FixtureName),
 			*JsonString(Result.Family),
 			Result.Replay,
@@ -430,6 +430,22 @@ namespace
 			Ledger.SingleHitTransferContinentalLoss,
 			Ledger.SingleHitTransferContinentalGain,
 			NetDelta(Ledger.SingleHitTransferContinentalGain, Ledger.SingleHitTransferContinentalLoss),
+			Ledger.SingleHitUniformContinentalRecordCount,
+			Ledger.SingleHitUniformContinentalLoss,
+			Ledger.SingleHitUniformContinentalGain,
+			NetDelta(Ledger.SingleHitUniformContinentalGain, Ledger.SingleHitUniformContinentalLoss),
+			Ledger.SingleHitUniformOceanicRecordCount,
+			Ledger.SingleHitUniformOceanicLoss,
+			Ledger.SingleHitUniformOceanicGain,
+			NetDelta(Ledger.SingleHitUniformOceanicGain, Ledger.SingleHitUniformOceanicLoss),
+			Ledger.SingleHitMixedTriangleRecordCount,
+			Ledger.SingleHitMixedTriangleLoss,
+			Ledger.SingleHitMixedTriangleGain,
+			NetDelta(Ledger.SingleHitMixedTriangleGain, Ledger.SingleHitMixedTriangleLoss),
+			Ledger.SingleHitUnknownTriangleRecordCount,
+			Ledger.SingleHitUnknownTriangleLoss,
+			Ledger.SingleHitUnknownTriangleGain,
+			NetDelta(Ledger.SingleHitUnknownTriangleGain, Ledger.SingleHitUnknownTriangleLoss),
 			Ledger.SubductionContinentalLoss,
 			Ledger.SubductionContinentalGain,
 			NetDelta(Ledger.SubductionContinentalGain, Ledger.SubductionContinentalLoss),
@@ -471,7 +487,7 @@ namespace
 	{
 		FString Report = TEXT("# Phase II Slice 5 Checkpoint: Resolution Scaling\n\n");
 		Report += FString::Printf(TEXT("Artifacts root: `%s`\n\n"), *OutputRoot);
-		Report += TEXT("This checkpoint runs the accepted Slice 3+4 contact-label-filter-material-accounting stack across 60k, 100k, 250k, and 500k samples. It does not add new process behavior. The purpose is to test whether the Slice 4 audit equation and destruction-source breakdown remain stable as sample density increases.\n\n");
+		Report += TEXT("This checkpoint runs the accepted Slice 3+4 contact-label-filter-material-accounting stack across the requested sample resolutions. It does not add new process behavior. The purpose is to test whether the Slice 4 audit equation and material-delta breakdown remain stable as sample density increases.\n\n");
 		Report += TEXT("Audit equation: `active_after = active_before + single_hit_transfer + consumed_by_subduction + overwritten_by_gap_fill + unresolved_same_material + unresolved_triple_junction + unresolved_mixed_material + filter_exhausted_unknown + numeric_residual`.\n\n");
 
 		Report += TEXT("## Gate Summary\n\n");
@@ -525,7 +541,7 @@ namespace
 				*RuntimeVerdict(Summary));
 		}
 
-		Report += TEXT("\n## Primary Destruction Breakdown\n\n");
+		Report += TEXT("\n## Primary Material Delta Breakdown\n\n");
 		Report += TEXT("| Resolution | Net C delta | Single-hit loss/gain/net | Subduction loss/gain/net | Gap-fill loss/gain/net | Unresolved same loss/gain/net | Unresolved triple loss/gain/net | Unresolved mixed loss/gain/net | Gap-fill net % of net loss | Single-hit net % of net loss |\n");
 		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
 		for (const FSlice5FixtureSummary& Summary : Summaries)
@@ -567,6 +583,30 @@ namespace
 				PercentOfNetLoss(SingleNet, L.LedgerContinentalDelta));
 		}
 
+		Report += TEXT("\n## Slice 5.5 Single-Hit Source Triangle Subdivision\n\n");
+		Report += TEXT("This subdivision classifies the hit triangle used by each `single_hit_transfer` record. Uniform rows mean all three hit-triangle vertices share the same simplified material class; mixed rows are the only current evidence for interpolation across a carried material boundary.\n\n");
+		Report += TEXT("| Resolution | Uniform continental count/net | Uniform oceanic count/net | Mixed triangle count/net | Unknown count/net |\n");
+		Report += TEXT("|---:|---:|---:|---:|---:|\n");
+		for (const FSlice5FixtureSummary& Summary : Summaries)
+		{
+			if (!Summary.bPrimaryScaling)
+			{
+				continue;
+			}
+			const FCarrierLabPhaseIIMaterialLedgerMetrics& L = Summary.LedgerA;
+			Report += FString::Printf(
+				TEXT("| %d | %d / %.6f | %d / %.6f | %d / %.6f | %d / %.6f |\n"),
+				Summary.SampleCount,
+				L.SingleHitUniformContinentalRecordCount,
+				NetDelta(L.SingleHitUniformContinentalGain, L.SingleHitUniformContinentalLoss),
+				L.SingleHitUniformOceanicRecordCount,
+				NetDelta(L.SingleHitUniformOceanicGain, L.SingleHitUniformOceanicLoss),
+				L.SingleHitMixedTriangleRecordCount,
+				NetDelta(L.SingleHitMixedTriangleGain, L.SingleHitMixedTriangleLoss),
+				L.SingleHitUnknownTriangleRecordCount,
+				NetDelta(L.SingleHitUnknownTriangleGain, L.SingleHitUnknownTriangleLoss));
+		}
+
 		Report += TEXT("\n## Primary Count Breakdown\n\n");
 		Report += TEXT("| Resolution | Contacts | Third-plate contacts | Labels | Material records | Material changed | Plate changed | Subduction | Gap fill | Non-sep gap | Unresolved same | Unresolved triple | Unresolved mixed | C residual | Max plate residual | Ledger hash |\n");
 		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
@@ -600,6 +640,7 @@ namespace
 		Report += TEXT("\n## Notes\n\n");
 		Report += TEXT("- Runtime `finding` means the average per-step projection kernel exceeded the paper Table 2 total for that resolution. It is reported as a scaling finding, not hidden by the gate labels.\n");
 		Report += TEXT("- Gross loss/gain/net are reported together. Category priority should be based on net contribution and mechanism, not gross loss alone.\n");
+		Report += TEXT("- Slice 5.5 provenance is observational only: hit-triangle uniformity is recorded after the resolver chooses a source triangle and does not influence resampling, filtering, labels, or carrier state.\n");
 		Report += TEXT("- Material reconciliation uses `max(1e-12, total_area * 1e-12)` as the scaling gate. The residuals remain printed so floating-point summation noise cannot hide a real leak.\n");
 		Report += TEXT("- Control fixtures are scaled with the target resolution in this commandlet so replay, label, filter, material, and no-material-change gates exercise the same sample density as the primary row.\n");
 		Report += TEXT("- `metrics.jsonl` contains both replay rows for each fixture; the report tables use replay 0 after requiring replay 1 to match hashes and post-state.\n");
@@ -641,10 +682,44 @@ int32 UCarrierLabPhaseIISlice5Commandlet::Main(const FString& Params)
 	IFileManager::Get().MakeDirectory(*OutputRoot, true);
 
 	TArray<FSlice5FixtureConfig> Fixtures;
-	AddFixtureSuiteForResolution(Fixtures, TEXT("60k"), 60000, DefaultSteps);
-	AddFixtureSuiteForResolution(Fixtures, TEXT("100k"), 100000, DefaultSteps);
-	AddFixtureSuiteForResolution(Fixtures, TEXT("250k"), 250000, DefaultSteps);
-	AddFixtureSuiteForResolution(Fixtures, TEXT("500k"), 500000, DefaultSteps);
+	FString ResolutionParam;
+	if (FParse::Value(*Params, TEXT("Resolutions="), ResolutionParam))
+	{
+		TArray<FString> ResolutionTokens;
+		ResolutionParam.ParseIntoArray(ResolutionTokens, TEXT(","), true);
+		for (FString Token : ResolutionTokens)
+		{
+			Token.TrimStartAndEndInline();
+			if (Token.Equals(TEXT("60k"), ESearchCase::IgnoreCase) || Token.Equals(TEXT("60000"), ESearchCase::IgnoreCase))
+			{
+				AddFixtureSuiteForResolution(Fixtures, TEXT("60k"), 60000, DefaultSteps);
+			}
+			else if (Token.Equals(TEXT("100k"), ESearchCase::IgnoreCase) || Token.Equals(TEXT("100000"), ESearchCase::IgnoreCase))
+			{
+				AddFixtureSuiteForResolution(Fixtures, TEXT("100k"), 100000, DefaultSteps);
+			}
+			else if (Token.Equals(TEXT("250k"), ESearchCase::IgnoreCase) || Token.Equals(TEXT("250000"), ESearchCase::IgnoreCase))
+			{
+				AddFixtureSuiteForResolution(Fixtures, TEXT("250k"), 250000, DefaultSteps);
+			}
+			else if (Token.Equals(TEXT("500k"), ESearchCase::IgnoreCase) || Token.Equals(TEXT("500000"), ESearchCase::IgnoreCase))
+			{
+				AddFixtureSuiteForResolution(Fixtures, TEXT("500k"), 500000, DefaultSteps);
+			}
+		}
+	}
+	else
+	{
+		AddFixtureSuiteForResolution(Fixtures, TEXT("60k"), 60000, DefaultSteps);
+		AddFixtureSuiteForResolution(Fixtures, TEXT("100k"), 100000, DefaultSteps);
+		AddFixtureSuiteForResolution(Fixtures, TEXT("250k"), 250000, DefaultSteps);
+		AddFixtureSuiteForResolution(Fixtures, TEXT("500k"), 500000, DefaultSteps);
+	}
+	if (Fixtures.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("CarrierLab Phase II Slice 5: no valid resolution tokens in Resolutions=%s"), *ResolutionParam);
+		return 2;
+	}
 
 	FString MetricsJsonl;
 	TArray<FSlice5FixtureSummary> Summaries;
@@ -671,7 +746,16 @@ int32 UCarrierLabPhaseIISlice5Commandlet::Main(const FString& Params)
 	const FString MetricsPath = FPaths::Combine(OutputRoot, TEXT("metrics.jsonl"));
 	FFileHelper::SaveStringToFile(MetricsJsonl, *MetricsPath);
 	const FString Report = BuildReport(OutputRoot, Summaries);
-	const FString ReportPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("docs"), TEXT("checkpoints"), TEXT("phase-ii-slice-5-report.md"));
+	FString ReportPath;
+	if (!FParse::Value(*Params, TEXT("Report="), ReportPath))
+	{
+		ReportPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("docs"), TEXT("checkpoints"), TEXT("phase-ii-slice-5-report.md"));
+	}
+	else if (FPaths::IsRelative(ReportPath))
+	{
+		ReportPath = FPaths::Combine(FPaths::ProjectDir(), ReportPath);
+	}
+	ReportPath = FPaths::ConvertRelativePathToFull(ReportPath);
 	FFileHelper::SaveStringToFile(Report, *ReportPath);
 
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase II Slice 5 metrics: %s"), *MetricsPath);

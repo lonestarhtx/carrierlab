@@ -287,6 +287,14 @@ enum class ECarrierLabPhaseIIMaterialEventClass : uint8
 	NumericResidual
 };
 
+enum class ECarrierLabPhaseIISourceTriangleUniformity : uint8
+{
+	Unknown,
+	UniformOceanic,
+	UniformContinental,
+	Mixed
+};
+
 struct FCarrierLabPhaseIIFilterDecisionRecord
 {
 	int32 DecisionId = INDEX_NONE;
@@ -318,6 +326,9 @@ struct FCarrierLabPhaseIIMaterialRecord
 	int32 TargetPlateId = INDEX_NONE;
 	int32 SourceContactId = INDEX_NONE;
 	int32 SourceLabelId = INDEX_NONE;
+	int32 HitPlateId = INDEX_NONE;
+	int32 HitLocalTriangleId = INDEX_NONE;
+	int32 HitTriangleContinentalVertexCount = INDEX_NONE;
 	int32 RawPlateCount = 0;
 	int32 PostFilterPlateCount = 0;
 	double AreaWeight = 0.0;
@@ -333,6 +344,7 @@ struct FCarrierLabPhaseIIMaterialRecord
 	bool bNonSeparatingGap = false;
 	ECarrierLabPhaseIIMaterialEventClass EventClass = ECarrierLabPhaseIIMaterialEventClass::Preserved;
 	ECarrierLabPhaseIIFilterDecisionClass DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+	ECarrierLabPhaseIISourceTriangleUniformity HitTriangleUniformity = ECarrierLabPhaseIISourceTriangleUniformity::Unknown;
 };
 
 struct FCarrierLabPhaseIIMaterialLedgerMetrics
@@ -363,6 +375,18 @@ struct FCarrierLabPhaseIIMaterialLedgerMetrics
 	double OceanicDeltaResidual = 0.0;
 	double SingleHitTransferContinentalLoss = 0.0;
 	double SingleHitTransferContinentalGain = 0.0;
+	int32 SingleHitUniformContinentalRecordCount = 0;
+	int32 SingleHitUniformOceanicRecordCount = 0;
+	int32 SingleHitMixedTriangleRecordCount = 0;
+	int32 SingleHitUnknownTriangleRecordCount = 0;
+	double SingleHitUniformContinentalLoss = 0.0;
+	double SingleHitUniformContinentalGain = 0.0;
+	double SingleHitUniformOceanicLoss = 0.0;
+	double SingleHitUniformOceanicGain = 0.0;
+	double SingleHitMixedTriangleLoss = 0.0;
+	double SingleHitMixedTriangleGain = 0.0;
+	double SingleHitUnknownTriangleLoss = 0.0;
+	double SingleHitUnknownTriangleGain = 0.0;
 	double SubductionContinentalLoss = 0.0;
 	double SubductionContinentalGain = 0.0;
 	double GapFillContinentalLoss = 0.0;

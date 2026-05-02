@@ -374,6 +374,48 @@ namespace
 			1.0);
 	}
 
+	ECarrierLabPhaseIISourceTriangleUniformity ClassifyHitTriangleUniformity(
+		const CarrierLab::FCarrierState& State,
+		const int32 PlateId,
+		const int32 LocalTriangleId,
+		int32& OutContinentalVertexCount)
+	{
+		OutContinentalVertexCount = INDEX_NONE;
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			return ECarrierLabPhaseIISourceTriangleUniformity::Unknown;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return ECarrierLabPhaseIISourceTriangleUniformity::Unknown;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return ECarrierLabPhaseIISourceTriangleUniformity::Unknown;
+		}
+
+		OutContinentalVertexCount = 0;
+		OutContinentalVertexCount += Plate.Vertices[Triangle.A].ContinentalFraction >= 0.5 ? 1 : 0;
+		OutContinentalVertexCount += Plate.Vertices[Triangle.B].ContinentalFraction >= 0.5 ? 1 : 0;
+		OutContinentalVertexCount += Plate.Vertices[Triangle.C].ContinentalFraction >= 0.5 ? 1 : 0;
+
+		if (OutContinentalVertexCount == 0)
+		{
+			return ECarrierLabPhaseIISourceTriangleUniformity::UniformOceanic;
+		}
+		if (OutContinentalVertexCount == 3)
+		{
+			return ECarrierLabPhaseIISourceTriangleUniformity::UniformContinental;
+		}
+		return ECarrierLabPhaseIISourceTriangleUniformity::Mixed;
+	}
+
 	void QuerySampleCandidates(
 		const CarrierLab::FCarrierState& State,
 		const TArray<FCarrierLabVizPlateMesh>& PlateMeshes,
@@ -1596,6 +1638,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	TArray<int32> MaterialPostPlateCountBySample;
 	TArray<int32> MaterialSourceContactIdBySample;
 	TArray<int32> MaterialSourceLabelIdBySample;
+	TArray<int32> MaterialHitPlateIdBySample;
+	TArray<int32> MaterialHitLocalTriangleIdBySample;
+	TArray<int32> MaterialHitContinentalVertexCountBySample;
+	TArray<ECarrierLabPhaseIISourceTriangleUniformity> MaterialHitUniformityBySample;
 	TArray<bool> MaterialThirdPlateBySample;
 	TArray<bool> MaterialNonSeparatingGapBySample;
 	MaterialClassBySample.Init(ECarrierLabPhaseIIMaterialEventClass::Preserved, State.Samples.Num());
@@ -1604,6 +1650,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	MaterialPostPlateCountBySample.Init(0, State.Samples.Num());
 	MaterialSourceContactIdBySample.Init(INDEX_NONE, State.Samples.Num());
 	MaterialSourceLabelIdBySample.Init(INDEX_NONE, State.Samples.Num());
+	MaterialHitPlateIdBySample.Init(INDEX_NONE, State.Samples.Num());
+	MaterialHitLocalTriangleIdBySample.Init(INDEX_NONE, State.Samples.Num());
+	MaterialHitContinentalVertexCountBySample.Init(INDEX_NONE, State.Samples.Num());
+	MaterialHitUniformityBySample.Init(ECarrierLabPhaseIISourceTriangleUniformity::Unknown, State.Samples.Num());
 	MaterialThirdPlateBySample.Init(false, State.Samples.Num());
 	MaterialNonSeparatingGapBySample.Init(false, State.Samples.Num());
 	for (const CarrierLab::FSphereSample& Sample : State.Samples)
@@ -1615,6 +1665,23 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	TSet<int32> SamplesWithFilteredCandidates;
 	TArray<FCarrierLabVizCandidate> Candidates;
 	TArray<FCarrierLabVizCandidate> RemainingCandidates;
+	auto SetHitTriangleSource = [this, &MaterialHitPlateIdBySample, &MaterialHitLocalTriangleIdBySample, &MaterialHitContinentalVertexCountBySample, &MaterialHitUniformityBySample](
+		const int32 SampleId,
+		const int32 PlateId,
+		const int32 LocalTriangleId)
+	{
+		if (!MaterialHitPlateIdBySample.IsValidIndex(SampleId))
+		{
+			return;
+		}
+
+		int32 ContinentalVertexCount = INDEX_NONE;
+		const ECarrierLabPhaseIISourceTriangleUniformity Uniformity = ClassifyHitTriangleUniformity(State, PlateId, LocalTriangleId, ContinentalVertexCount);
+		MaterialHitPlateIdBySample[SampleId] = PlateId;
+		MaterialHitLocalTriangleIdBySample[SampleId] = LocalTriangleId;
+		MaterialHitContinentalVertexCountBySample[SampleId] = ContinentalVertexCount;
+		MaterialHitUniformityBySample[SampleId] = Uniformity;
+	};
 	auto SetMaterialClass = [&MaterialClassBySample, &MaterialDecisionClassBySample, &MaterialRawPlateCountBySample, &MaterialPostPlateCountBySample, &MaterialSourceContactIdBySample, &MaterialSourceLabelIdBySample, &MaterialThirdPlateBySample, &MaterialNonSeparatingGapBySample](
 		const int32 SampleId,
 		const ECarrierLabPhaseIIMaterialEventClass EventClass,
@@ -1850,6 +1917,15 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 		NewFractions[Sample.Id] = (Chosen != nullptr && State.Plates.IsValidIndex(ResolvedPlateId))
 			? InterpolateContinentalFraction(State.Plates[ResolvedPlateId], *Chosen)
 			: Sample.ContinentalFraction;
+		if (Chosen != nullptr)
+		{
+			SetHitTriangleSource(Sample.Id, ResolvedPlateId, Chosen->LocalTriangleId);
+		}
+		if (MaterialRawPlateCountBySample.IsValidIndex(Sample.Id))
+		{
+			MaterialRawPlateCountBySample[Sample.Id] = RawPlateCount;
+			MaterialPostPlateCountBySample[Sample.Id] = PostPlateCount;
+		}
 
 		if (FilteredCandidateCount > 0)
 		{
@@ -1965,6 +2041,9 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			Record.TargetPlateId = TargetPlateId;
 			Record.SourceContactId = MaterialSourceContactIdBySample.IsValidIndex(SampleId) ? MaterialSourceContactIdBySample[SampleId] : INDEX_NONE;
 			Record.SourceLabelId = MaterialSourceLabelIdBySample.IsValidIndex(SampleId) ? MaterialSourceLabelIdBySample[SampleId] : INDEX_NONE;
+			Record.HitPlateId = MaterialHitPlateIdBySample.IsValidIndex(SampleId) ? MaterialHitPlateIdBySample[SampleId] : INDEX_NONE;
+			Record.HitLocalTriangleId = MaterialHitLocalTriangleIdBySample.IsValidIndex(SampleId) ? MaterialHitLocalTriangleIdBySample[SampleId] : INDEX_NONE;
+			Record.HitTriangleContinentalVertexCount = MaterialHitContinentalVertexCountBySample.IsValidIndex(SampleId) ? MaterialHitContinentalVertexCountBySample[SampleId] : INDEX_NONE;
 			Record.RawPlateCount = MaterialRawPlateCountBySample.IsValidIndex(SampleId) ? MaterialRawPlateCountBySample[SampleId] : 0;
 			Record.PostFilterPlateCount = MaterialPostPlateCountBySample.IsValidIndex(SampleId) ? MaterialPostPlateCountBySample[SampleId] : 0;
 			Record.AreaWeight = Sample.AreaWeight;
@@ -1982,6 +2061,9 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			Record.DecisionClass = MaterialDecisionClassBySample.IsValidIndex(SampleId)
 				? MaterialDecisionClassBySample[SampleId]
 				: ECarrierLabPhaseIIFilterDecisionClass::ResolvedSingle;
+			Record.HitTriangleUniformity = MaterialHitUniformityBySample.IsValidIndex(SampleId)
+				? MaterialHitUniformityBySample[SampleId]
+				: ECarrierLabPhaseIISourceTriangleUniformity::Unknown;
 
 			++LedgerMetrics.RecordCount;
 			if (bMaterialChanged)
@@ -2008,6 +2090,26 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			case ECarrierLabPhaseIIMaterialEventClass::SingleHitTransfer:
 				++LedgerMetrics.SingleHitTransferRecordCount;
 				AddLossGain(ContinentalDelta, LedgerMetrics.SingleHitTransferContinentalLoss, LedgerMetrics.SingleHitTransferContinentalGain);
+				switch (Record.HitTriangleUniformity)
+				{
+				case ECarrierLabPhaseIISourceTriangleUniformity::UniformContinental:
+					++LedgerMetrics.SingleHitUniformContinentalRecordCount;
+					AddLossGain(ContinentalDelta, LedgerMetrics.SingleHitUniformContinentalLoss, LedgerMetrics.SingleHitUniformContinentalGain);
+					break;
+				case ECarrierLabPhaseIISourceTriangleUniformity::UniformOceanic:
+					++LedgerMetrics.SingleHitUniformOceanicRecordCount;
+					AddLossGain(ContinentalDelta, LedgerMetrics.SingleHitUniformOceanicLoss, LedgerMetrics.SingleHitUniformOceanicGain);
+					break;
+				case ECarrierLabPhaseIISourceTriangleUniformity::Mixed:
+					++LedgerMetrics.SingleHitMixedTriangleRecordCount;
+					AddLossGain(ContinentalDelta, LedgerMetrics.SingleHitMixedTriangleLoss, LedgerMetrics.SingleHitMixedTriangleGain);
+					break;
+				case ECarrierLabPhaseIISourceTriangleUniformity::Unknown:
+				default:
+					++LedgerMetrics.SingleHitUnknownTriangleRecordCount;
+					AddLossGain(ContinentalDelta, LedgerMetrics.SingleHitUnknownTriangleLoss, LedgerMetrics.SingleHitUnknownTriangleGain);
+					break;
+				}
 				break;
 			case ECarrierLabPhaseIIMaterialEventClass::ConsumedBySubduction:
 				++LedgerMetrics.SubductionRecordCount;
@@ -2055,6 +2157,9 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			HashMix(LedgerHash, static_cast<uint64>(Record.TargetPlateId + 1));
 			HashMix(LedgerHash, static_cast<uint64>(Record.SourceContactId + 1));
 			HashMix(LedgerHash, static_cast<uint64>(Record.SourceLabelId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.HitPlateId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.HitLocalTriangleId + 1));
+			HashMix(LedgerHash, static_cast<uint64>(Record.HitTriangleContinentalVertexCount + 1));
 			HashMix(LedgerHash, static_cast<uint64>(Record.RawPlateCount + 1));
 			HashMix(LedgerHash, static_cast<uint64>(Record.PostFilterPlateCount + 1));
 			HashMixDouble(LedgerHash, Record.AreaWeight);
@@ -2068,6 +2173,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 			HashMix(LedgerHash, Record.bNonSeparatingGap ? 1ull : 0ull);
 			HashMix(LedgerHash, static_cast<uint64>(Record.EventClass) + 1);
 			HashMix(LedgerHash, static_cast<uint64>(Record.DecisionClass) + 1);
+			HashMix(LedgerHash, static_cast<uint64>(Record.HitTriangleUniformity) + 1);
 
 			if (OutMaterialRecords != nullptr)
 			{
