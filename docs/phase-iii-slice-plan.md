@@ -2,6 +2,22 @@
 
 Status: draft for user review. Each slice ends with a checkpoint note and requires explicit go/no-go before the next slice begins. Sub-phase boundaries (IIIA, IIIB, IIIC, IIID, IIIE, IIIF, IIIG, IIIH) require their own consolidated sub-phase checkpoint in addition to per-slice checkpoints.
 
+## Phase III Observability Patch: Read-Only Heatmaps
+
+Goal: give Phase III spatial sanity checks before Phase IV amplification without changing geometry, authority, projection, or process behavior.
+
+Allowed actor layers:
+
+- `ElevationHeatmap`: colors samples by stored Phase III `Elevation`; zero remains sea-level green, negative values trend blue, positive values trend red.
+- `SubductionMask`: colors existing IIIB polarity evidence from `ConvergenceSubductionTriangleHits` and polarity decisions; under-plate, over-plate, collision-candidate, and deferred evidence are visualized as separate read-only colors.
+- `DistanceToFrontHeatmap`: colors active boundary-triangle vertices by their stored IIIB distance-to-front value; unset samples remain dark.
+
+Rules:
+
+- These layers are not gates and do not replace numerical/audit checkpoints.
+- They must read existing Phase III fields only. No inferred ownership, no projection changes, no material mutation, no smoothing, no terrain displacement.
+- Vertex positions remain on the unit sphere; Phase IV remains responsible for amplified terrain geometry.
+
 ## Sub-Phase IIIA: Paper Crust State Schema
 
 Goal: add the paper's crust-state fields to the carrier vertex/sample without changing tectonic behavior. Storage and rotation only; no consumers, no mutation outside rotation.
@@ -410,7 +426,7 @@ Work:
 Exit gate:
 
 - Continental loss attributed to single-hit transfer to uniform-oceanic source triangles drops by ≥ 80% relative to the Phase II Slice 5.5 baseline, or the slice pauses for an investigation checkpoint that audits the collision implementation against the paper/thesis before the target is reconsidered.
-- Continental mass transferred via collision events accounts for at least 50% of the recovered loss.
+- Continental mass transferred via collision events accounts for at least 50% of the loss eliminated by collision handling.
 
 Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiid8-report.md`.
 
@@ -488,7 +504,7 @@ Work:
 
 - Extend the material ledger to add a "new oceanic creation" line, populated by gap-fill samples whose pre-existing `x_C` was below a threshold (truly oceanic territory).
 - Add a separate "overwritten by ridge generation" line for gap-fill samples with pre-existing `x_C` above the threshold (continental material lost without prior collision/rifting).
-- The latter quantity should be near-zero in healthy runs after IIID lands.
+- The latter quantity should be near-zero in stable runs after IIID lands.
 
 Exit gate:
 

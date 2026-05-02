@@ -108,7 +108,10 @@ void SCarrierLabControlPanel::Construct(const FArguments& InArgs)
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::MissMask),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::OverlapMask),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::BoundaryMask),
-		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::DriftError)
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::DriftError),
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::ElevationHeatmap),
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::SubductionMask),
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap)
 	};
 
 	RefreshTargetActor();
@@ -1245,6 +1248,12 @@ FString SCarrierLabControlPanel::LayerToString(const ECarrierLabVisualizationLay
 		return TEXT("Boundary");
 	case ECarrierLabVisualizationLayer::DriftError:
 		return TEXT("DriftError");
+	case ECarrierLabVisualizationLayer::ElevationHeatmap:
+		return TEXT("ElevationHeatmap");
+	case ECarrierLabVisualizationLayer::SubductionMask:
+		return TEXT("SubductionMask");
+	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
+		return TEXT("DistanceToFront");
 	case ECarrierLabVisualizationLayer::PlateId:
 	default:
 		return TEXT("PlateId");

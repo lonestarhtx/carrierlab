@@ -19,7 +19,10 @@ enum class ECarrierLabVisualizationLayer : uint8
 	MissMask UMETA(DisplayName = "Miss Mask"),
 	OverlapMask UMETA(DisplayName = "Overlap Mask"),
 	BoundaryMask UMETA(DisplayName = "Boundary Mask"),
-	DriftError UMETA(DisplayName = "Drift Error")
+	DriftError UMETA(DisplayName = "Drift Error"),
+	ElevationHeatmap UMETA(DisplayName = "Elevation Heatmap"),
+	SubductionMask UMETA(DisplayName = "Subduction Mask"),
+	DistanceToFrontHeatmap UMETA(DisplayName = "Distance To Front Heatmap")
 };
 
 UENUM(BlueprintType)
@@ -762,6 +765,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowBoundaryMaskLayer();
 
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowElevationHeatmapLayer();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowSubductionMaskLayer();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowDistanceToFrontHeatmapLayer();
+
 	void ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture Fixture);
 	bool DetectPhaseIIContacts(TArray<FCarrierLabPhaseIIContactRecord>& OutContacts, FCarrierLabPhaseIIContactMetrics& OutMetrics);
 	bool BuildPhaseIITriangleLabels(
@@ -859,6 +871,8 @@ private:
 	TArray<uint8> OverlapMask;
 	TArray<uint8> BoundaryMask;
 	TArray<uint8> PlateBoundaryMask;
+	TArray<uint8> SubductionRoleMask;
+	TArray<double> DistanceToFrontKmBySample;
 	int32 CachedRenderMeshSampleCount = 0;
 	int32 CachedRenderMeshTriangleCount = 0;
 	double StepAccumulator = 0.0;
@@ -872,5 +886,6 @@ private:
 	void CaptureDriftReference();
 	void ComputeDriftMetrics();
 	void ComputePlateBoundaryMask();
+	void ComputePhaseIIIObservabilityMasks();
 	void UpdateLastHash();
 };

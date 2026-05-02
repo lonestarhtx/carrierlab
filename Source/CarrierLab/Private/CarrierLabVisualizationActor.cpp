@@ -1372,6 +1372,59 @@ namespace
 			FLinearColor(1.0f, 0.10f, 0.02f, 1.0f),
 			static_cast<float>(Alpha));
 	}
+
+	FLinearColor ElevationColor(const double ElevationKm)
+	{
+		if (!FMath::IsFinite(ElevationKm))
+		{
+			return FLinearColor(1.0f, 0.0f, 1.0f, 1.0f);
+		}
+		if (FMath::Abs(ElevationKm) <= 1.0e-9)
+		{
+			return FLinearColor(0.08f, 0.34f, 0.16f, 1.0f);
+		}
+
+		const double Alpha = FMath::Clamp(FMath::Abs(ElevationKm) / 10.0, 0.0, 1.0);
+		return ElevationKm < 0.0
+			? FMath::Lerp(
+				FLinearColor(0.05f, 0.36f, 0.45f, 1.0f),
+				FLinearColor(0.03f, 0.08f, 0.75f, 1.0f),
+				static_cast<float>(Alpha))
+			: FMath::Lerp(
+				FLinearColor(0.48f, 0.45f, 0.10f, 1.0f),
+				FLinearColor(0.95f, 0.06f, 0.03f, 1.0f),
+				static_cast<float>(Alpha));
+	}
+
+	FLinearColor SubductionRoleColor(const uint8 Role)
+	{
+		switch (Role)
+		{
+		case 1:
+			return FLinearColor(0.12f, 0.25f, 0.95f, 1.0f);
+		case 2:
+			return FLinearColor(1.0f, 0.82f, 0.10f, 1.0f);
+		case 3:
+			return FLinearColor(0.85f, 0.34f, 0.05f, 1.0f);
+		case 4:
+			return FLinearColor(0.42f, 0.42f, 0.46f, 1.0f);
+		default:
+			return FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+		}
+	}
+
+	FLinearColor DistanceToFrontColor(const double DistanceKm)
+	{
+		if (DistanceKm < 0.0 || !FMath::IsFinite(DistanceKm))
+		{
+			return FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+		}
+		const double Alpha = FMath::Clamp(DistanceKm / PhaseIIIBDistanceToFrontLimitKm, 0.0, 1.0);
+		return FMath::Lerp(
+			FLinearColor(0.06f, 0.74f, 0.92f, 1.0f),
+			FLinearColor(0.96f, 0.18f, 0.04f, 1.0f),
+			static_cast<float>(Alpha));
+	}
 }
 
 ACarrierLabVisualizationActor::ACarrierLabVisualizationActor()
@@ -4004,6 +4057,21 @@ void ACarrierLabVisualizationActor::ShowBoundaryMaskLayer()
 	SetVisualizationLayer(ECarrierLabVisualizationLayer::BoundaryMask);
 }
 
+void ACarrierLabVisualizationActor::ShowElevationHeatmapLayer()
+{
+	SetVisualizationLayer(ECarrierLabVisualizationLayer::ElevationHeatmap);
+}
+
+void ACarrierLabVisualizationActor::ShowSubductionMaskLayer()
+{
+	SetVisualizationLayer(ECarrierLabVisualizationLayer::SubductionMask);
+}
+
+void ACarrierLabVisualizationActor::ShowDistanceToFrontHeatmapLayer()
+{
+	SetVisualizationLayer(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap);
+}
+
 void ACarrierLabVisualizationActor::BindInputControls()
 {
 	APlayerController* PlayerController = GetWorld() != nullptr ? GetWorld()->GetFirstPlayerController() : nullptr;
@@ -4025,6 +4093,9 @@ void ACarrierLabVisualizationActor::BindInputControls()
 	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowMissMaskLayer);
 	InputComponent->BindKey(EKeys::Four, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowOverlapMaskLayer);
 	InputComponent->BindKey(EKeys::Five, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowBoundaryMaskLayer);
+	InputComponent->BindKey(EKeys::Six, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowElevationHeatmapLayer);
+	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowSubductionMaskLayer);
+	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowDistanceToFrontHeatmapLayer);
 }
 
 void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
@@ -4486,6 +4557,106 @@ void ACarrierLabVisualizationActor::ComputePlateBoundaryMask()
 	}
 }
 
+void ACarrierLabVisualizationActor::ComputePhaseIIIObservabilityMasks()
+{
+	SubductionRoleMask.Init(0, State.Samples.Num());
+	DistanceToFrontKmBySample.Init(-1.0, State.Samples.Num());
+
+	auto MarkTriangleVertices = [this](const CarrierLab::FCarrierPlate& Plate, const int32 LocalTriangleId, const uint8 MaskValue)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		const int32 VertexIds[3] = { Triangle.A, Triangle.B, Triangle.C };
+		for (const int32 LocalVertexId : VertexIds)
+		{
+			if (!Plate.Vertices.IsValidIndex(LocalVertexId))
+			{
+				continue;
+			}
+			const int32 SampleId = Plate.Vertices[LocalVertexId].GlobalSampleId;
+			if (!SubductionRoleMask.IsValidIndex(SampleId))
+			{
+				continue;
+			}
+			SubductionRoleMask[SampleId] = FMath::Max(SubductionRoleMask[SampleId], MaskValue);
+		}
+	};
+
+	auto MarkTriangleDistance = [this](const CarrierLab::FCarrierPlate& Plate, const int32 LocalTriangleId, const double DistanceKm)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId) || !FMath::IsFinite(DistanceKm))
+		{
+			return;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		const int32 VertexIds[3] = { Triangle.A, Triangle.B, Triangle.C };
+		for (const int32 LocalVertexId : VertexIds)
+		{
+			if (!Plate.Vertices.IsValidIndex(LocalVertexId))
+			{
+				continue;
+			}
+			const int32 SampleId = Plate.Vertices[LocalVertexId].GlobalSampleId;
+			if (!DistanceToFrontKmBySample.IsValidIndex(SampleId))
+			{
+				continue;
+			}
+			const double Previous = DistanceToFrontKmBySample[SampleId];
+			DistanceToFrontKmBySample[SampleId] = Previous < 0.0 ? DistanceKm : FMath::Min(Previous, DistanceKm);
+		}
+	};
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		for (int32 Index = 0; Index < Plate.ActiveBoundaryTriangles.Num(); ++Index)
+		{
+			const double DistanceKm = Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(Index)
+				? Plate.ActiveBoundaryTriangleDistancesKm[Index]
+				: 0.0;
+			MarkTriangleDistance(Plate, Plate.ActiveBoundaryTriangles[Index], DistanceKm);
+		}
+	}
+
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : State.ConvergenceSubductionTriangleHits)
+	{
+		if (!State.Plates.IsValidIndex(Hit.PlateId))
+		{
+			continue;
+		}
+
+		uint8 MaskValue = 0;
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision != nullptr)
+		{
+			if (IsSubductionPolarityDecision(*Decision))
+			{
+				MaskValue = Hit.PlateId == Decision->UnderPlate ? 1 : (Hit.PlateId == Decision->OverPlate ? 2 : 0);
+			}
+			else if (Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate)
+			{
+				MaskValue = 3;
+			}
+			else if (Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::OceanOceanDeferred)
+			{
+				MaskValue = 4;
+			}
+		}
+		if (MaskValue != 0)
+		{
+			MarkTriangleVertices(State.Plates[Hit.PlateId], Hit.LocalTriangleId, MaskValue);
+		}
+	}
+}
+
 void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 {
 	if (!bInitialized)
@@ -4518,6 +4689,8 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	OverlapMask.Init(0, State.Samples.Num());
 	BoundaryMask.Init(0, State.Samples.Num());
 	PlateBoundaryMask.Init(0, State.Samples.Num());
+	SubductionRoleMask.Init(0, State.Samples.Num());
+	DistanceToFrontKmBySample.Init(-1.0, State.Samples.Num());
 
 	FString MeshError;
 	const double BvhStartSeconds = FPlatformTime::Seconds();
@@ -4613,6 +4786,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	CurrentMetrics.DriftMetricsSeconds = FPlatformTime::Seconds() - DriftStartSeconds;
 	const double BoundaryStartSeconds = FPlatformTime::Seconds();
 	ComputePlateBoundaryMask();
+	ComputePhaseIIIObservabilityMasks();
 	CurrentMetrics.BoundaryMaskSeconds = FPlatformTime::Seconds() - BoundaryStartSeconds;
 	CurrentMetrics.ProjectionSeconds = FPlatformTime::Seconds() - StartSeconds;
 	const double HashStartSeconds = FPlatformTime::Seconds();
@@ -4745,6 +4919,12 @@ FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId)
 			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
 	case ECarrierLabVisualizationLayer::DriftError:
 		return DriftColor(DriftErrorKmBySample.IsValidIndex(SampleId) ? DriftErrorKmBySample[SampleId] : -1.0);
+	case ECarrierLabVisualizationLayer::ElevationHeatmap:
+		return ElevationColor(State.Samples.IsValidIndex(SampleId) ? State.Samples[SampleId].Elevation : 0.0);
+	case ECarrierLabVisualizationLayer::SubductionMask:
+		return SubductionRoleColor(SubductionRoleMask.IsValidIndex(SampleId) ? SubductionRoleMask[SampleId] : 0);
+	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
+		return DistanceToFrontColor(DistanceToFrontKmBySample.IsValidIndex(SampleId) ? DistanceToFrontKmBySample[SampleId] : -1.0);
 	case ECarrierLabVisualizationLayer::PlateId:
 	default:
 		return PlateColor(RenderPlateIds.IsValidIndex(SampleId) ? RenderPlateIds[SampleId] : INDEX_NONE);
@@ -4874,13 +5054,22 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	case ECarrierLabVisualizationLayer::DriftError:
 		LayerName = TEXT("drift error");
 		break;
+	case ECarrierLabVisualizationLayer::ElevationHeatmap:
+		LayerName = TEXT("elevation heatmap");
+		break;
+	case ECarrierLabVisualizationLayer::SubductionMask:
+		LayerName = TEXT("subduction mask");
+		break;
+	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
+		LayerName = TEXT("distance to front");
+		break;
 	case ECarrierLabVisualizationLayer::PlateId:
 	default:
 		break;
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-5 layers"),
+		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-8 layers"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
