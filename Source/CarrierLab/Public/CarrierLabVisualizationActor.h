@@ -112,6 +112,9 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	FString StateHash;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	FString CrustStateHash;
 };
 
 struct FCarrierLabVisualizationMotion
@@ -569,6 +572,11 @@ public:
 		FCarrierLabPhaseIIMaterialLedgerMetrics* OutMaterialMetrics = nullptr);
 	bool GetPhaseIIMotion(int32 PlateId, FCarrierLabVisualizationMotion& OutMotion) const;
 	double ComputePhaseIIPairSignedConvergenceVelocity(int32 PlateA, int32 PlateB) const;
+	bool GetPhaseIIIA1ElevationAudit(
+		int32& OutSampleCount,
+		int32& OutPlateVertexCount,
+		double& OutMaxAbsSampleElevation,
+		double& OutMaxAbsPlateVertexElevation) const;
 
 private:
 	void BindInputControls();

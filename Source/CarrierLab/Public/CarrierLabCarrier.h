@@ -21,6 +21,7 @@ namespace CarrierLab
 		double AreaWeight = 0.0;
 		int32 PlateId = INDEX_NONE;
 		double ContinentalFraction = 0.0;
+		double Elevation = 0.0;
 		bool bContinental = false;
 	};
 
@@ -39,6 +40,7 @@ namespace CarrierLab
 		FVector3d UnitPosition = FVector3d::ZeroVector;
 		double AreaWeight = 0.0;
 		double ContinentalFraction = 0.0;
+		double Elevation = 0.0;
 		bool bContinental = false;
 	};
 

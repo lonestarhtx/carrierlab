@@ -2331,6 +2331,36 @@ double ACarrierLabVisualizationActor::ComputePhaseIIPairSignedConvergenceVelocit
 	return -SignedPairSeparationVelocityForPlatePair(Evidence, Motions, PlateA, PlateB);
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIA1ElevationAudit(
+	int32& OutSampleCount,
+	int32& OutPlateVertexCount,
+	double& OutMaxAbsSampleElevation,
+	double& OutMaxAbsPlateVertexElevation) const
+{
+	OutSampleCount = State.Samples.Num();
+	OutPlateVertexCount = 0;
+	OutMaxAbsSampleElevation = 0.0;
+	OutMaxAbsPlateVertexElevation = 0.0;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		OutMaxAbsSampleElevation = FMath::Max(OutMaxAbsSampleElevation, FMath::Abs(Sample.Elevation));
+	}
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		OutPlateVertexCount += Plate.Vertices.Num();
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			OutMaxAbsPlateVertexElevation = FMath::Max(OutMaxAbsPlateVertexElevation, FMath::Abs(Vertex.Elevation));
+		}
+	}
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -2921,6 +2951,29 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		}
 	}
 	CurrentMetrics.StateHash = HashToString(StateHash);
+
+	uint64 CrustHash = 1469598103934665603ull;
+	HashMix(CrustHash, static_cast<uint64>(CurrentMetrics.Step + 1));
+	HashMix(CrustHash, static_cast<uint64>(CurrentMetrics.EventCount + 1));
+	HashMix(CrustHash, static_cast<uint64>(State.Samples.Num() + 1));
+	HashMix(CrustHash, static_cast<uint64>(State.Plates.Num() + 1));
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		HashMix(CrustHash, static_cast<uint64>(Sample.Id + 1));
+		HashMix(CrustHash, static_cast<uint64>(Sample.PlateId + 1));
+		HashMixDouble(CrustHash, Sample.Elevation);
+	}
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		HashMix(CrustHash, static_cast<uint64>(Plate.PlateId + 1));
+		HashMix(CrustHash, static_cast<uint64>(Plate.Vertices.Num() + 1));
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			HashMix(CrustHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
+			HashMixDouble(CrustHash, Vertex.Elevation);
+		}
+	}
+	CurrentMetrics.CrustStateHash = HashToString(CrustHash);
 }
 
 FLinearColor ACarrierLabVisualizationActor::ColorForSample(const int32 SampleId) const
