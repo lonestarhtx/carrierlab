@@ -2361,6 +2361,42 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIA1ElevationAudit(
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIA2CrustFieldAudit(
+	int32& OutSampleCount,
+	int32& OutPlateVertexCount,
+	double& OutMaxAbsSampleElevation,
+	double& OutMaxAbsPlateVertexElevation,
+	double& OutMaxAbsSampleOceanicAge,
+	double& OutMaxAbsPlateVertexOceanicAge) const
+{
+	OutSampleCount = State.Samples.Num();
+	OutPlateVertexCount = 0;
+	OutMaxAbsSampleElevation = 0.0;
+	OutMaxAbsPlateVertexElevation = 0.0;
+	OutMaxAbsSampleOceanicAge = 0.0;
+	OutMaxAbsPlateVertexOceanicAge = 0.0;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		OutMaxAbsSampleElevation = FMath::Max(OutMaxAbsSampleElevation, FMath::Abs(Sample.Elevation));
+		OutMaxAbsSampleOceanicAge = FMath::Max(OutMaxAbsSampleOceanicAge, FMath::Abs(Sample.OceanicAge));
+	}
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		OutPlateVertexCount += Plate.Vertices.Num();
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			OutMaxAbsPlateVertexElevation = FMath::Max(OutMaxAbsPlateVertexElevation, FMath::Abs(Vertex.Elevation));
+			OutMaxAbsPlateVertexOceanicAge = FMath::Max(OutMaxAbsPlateVertexOceanicAge, FMath::Abs(Vertex.OceanicAge));
+		}
+	}
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RefreshPlateRayMeshes(FString& OutError)
 {
 	if (bPlateRayMeshTopologyDirty)
@@ -2962,6 +2998,7 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		HashMix(CrustHash, static_cast<uint64>(Sample.Id + 1));
 		HashMix(CrustHash, static_cast<uint64>(Sample.PlateId + 1));
 		HashMixDouble(CrustHash, Sample.Elevation);
+		HashMixDouble(CrustHash, Sample.OceanicAge);
 	}
 	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 	{
@@ -2971,6 +3008,7 @@ void ACarrierLabVisualizationActor::UpdateLastHash()
 		{
 			HashMix(CrustHash, static_cast<uint64>(Vertex.GlobalSampleId + 1));
 			HashMixDouble(CrustHash, Vertex.Elevation);
+			HashMixDouble(CrustHash, Vertex.OceanicAge);
 		}
 	}
 	CurrentMetrics.CrustStateHash = HashToString(CrustHash);

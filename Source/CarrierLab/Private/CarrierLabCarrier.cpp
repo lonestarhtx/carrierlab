@@ -114,6 +114,7 @@ namespace CarrierLab
 			Vertex.AreaWeight = Sample.AreaWeight;
 			Vertex.ContinentalFraction = Sample.ContinentalFraction;
 			Vertex.Elevation = Sample.Elevation;
+			Vertex.OceanicAge = Sample.OceanicAge;
 			Vertex.bContinental = Sample.bContinental;
 			const int32 LocalVertexId = Plate.Vertices.Add(Vertex);
 			Plate.GlobalSampleIdToLocalVertexId.Add(Sample.Id, LocalVertexId);

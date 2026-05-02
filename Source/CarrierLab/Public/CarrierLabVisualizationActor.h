@@ -577,6 +577,13 @@ public:
 		int32& OutPlateVertexCount,
 		double& OutMaxAbsSampleElevation,
 		double& OutMaxAbsPlateVertexElevation) const;
+	bool GetPhaseIIIA2CrustFieldAudit(
+		int32& OutSampleCount,
+		int32& OutPlateVertexCount,
+		double& OutMaxAbsSampleElevation,
+		double& OutMaxAbsPlateVertexElevation,
+		double& OutMaxAbsSampleOceanicAge,
+		double& OutMaxAbsPlateVertexOceanicAge) const;
 
 private:
 	void BindInputControls();
