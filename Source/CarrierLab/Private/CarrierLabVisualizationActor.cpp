@@ -1763,6 +1763,7 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	CurrentMetrics = FCarrierLabVisualizationMetrics();
 	LastPhaseIIIC3UpliftAudit = FCarrierLabPhaseIIIC3UpliftAudit();
 	LastPhaseIIIC4SlabPullAudit = FCarrierLabPhaseIIIC4SlabPullAudit();
+	LastPhaseIIIC5ElevationLedgerAudit = FCarrierLabPhaseIIIC5ElevationLedgerAudit();
 	RenderPlateIds.SetNum(State.Samples.Num());
 	RenderContinentalFractions.SetNum(State.Samples.Num());
 	DriftErrorKmBySample.SetNum(State.Samples.Num());
@@ -4208,6 +4209,28 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseI
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const
+{
+	OutAudit = LastPhaseIIIC5ElevationLedgerAudit;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	OutAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
+	OutAudit.bUpliftEnabled = bEnablePhaseIIICOverridingPlateUplift;
+	OutAudit.bSlabPullEnabled = bEnablePhaseIIICSlabPull;
+	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
+	OutAudit.HistoricalElevationHash = CurrentMetrics.HistoricalElevationHash;
+	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())
@@ -5221,6 +5244,128 @@ void ACarrierLabVisualizationActor::UpdatePhaseIIICSubductingTriangleMarks()
 	}
 }
 
+double ACarrierLabVisualizationActor::SumPlateVisibleElevationKm() const
+{
+	double Sum = 0.0;
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			Sum += Vertex.Elevation;
+		}
+	}
+	return Sum;
+}
+
+void ACarrierLabVisualizationActor::BeginPhaseIIIC5ElevationLedger()
+{
+	LastPhaseIIIC5ElevationLedgerAudit = FCarrierLabPhaseIIIC5ElevationLedgerAudit();
+	LastPhaseIIIC5ElevationLedgerAudit.Step = CurrentMetrics.Step + 1;
+	LastPhaseIIIC5ElevationLedgerAudit.EventCount = CurrentMetrics.EventCount;
+	LastPhaseIIIC5ElevationLedgerAudit.PlateCount = State.Plates.Num();
+	LastPhaseIIIC5ElevationLedgerAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	LastPhaseIIIC5ElevationLedgerAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	LastPhaseIIIC5ElevationLedgerAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
+	LastPhaseIIIC5ElevationLedgerAudit.bUpliftEnabled = bEnablePhaseIIICOverridingPlateUplift;
+	LastPhaseIIIC5ElevationLedgerAudit.bSlabPullEnabled = bEnablePhaseIIICSlabPull;
+	LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationBeforeKm = SumPlateVisibleElevationKm();
+}
+
+void ACarrierLabVisualizationActor::AddPhaseIIIC5ElevationLedgerRecord(
+	const ECarrierLabPhaseIIIC5ElevationLedgerClass LedgerClass,
+	const int32 MarkId,
+	const int32 PlateId,
+	const int32 OtherPlateId,
+	const int32 LocalTriangleId,
+	const int32 LocalVertexId,
+	const int32 GlobalSampleId,
+	const double PreviousElevationKm,
+	const double NewElevationKm,
+	const double SignedConvergenceVelocity)
+{
+	const double DeltaKm = NewElevationKm - PreviousElevationKm;
+	if (!FMath::IsFinite(DeltaKm) || FMath::Abs(DeltaKm) <= 1.0e-15)
+	{
+		return;
+	}
+
+	FCarrierLabPhaseIIIC5ElevationLedgerRecord& Record =
+		LastPhaseIIIC5ElevationLedgerAudit.Records.AddDefaulted_GetRef();
+	Record.RecordId = LastPhaseIIIC5ElevationLedgerAudit.Records.Num() - 1;
+	Record.Step = LastPhaseIIIC5ElevationLedgerAudit.Step;
+	Record.MarkId = MarkId;
+	Record.PlateId = PlateId;
+	Record.OtherPlateId = OtherPlateId;
+	Record.LocalTriangleId = LocalTriangleId;
+	Record.LocalVertexId = LocalVertexId;
+	Record.GlobalSampleId = GlobalSampleId;
+	Record.PreviousElevationKm = PreviousElevationKm;
+	Record.NewElevationKm = NewElevationKm;
+	Record.DeltaKm = DeltaKm;
+	Record.SignedConvergenceVelocity = SignedConvergenceVelocity;
+	Record.LedgerClass = LedgerClass;
+
+	++LastPhaseIIIC5ElevationLedgerAudit.RecordCount;
+	LastPhaseIIIC5ElevationLedgerAudit.LedgerVisibleElevationDeltaKm += DeltaKm;
+	switch (LedgerClass)
+	{
+	case ECarrierLabPhaseIIIC5ElevationLedgerClass::TrenchVisibleElevation:
+		++LastPhaseIIIC5ElevationLedgerAudit.TrenchRecordCount;
+		LastPhaseIIIC5ElevationLedgerAudit.TrenchVisibleElevationDeltaKm += DeltaKm;
+		break;
+	case ECarrierLabPhaseIIIC5ElevationLedgerClass::OverridingUplift:
+		++LastPhaseIIIC5ElevationLedgerAudit.UpliftRecordCount;
+		LastPhaseIIIC5ElevationLedgerAudit.UpliftVisibleElevationDeltaKm += DeltaKm;
+		break;
+	default:
+		break;
+	}
+}
+
+void ACarrierLabVisualizationActor::FinalizePhaseIIIC5ElevationLedger()
+{
+	LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationAfterKm = SumPlateVisibleElevationKm();
+	LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationDeltaKm =
+		LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationAfterKm -
+		LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationBeforeKm;
+	LastPhaseIIIC5ElevationLedgerAudit.VisibleElevationResidualKm =
+		LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationDeltaKm -
+		LastPhaseIIIC5ElevationLedgerAudit.LedgerVisibleElevationDeltaKm;
+
+	TSet<uint64> UniqueVertices;
+	uint64 LedgerHash = 1469598103934665603ull;
+	HashMix(LedgerHash, static_cast<uint64>(LastPhaseIIIC5ElevationLedgerAudit.Step + 1));
+	HashMix(LedgerHash, static_cast<uint64>(LastPhaseIIIC5ElevationLedgerAudit.EventCount + 1));
+	HashMix(LedgerHash, static_cast<uint64>(LastPhaseIIIC5ElevationLedgerAudit.ResetSerial + 1));
+	HashMix(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.bMarksEnabled ? 1ull : 0ull);
+	HashMix(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.bElevationSplitEnabled ? 1ull : 0ull);
+	HashMix(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.bUpliftEnabled ? 1ull : 0ull);
+	HashMix(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.bSlabPullEnabled ? 1ull : 0ull);
+	for (const FCarrierLabPhaseIIIC5ElevationLedgerRecord& Record : LastPhaseIIIC5ElevationLedgerAudit.Records)
+	{
+		UniqueVertices.Add(MakePlateVertexKey(Record.PlateId, Record.LocalVertexId));
+		HashMix(LedgerHash, static_cast<uint64>(Record.RecordId + 1));
+		HashMix(LedgerHash, static_cast<uint64>(Record.MarkId + 1));
+		HashMix(LedgerHash, static_cast<uint64>(Record.PlateId + 1));
+		HashMix(LedgerHash, static_cast<uint64>(Record.OtherPlateId + 1));
+		HashMix(LedgerHash, static_cast<uint64>(Record.LocalTriangleId + 1));
+		HashMix(LedgerHash, static_cast<uint64>(Record.LocalVertexId + 1));
+		HashMix(LedgerHash, static_cast<uint64>(Record.GlobalSampleId + 1));
+		HashMixDouble(LedgerHash, Record.PreviousElevationKm);
+		HashMixDouble(LedgerHash, Record.NewElevationKm);
+		HashMixDouble(LedgerHash, Record.DeltaKm);
+		HashMixDouble(LedgerHash, Record.SignedConvergenceVelocity);
+		HashMix(LedgerHash, static_cast<uint64>(Record.LedgerClass) + 1ull);
+	}
+	LastPhaseIIIC5ElevationLedgerAudit.UniqueVertexCount = UniqueVertices.Num();
+	HashMixDouble(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationBeforeKm);
+	HashMixDouble(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationAfterKm);
+	HashMixDouble(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.ActualVisibleElevationDeltaKm);
+	HashMixDouble(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.LedgerVisibleElevationDeltaKm);
+	HashMixDouble(LedgerHash, LastPhaseIIIC5ElevationLedgerAudit.VisibleElevationResidualKm);
+	LastPhaseIIIC5ElevationLedgerAudit.ElevationLedgerHash = HashToString(LedgerHash);
+}
+
 bool ACarrierLabVisualizationActor::ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark)
 {
 	if (Mark.bHistoricalElevationSnapshotTaken)
@@ -5267,7 +5412,20 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIC2ElevationSplitToMark(CarrierL
 	}
 	for (const int32 VertexId : VertexIds)
 	{
-		Plate.Vertices[VertexId].Elevation = PhaseIIICTrenchDepthKm;
+		CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[VertexId];
+		const double PreviousElevationKm = Vertex.Elevation;
+		Vertex.Elevation = PhaseIIICTrenchDepthKm;
+		AddPhaseIIIC5ElevationLedgerRecord(
+			ECarrierLabPhaseIIIC5ElevationLedgerClass::TrenchVisibleElevation,
+			Mark.MarkId,
+			Mark.PlateId,
+			Mark.OtherPlateId,
+			Mark.LocalTriangleId,
+			VertexId,
+			Vertex.GlobalSampleId,
+			PreviousElevationKm,
+			Vertex.Elevation,
+			Mark.SignedConvergenceVelocity);
 	}
 
 	Mark.bHistoricalElevationSnapshotTaken = true;
@@ -5401,6 +5559,17 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 
 			const double PreviousElevationKm = OverVertex.Elevation;
 			OverVertex.Elevation += DeltaKm;
+			AddPhaseIIIC5ElevationLedgerRecord(
+				ECarrierLabPhaseIIIC5ElevationLedgerClass::OverridingUplift,
+				Mark.MarkId,
+				Mark.OtherPlateId,
+				Mark.PlateId,
+				Mark.LocalTriangleId,
+				OverVertexId,
+				OverVertex.GlobalSampleId,
+				PreviousElevationKm,
+				OverVertex.Elevation,
+				Mark.SignedConvergenceVelocity);
 
 			if (Motions.IsValidIndex(Mark.PlateId) && Motions.IsValidIndex(Mark.OtherPlateId))
 			{
@@ -5674,6 +5843,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	UpdateConvergenceSubductionMatrix();
 	UpdateConvergenceSubductionPolarityDecisions();
 	UpdateConvergenceNeighborPropagation();
+	BeginPhaseIIIC5ElevationLedger();
 	if (bEnablePhaseIIICSubductingMarks)
 	{
 		UpdatePhaseIIICSubductingTriangleMarks();
@@ -5695,6 +5865,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 		LastPhaseIIIC3UpliftAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
 	}
 	ApplyPhaseIIIC4SlabPull();
+	FinalizePhaseIIIC5ElevationLedger();
 	++CurrentMetrics.Step;
 	const int32 Cadence = GetNaturalCadenceSteps();
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;

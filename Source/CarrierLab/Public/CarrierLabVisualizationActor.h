@@ -850,6 +850,57 @@ struct FCarrierLabPhaseIIIC4SlabPullAudit
 	TArray<FCarrierLabPhaseIIIC4SlabPullPlateRecord> PlateRecords;
 };
 
+enum class ECarrierLabPhaseIIIC5ElevationLedgerClass : uint8
+{
+	TrenchVisibleElevation = 0,
+	OverridingUplift = 1
+};
+
+struct FCarrierLabPhaseIIIC5ElevationLedgerRecord
+{
+	int32 RecordId = INDEX_NONE;
+	int32 Step = 0;
+	int32 MarkId = INDEX_NONE;
+	int32 PlateId = INDEX_NONE;
+	int32 OtherPlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	int32 LocalVertexId = INDEX_NONE;
+	int32 GlobalSampleId = INDEX_NONE;
+	double PreviousElevationKm = 0.0;
+	double NewElevationKm = 0.0;
+	double DeltaKm = 0.0;
+	double SignedConvergenceVelocity = 0.0;
+	ECarrierLabPhaseIIIC5ElevationLedgerClass LedgerClass = ECarrierLabPhaseIIIC5ElevationLedgerClass::TrenchVisibleElevation;
+};
+
+struct FCarrierLabPhaseIIIC5ElevationLedgerAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	bool bMarksEnabled = false;
+	bool bElevationSplitEnabled = false;
+	bool bUpliftEnabled = false;
+	bool bSlabPullEnabled = false;
+	int32 RecordCount = 0;
+	int32 TrenchRecordCount = 0;
+	int32 UpliftRecordCount = 0;
+	int32 UniqueVertexCount = 0;
+	double ActualVisibleElevationBeforeKm = 0.0;
+	double ActualVisibleElevationAfterKm = 0.0;
+	double ActualVisibleElevationDeltaKm = 0.0;
+	double LedgerVisibleElevationDeltaKm = 0.0;
+	double TrenchVisibleElevationDeltaKm = 0.0;
+	double UpliftVisibleElevationDeltaKm = 0.0;
+	double VisibleElevationResidualKm = 0.0;
+	FString ElevationLedgerHash;
+	FString VisibleElevationHash;
+	FString HistoricalElevationHash;
+	FString CrustStateHash;
+	TArray<FCarrierLabPhaseIIIC5ElevationLedgerRecord> Records;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -1070,6 +1121,7 @@ public:
 	bool GetPhaseIIIC2ElevationAudit(FCarrierLabPhaseIIIC2ElevationAudit& OutAudit) const;
 	bool GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const;
 	bool GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
+	bool GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
@@ -1086,6 +1138,20 @@ private:
 	void UpdateConvergenceSubductionPolarityDecisions();
 	void UpdateConvergenceNeighborPropagation();
 	void UpdatePhaseIIICSubductingTriangleMarks();
+	void BeginPhaseIIIC5ElevationLedger();
+	void AddPhaseIIIC5ElevationLedgerRecord(
+		ECarrierLabPhaseIIIC5ElevationLedgerClass LedgerClass,
+		int32 MarkId,
+		int32 PlateId,
+		int32 OtherPlateId,
+		int32 LocalTriangleId,
+		int32 LocalVertexId,
+		int32 GlobalSampleId,
+		double PreviousElevationKm,
+		double NewElevationKm,
+		double SignedConvergenceVelocity);
+	void FinalizePhaseIIIC5ElevationLedger();
+	double SumPlateVisibleElevationKm() const;
 	bool ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark);
 	void ApplyPhaseIIIC3OverridingPlateUplift();
 	void ApplyPhaseIIIC4SlabPull();
@@ -1116,6 +1182,7 @@ private:
 	TArray<double> DistanceToFrontKmBySample;
 	FCarrierLabPhaseIIIC3UpliftAudit LastPhaseIIIC3UpliftAudit;
 	FCarrierLabPhaseIIIC4SlabPullAudit LastPhaseIIIC4SlabPullAudit;
+	FCarrierLabPhaseIIIC5ElevationLedgerAudit LastPhaseIIIC5ElevationLedgerAudit;
 	int32 CachedRenderMeshSampleCount = 0;
 	int32 CachedRenderMeshTriangleCount = 0;
 	double StepAccumulator = 0.0;
