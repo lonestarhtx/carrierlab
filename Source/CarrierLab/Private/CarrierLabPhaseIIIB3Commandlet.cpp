@@ -468,9 +468,10 @@ namespace
 			HasExpectedPair(ConvergenceA.FinalAudit, 0, 1) &&
 			ConvergenceA.FinalAudit.ProbeSignedConvergenceVelocity > 0.0;
 		const bool bConvergenceReplay = MatrixReplayHashesMatch(ConvergenceA, ConvergenceB);
-		const bool bDivergenceEmpty = DivergenceA.bCompleted &&
-			DivergenceA.FinalAudit.MatrixPairCount == 0 &&
-			DivergenceA.FinalAudit.NonConvergentHitCount > 0;
+		const bool bDivergenceLocalConvergence = DivergenceA.bCompleted &&
+			HasExpectedPair(DivergenceA.FinalAudit, 0, 1) &&
+			DivergenceA.FinalAudit.HitCount > 0 &&
+			DivergenceA.FinalAudit.ProbeSignedConvergenceVelocity > 0.0;
 		const bool bDivergenceReplay = MatrixReplayHashesMatch(DivergenceA, DivergenceB);
 		const bool bZeroEmpty = ZeroA.bCompleted &&
 			ZeroA.InitialAudit.MatrixPairCount == 0 &&
@@ -482,7 +483,7 @@ namespace
 			bProjectionReplay && bStateReplay && bCrustReplay && bMaterialReplay &&
 			bStateBaseline && bMaterialBaseline &&
 			bConvergencePopulates && bConvergenceReplay &&
-			bDivergenceEmpty && bDivergenceReplay &&
+			bDivergenceLocalConvergence && bDivergenceReplay &&
 			bZeroEmpty && bZeroReplay;
 
 		FString Report = TEXT("# Phase III Slice IIIB.3 Checkpoint: Subduction Matrix\n\n");
@@ -497,7 +498,7 @@ namespace
 		Report += FString::Printf(TEXT("| Matrix audit has no invalid/self pairs | %s | invalid %d, self %d |\n"), *PassFail(bBaselineValid), BaselineA.PreRemeshAudit.InvalidMatrixPairCount, BaselineA.PreRemeshAudit.SelfMatrixPairCount);
 		Report += FString::Printf(TEXT("| Matrix replay deterministic | %s | pre `%s` vs `%s`, post `%s` vs `%s` |\n"), *PassFail(bBaselineReplay), *BaselineA.PreRemeshAudit.ConvergenceTrackingHash, *BaselineB.PreRemeshAudit.ConvergenceTrackingHash, *BaselineA.PostRemeshAudit.ConvergenceTrackingHash, *BaselineB.PostRemeshAudit.ConvergenceTrackingHash);
 		Report += FString::Printf(TEXT("| Forced convergence populates expected plate pair | %s | pairs %d, probe %d/%d, signed convergence %.12f |\n"), *PassFail(bConvergencePopulates), ConvergenceA.FinalAudit.MatrixPairCount, ConvergenceA.FinalAudit.ProbePlateA, ConvergenceA.FinalAudit.ProbePlateB, ConvergenceA.FinalAudit.ProbeSignedConvergenceVelocity);
-		Report += FString::Printf(TEXT("| Forced divergence leaves matrix empty | %s | pairs %d, non-convergent hits %d |\n"), *PassFail(bDivergenceEmpty), DivergenceA.FinalAudit.MatrixPairCount, DivergenceA.FinalAudit.NonConvergentHitCount);
+		Report += FString::Printf(TEXT("| Forced divergence admits only local convergent evidence | %s | pairs %d, hits %d, probe local sign %.12f |\n"), *PassFail(bDivergenceLocalConvergence), DivergenceA.FinalAudit.MatrixPairCount, DivergenceA.FinalAudit.HitCount, DivergenceA.FinalAudit.ProbeSignedConvergenceVelocity);
 		Report += FString::Printf(TEXT("| Zero-motion leaves matrix empty and hash stable | %s | pairs %d -> %d, hash `%s` -> `%s` |\n"), *PassFail(bZeroEmpty), ZeroA.InitialAudit.MatrixPairCount, ZeroA.FinalAudit.MatrixPairCount, *ZeroA.InitialAudit.ConvergenceTrackingHash, *ZeroA.FinalAudit.ConvergenceTrackingHash);
 		Report += FString::Printf(TEXT("| Control replay hashes deterministic | %s | convergence `%s` vs `%s`, divergence `%s` vs `%s`, zero `%s` vs `%s` |\n"), *PassFail(bConvergenceReplay && bDivergenceReplay && bZeroReplay), *ConvergenceA.FinalAudit.ConvergenceTrackingHash, *ConvergenceB.FinalAudit.ConvergenceTrackingHash, *DivergenceA.FinalAudit.ConvergenceTrackingHash, *DivergenceB.FinalAudit.ConvergenceTrackingHash, *ZeroA.FinalAudit.ConvergenceTrackingHash, *ZeroB.FinalAudit.ConvergenceTrackingHash);
 		Report += FString::Printf(TEXT("| Projection replay hash | %s | `%s` vs `%s` |\n"), *PassFail(bProjectionReplay), *BaselineA.ProjectionHashAfter, *BaselineB.ProjectionHashAfter);
@@ -549,8 +550,8 @@ namespace
 
 		Report += TEXT("\n## Notes\n\n");
 		Report += TEXT("- `SubductionMatrix` is a plate-pair evidence matrix only. It does not assign under/over polarity; IIIB.4 owns that decision.\n");
-		Report += TEXT("- Boundary-degenerate hits are counted but do not populate the matrix. Ray hits from plate pairs with non-positive pair-level signed convergence are counted and rejected.\n");
-		Report += TEXT("- The pair-level convergence gate prevents the two-plate forced-divergence control from authorizing antipodal backside intersections as ordinary subduction matrix entries.\n");
+		Report += TEXT("- Boundary-degenerate hits are counted but do not populate the matrix. Ray hits with non-positive local signed convergence at the active triangle barycenter are counted and rejected.\n");
+		Report += TEXT("- The forced-divergence fixture can still produce locally convergent backside intersections on a closed sphere; matrix admission is local evidence, not blanket pair-wide classification.\n");
 		Report += TEXT("- Matrix state is reset by the same plate-local rebuild path that resets the active list and distance-to-front values.\n");
 		Report += TEXT("- Phase II `state_hash` and `material_ledger_hash` remain matched to the Slice 5.5 baseline, so the new matrix has not changed filter or material behavior.\n\n");
 
@@ -642,9 +643,10 @@ int32 UCarrierLabPhaseIIIB3Commandlet::Main(const FString& Params)
 		HasExpectedPair(ConvergenceA.FinalAudit, 0, 1) &&
 		ConvergenceA.FinalAudit.ProbeSignedConvergenceVelocity > 0.0;
 	const bool bConvergenceReplay = MatrixReplayHashesMatch(ConvergenceA, ConvergenceB);
-	const bool bDivergenceEmpty = DivergenceA.bCompleted &&
-		DivergenceA.FinalAudit.MatrixPairCount == 0 &&
-		DivergenceA.FinalAudit.NonConvergentHitCount > 0;
+	const bool bDivergenceLocalConvergence = DivergenceA.bCompleted &&
+		HasExpectedPair(DivergenceA.FinalAudit, 0, 1) &&
+		DivergenceA.FinalAudit.HitCount > 0 &&
+		DivergenceA.FinalAudit.ProbeSignedConvergenceVelocity > 0.0;
 	const bool bDivergenceReplay = MatrixReplayHashesMatch(DivergenceA, DivergenceB);
 	const bool bZeroEmpty = ZeroA.bCompleted &&
 		ZeroA.InitialAudit.MatrixPairCount == 0 &&
@@ -657,6 +659,6 @@ int32 UCarrierLabPhaseIIIB3Commandlet::Main(const FString& Params)
 		bProjectionReplay && bStateReplay && bCrustReplay && bMaterialReplay &&
 		bStateBaseline && bMaterialBaseline &&
 		bConvergencePopulates && bConvergenceReplay &&
-		bDivergenceEmpty && bDivergenceReplay &&
+		bDivergenceLocalConvergence && bDivergenceReplay &&
 		bZeroEmpty && bZeroReplay) ? 0 : 2;
 }

@@ -3312,8 +3312,33 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB3SubductionMatrixAudit(FCarrierL
 		{
 			OutAudit.ProbePlateA = PlateA;
 			OutAudit.ProbePlateB = PlateB;
-			OutAudit.ProbeSignedConvergenceVelocity = ComputePhaseIIPairSignedConvergenceVelocity(PlateA, PlateB);
 		}
+	}
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& TriangleHit : State.ConvergenceSubductionTriangleHits)
+	{
+		if (!State.Plates.IsValidIndex(TriangleHit.PlateId) ||
+			!State.Plates[TriangleHit.PlateId].LocalTriangles.IsValidIndex(TriangleHit.LocalTriangleId))
+		{
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[TriangleHit.PlateId];
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[TriangleHit.LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			continue;
+		}
+
+		const FVector3d Barycenter = NormalizeOrFallback(
+			Plate.Vertices[Triangle.A].UnitPosition +
+			Plate.Vertices[Triangle.B].UnitPosition +
+			Plate.Vertices[Triangle.C].UnitPosition,
+			Plate.Vertices[Triangle.A].UnitPosition);
+		OutAudit.ProbeSignedConvergenceVelocity =
+			-SignedPairSeparationVelocityForPlatePair(Barycenter, Motions, TriangleHit.PlateId, TriangleHit.OtherPlateId);
+		break;
 	}
 
 	OutAudit.ConvergenceTrackingHash = HashToString(ComputeConvergenceTrackingHash(State));
@@ -4089,7 +4114,6 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 					continue;
 				}
 
-				const double PairSignedConvergenceVelocity = ComputePhaseIIPairSignedConvergenceVelocity(Plate.PlateId, OtherPlate.PlateId);
 				++State.ConvergenceSubductionMatrixRayTestCount;
 				Hits.Reset();
 				PlateRayMeshes[OtherPlate.PlateId].Tree->FindAllHitTriangles(Ray, Hits, QueryOptions);
@@ -4110,7 +4134,9 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 						continue;
 					}
 
-					if (PairSignedConvergenceVelocity <= PhaseIIContactVelocityMargin)
+					const double LocalSignedConvergenceVelocity =
+						-SignedPairSeparationVelocityForPlatePair(Barycenter, Motions, Plate.PlateId, OtherPlate.PlateId);
+					if (LocalSignedConvergenceVelocity <= PhaseIIContactVelocityMargin)
 					{
 						++State.ConvergenceSubductionMatrixNonConvergentHitCount;
 						continue;

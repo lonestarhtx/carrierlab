@@ -350,6 +350,17 @@ namespace
 			Result.FinalAudit.OverThresholdActiveTriangleCount == 0;
 	}
 
+	bool IsLocalPropagationObserved(const FNeighborReplayResult& Result)
+	{
+		return Result.bCompleted &&
+			Result.FinalAudit.NonBoundaryActiveTriangleCount > 0 &&
+			Result.FinalAudit.PropagationSeedHitCount > 0 &&
+			Result.FinalAudit.PropagationAddedCount > 0 &&
+			Result.FinalAudit.PropagationInvalidCount == 0 &&
+			Result.FinalAudit.OverThresholdActiveTriangleCount == 0 &&
+			Result.FinalAudit.MaxDistanceKm <= Result.FinalAudit.DistanceThresholdKm + 1.0e-6;
+	}
+
 	FString BuildReport(
 		const FString& OutputRoot,
 		const FNeighborReplayResult& SingleA,
@@ -366,7 +377,7 @@ namespace
 		const bool bSingleGrowth = IsSingleSeedGrowthExpected(SingleA) && ReplayHashesMatch(SingleA, SingleB);
 		const bool bBounded = IsBounded(BoundedA) && IsBounded(BoundedB) && ReplayHashesMatch(BoundedA, BoundedB);
 		const bool bDeferred = IsDeferredNoGrowth(DeferredA) && ReplayHashesMatch(DeferredA, DeferredB);
-		const bool bDivergence = IsNoPropagationControl(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
+		const bool bDivergence = IsLocalPropagationObserved(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
 		const bool bZero = IsNoPropagationControl(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 			ZeroA.InitialAudit.ConvergenceTrackingHash == ZeroA.FinalAudit.ConvergenceTrackingHash;
 		const bool bPhaseIIHashes = SingleA.ProjectionHashAfter == SingleB.ProjectionHashAfter &&
@@ -398,8 +409,9 @@ namespace
 			DeferredA.InitialAudit.ActiveTriangleCount,
 			DeferredA.FinalAudit.ActiveTriangleCount,
 			DeferredA.FinalAudit.PropagationAddedCount);
-		Report += FString::Printf(TEXT("| Forced divergence has no propagation | %s | seed hits %d, added %d |\n"),
+		Report += FString::Printf(TEXT("| Forced divergence admits local convergent propagation | %s | non-boundary %d, seed hits %d, added %d |\n"),
 			*PassFail(bDivergence),
+			DivergenceA.FinalAudit.NonBoundaryActiveTriangleCount,
 			DivergenceA.FinalAudit.PropagationSeedHitCount,
 			DivergenceA.FinalAudit.PropagationAddedCount);
 		Report += FString::Printf(TEXT("| Zero-motion no-op remains hash-stable | %s | `%s` -> `%s` |\n"),
@@ -448,6 +460,7 @@ namespace
 		Report += TEXT("\n## Notes\n\n");
 		Report += TEXT("- The active list is still plate-local tracking state. It is not global sample ownership and is not material authority.\n");
 		Report += TEXT("- Collision candidates and equal-age ocean-ocean deferrals do not propagate because they do not have a subducting under-plate yet.\n");
+		Report += TEXT("- The forced-divergence fixture is a closed-sphere local-evidence control: backside local convergence can seed propagation, so the gate checks local polarity evidence instead of global pair divergence.\n");
 		Report += TEXT("- Newly added neighbors are bounded by parent distance plus plate-local triangle-barycenter distance; over-budget candidates are logged and rejected.\n\n");
 
 		Report += TEXT("## Recommendation\n\n");
@@ -492,8 +505,8 @@ int32 UCarrierLabPhaseIIIB6Commandlet::Main(const FString& Params)
 
 	FNeighborReplayResult DivergenceA;
 	FNeighborReplayResult DivergenceB;
-	const bool bDivergenceA = RunNeighborReplay(TEXT("forced_divergence_empty"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::MixedPlate0Continental, NoAges, false, INDEX_NONE, 0, FixtureSamples, 2, 1, DivergenceA);
-	const bool bDivergenceB = RunNeighborReplay(TEXT("forced_divergence_empty"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::MixedPlate0Continental, NoAges, false, INDEX_NONE, 1, FixtureSamples, 2, 1, DivergenceB);
+	const bool bDivergenceA = RunNeighborReplay(TEXT("forced_divergence_local_convergence"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::MixedPlate0Continental, NoAges, false, INDEX_NONE, 0, FixtureSamples, 2, 1, DivergenceA);
+	const bool bDivergenceB = RunNeighborReplay(TEXT("forced_divergence_local_convergence"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::MixedPlate0Continental, NoAges, false, INDEX_NONE, 1, FixtureSamples, 2, 1, DivergenceB);
 
 	FNeighborReplayResult ZeroA;
 	FNeighborReplayResult ZeroB;
@@ -524,7 +537,7 @@ int32 UCarrierLabPhaseIIIB6Commandlet::Main(const FString& Params)
 	const bool bSingleGrowth = bSingleA && bSingleB && IsSingleSeedGrowthExpected(SingleA) && ReplayHashesMatch(SingleA, SingleB);
 	const bool bBounded = bBoundedA && bBoundedB && IsBounded(BoundedA) && IsBounded(BoundedB) && ReplayHashesMatch(BoundedA, BoundedB);
 	const bool bDeferred = bDeferredA && bDeferredB && IsDeferredNoGrowth(DeferredA) && ReplayHashesMatch(DeferredA, DeferredB);
-	const bool bDivergence = bDivergenceA && bDivergenceB && IsNoPropagationControl(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
+	const bool bDivergence = bDivergenceA && bDivergenceB && IsLocalPropagationObserved(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
 	const bool bZero = bZeroA && bZeroB && IsNoPropagationControl(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 		ZeroA.InitialAudit.ConvergenceTrackingHash == ZeroA.FinalAudit.ConvergenceTrackingHash;
 	const bool bPhaseIIHashes = SingleA.ProjectionHashAfter == SingleB.ProjectionHashAfter &&
