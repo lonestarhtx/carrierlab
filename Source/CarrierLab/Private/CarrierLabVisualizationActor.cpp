@@ -179,6 +179,8 @@ namespace
 			HashMix(Hash, static_cast<uint64>(Decision.OverPlate + 1));
 			HashMixDouble(Hash, Decision.PlateAContinentalFraction);
 			HashMixDouble(Hash, Decision.PlateBContinentalFraction);
+			HashMixDouble(Hash, Decision.PlateAOceanicAge);
+			HashMixDouble(Hash, Decision.PlateBOceanicAge);
 			HashMix(Hash, static_cast<uint64>(Decision.DecisionClass) + 1ull);
 		}
 		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
@@ -255,6 +257,30 @@ namespace
 			return WeightedFraction / TotalWeight;
 		}
 		return Plate.bContinental ? 1.0 : 0.0;
+	}
+
+	double ComputePlateOceanicAge(
+		const CarrierLab::FCarrierState& State,
+		const int32 PlateId)
+	{
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			return 0.0;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+		double WeightedAge = 0.0;
+		double TotalWeight = 0.0;
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			const double Weight = FMath::Max(Vertex.AreaWeight, 0.0);
+			WeightedAge += Weight * FMath::Max(Vertex.OceanicAge, 0.0);
+			TotalWeight += Weight;
+		}
+
+		return TotalWeight > UE_DOUBLE_SMALL_NUMBER
+			? WeightedAge / TotalWeight
+			: 0.0;
 	}
 
 	bool IntersectRayWithTriangle(
@@ -3194,6 +3220,8 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseI
 		AuditDecision.OverPlate = Decision.OverPlate;
 		AuditDecision.PlateAContinentalFraction = Decision.PlateAContinentalFraction;
 		AuditDecision.PlateBContinentalFraction = Decision.PlateBContinentalFraction;
+		AuditDecision.PlateAOceanicAge = Decision.PlateAOceanicAge;
+		AuditDecision.PlateBOceanicAge = Decision.PlateBOceanicAge;
 		AuditDecision.DecisionClass = Decision.DecisionClass;
 
 		switch (Decision.DecisionClass)
@@ -3207,6 +3235,10 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseI
 			break;
 		case CarrierLab::EConvergenceSubductionPolarityClass::OceanOceanDeferred:
 			++OutAudit.OceanOceanDeferredCount;
+			break;
+		case CarrierLab::EConvergenceSubductionPolarityClass::OlderOceanicUnderYoungerOceanic:
+			++OutAudit.OlderOceanicUnderYoungerOceanicCount;
+			++OutAudit.SubductionPolarityCount;
 			break;
 		case CarrierLab::EConvergenceSubductionPolarityClass::Invalid:
 			++OutAudit.InvalidDecisionCount;
@@ -3224,6 +3256,8 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseI
 			OutAudit.ProbeOverPlate = Decision.OverPlate;
 			OutAudit.ProbePlateAContinentalFraction = Decision.PlateAContinentalFraction;
 			OutAudit.ProbePlateBContinentalFraction = Decision.PlateBContinentalFraction;
+			OutAudit.ProbePlateAOceanicAge = Decision.PlateAOceanicAge;
+			OutAudit.ProbePlateBOceanicAge = Decision.PlateBOceanicAge;
 			OutAudit.ProbeDecisionClass = Decision.DecisionClass;
 		}
 	}
@@ -3255,6 +3289,8 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseI
 		HashMix(PolarityHash, static_cast<uint64>(Decision.OverPlate + 1));
 		HashMixDouble(PolarityHash, Decision.PlateAContinentalFraction);
 		HashMixDouble(PolarityHash, Decision.PlateBContinentalFraction);
+		HashMixDouble(PolarityHash, Decision.PlateAOceanicAge);
+		HashMixDouble(PolarityHash, Decision.PlateBOceanicAge);
 		HashMix(PolarityHash, static_cast<uint64>(Decision.DecisionClass) + 1ull);
 	}
 	OutAudit.PolarityHash = HashToString(PolarityHash);
@@ -3287,6 +3323,34 @@ bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 Plate
 		{
 			Sample.ContinentalFraction = Fraction;
 			Sample.bContinental = bContinental;
+		}
+	}
+	ProjectCurrentCarrier();
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::SetPlateOceanicAgeForTest(const int32 PlateId, const double OceanicAgeMa)
+{
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+	if (!State.Plates.IsValidIndex(PlateId))
+	{
+		return false;
+	}
+
+	const double ClampedAge = FMath::Max(OceanicAgeMa, 0.0);
+	CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+	for (CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+	{
+		Vertex.OceanicAge = ClampedAge;
+	}
+	for (CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (Sample.PlateId == PlateId)
+		{
+			Sample.OceanicAge = ClampedAge;
 		}
 	}
 	ProjectCurrentCarrier();
@@ -3735,6 +3799,8 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionPolarityDecisions
 
 		Decision.PlateAContinentalFraction = ComputePlateContinentalFraction(State, Decision.PlateA);
 		Decision.PlateBContinentalFraction = ComputePlateContinentalFraction(State, Decision.PlateB);
+		Decision.PlateAOceanicAge = ComputePlateOceanicAge(State, Decision.PlateA);
+		Decision.PlateBOceanicAge = ComputePlateOceanicAge(State, Decision.PlateB);
 		const bool bAContinental = Decision.PlateAContinentalFraction >= 0.5;
 		const bool bBContinental = Decision.PlateBContinentalFraction >= 0.5;
 
@@ -3750,7 +3816,18 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionPolarityDecisions
 		}
 		else
 		{
-			Decision.DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::OceanOceanDeferred;
+			constexpr double AgeEpsilonMa = 1.0e-9;
+			const double AgeDelta = Decision.PlateAOceanicAge - Decision.PlateBOceanicAge;
+			if (FMath::Abs(AgeDelta) > AgeEpsilonMa)
+			{
+				Decision.DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::OlderOceanicUnderYoungerOceanic;
+				Decision.UnderPlate = AgeDelta > 0.0 ? Decision.PlateA : Decision.PlateB;
+				Decision.OverPlate = AgeDelta > 0.0 ? Decision.PlateB : Decision.PlateA;
+			}
+			else
+			{
+				Decision.DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::OceanOceanDeferred;
+			}
 		}
 	}
 }

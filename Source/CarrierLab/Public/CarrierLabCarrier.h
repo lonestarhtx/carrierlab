@@ -85,7 +85,8 @@ namespace CarrierLab
 		OceanicUnderContinental = 1,
 		CollisionCandidate = 2,
 		OceanOceanDeferred = 3,
-		Invalid = 4
+		OlderOceanicUnderYoungerOceanic = 4,
+		Invalid = 5
 	};
 
 	struct FConvergenceSubductionPolarityDecision
@@ -97,6 +98,8 @@ namespace CarrierLab
 		int32 OverPlate = INDEX_NONE;
 		double PlateAContinentalFraction = 0.0;
 		double PlateBContinentalFraction = 0.0;
+		double PlateAOceanicAge = 0.0;
+		double PlateBOceanicAge = 0.0;
 		EConvergenceSubductionPolarityClass DecisionClass = EConvergenceSubductionPolarityClass::None;
 	};
 

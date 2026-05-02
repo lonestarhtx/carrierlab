@@ -554,6 +554,8 @@ struct FCarrierLabPhaseIIIB4PolarityDecisionAudit
 	int32 OverPlate = INDEX_NONE;
 	double PlateAContinentalFraction = 0.0;
 	double PlateBContinentalFraction = 0.0;
+	double PlateAOceanicAge = 0.0;
+	double PlateBOceanicAge = 0.0;
 	CarrierLab::EConvergenceSubductionPolarityClass DecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::None;
 };
 
@@ -568,6 +570,7 @@ struct FCarrierLabPhaseIIIB4PolarityAudit
 	int32 OceanicUnderContinentalCount = 0;
 	int32 CollisionCandidateCount = 0;
 	int32 OceanOceanDeferredCount = 0;
+	int32 OlderOceanicUnderYoungerOceanicCount = 0;
 	int32 InvalidDecisionCount = 0;
 	int32 MissingDecisionCount = 0;
 	int32 SubductionPolarityCount = 0;
@@ -577,6 +580,8 @@ struct FCarrierLabPhaseIIIB4PolarityAudit
 	int32 ProbeOverPlate = INDEX_NONE;
 	double ProbePlateAContinentalFraction = 0.0;
 	double ProbePlateBContinentalFraction = 0.0;
+	double ProbePlateAOceanicAge = 0.0;
+	double ProbePlateBOceanicAge = 0.0;
 	CarrierLab::EConvergenceSubductionPolarityClass ProbeDecisionClass = CarrierLab::EConvergenceSubductionPolarityClass::None;
 	TArray<FCarrierLabPhaseIIIB4PolarityDecisionAudit> Decisions;
 	FString PolarityHash;
@@ -753,6 +758,7 @@ public:
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
 	bool GetPhaseIIIB4PolarityAudit(FCarrierLabPhaseIIIB4PolarityAudit& OutAudit) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
+	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
 
 private:
 	void BindInputControls();

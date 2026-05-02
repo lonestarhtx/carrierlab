@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CarrierLabPhaseIIIB4Commandlet.h"
+#include "CarrierLabPhaseIIIB5Commandlet.h"
 
 #include "CarrierLabVisualizationActor.h"
 #include "Engine/Engine.h"
@@ -15,9 +15,15 @@ namespace
 	{
 		Default,
 		MixedPlate0Continental,
-		MixedPlate1Continental,
 		AllContinental,
 		AllOceanic
+	};
+
+	struct FAgeFixture
+	{
+		bool bApply = false;
+		double Plate0AgeMa = 0.0;
+		double Plate1AgeMa = 0.0;
 	};
 
 	FString JsonString(const FString& Value)
@@ -57,7 +63,7 @@ namespace
 		if (!FParse::Value(*Params, TEXT("Out="), OutputRoot))
 		{
 			const FString Stamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
-			OutputRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("IIIB4"), Stamp);
+			OutputRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("IIIB5"), Stamp);
 		}
 		return FPaths::ConvertRelativePathToFull(OutputRoot);
 	}
@@ -71,7 +77,7 @@ namespace
 				FPaths::ProjectDir(),
 				TEXT("docs"),
 				TEXT("checkpoints"),
-				TEXT("phase-iii-slice-iiib4-report.md"));
+				TEXT("phase-iii-slice-iiib5-report.md"));
 		}
 		else if (FPaths::IsRelative(ReportPath))
 		{
@@ -130,9 +136,6 @@ namespace
 		case EMaterialFixture::MixedPlate0Continental:
 			return Actor.SetPlateContinentalForTest(0, true) &&
 				Actor.SetPlateContinentalForTest(1, false);
-		case EMaterialFixture::MixedPlate1Continental:
-			return Actor.SetPlateContinentalForTest(0, false) &&
-				Actor.SetPlateContinentalForTest(1, true);
 		case EMaterialFixture::AllContinental:
 			return Actor.SetPlateContinentalForTest(0, true) &&
 				Actor.SetPlateContinentalForTest(1, true);
@@ -143,6 +146,16 @@ namespace
 		default:
 			return true;
 		}
+	}
+
+	bool ApplyAgeFixture(ACarrierLabVisualizationActor& Actor, const FAgeFixture& Fixture)
+	{
+		if (!Fixture.bApply)
+		{
+			return true;
+		}
+		return Actor.SetPlateOceanicAgeForTest(0, Fixture.Plate0AgeMa) &&
+			Actor.SetPlateOceanicAgeForTest(1, Fixture.Plate1AgeMa);
 	}
 
 	FString PolarityClassName(const CarrierLab::EConvergenceSubductionPolarityClass DecisionClass)
@@ -182,7 +195,7 @@ namespace
 		return nullptr;
 	}
 
-	struct FPolarityReplayResult
+	struct FAgePolarityReplayResult
 	{
 		FString Fixture;
 		int32 Replay = 0;
@@ -200,17 +213,18 @@ namespace
 		bool bCompleted = false;
 	};
 
-	bool RunPolarityReplay(
+	bool RunAgePolarityReplay(
 		const FString& Fixture,
 		const ECarrierLabPhaseIIMotionFixture MotionFixture,
 		const EMaterialFixture MaterialFixture,
+		const FAgeFixture AgeFixture,
 		const int32 Replay,
 		const int32 SampleCount,
 		const int32 PlateCount,
 		const int32 StepCount,
-		FPolarityReplayResult& OutResult)
+		FAgePolarityReplayResult& OutResult)
 	{
-		OutResult = FPolarityReplayResult();
+		OutResult = FAgePolarityReplayResult();
 		OutResult.Fixture = Fixture;
 		OutResult.Replay = Replay;
 		OutResult.SampleCount = SampleCount;
@@ -235,7 +249,8 @@ namespace
 			return false;
 		}
 		Actor->ConfigurePhaseIIMotionFixture(MotionFixture);
-		if (!ApplyMaterialFixture(*Actor, MaterialFixture))
+		if (!ApplyMaterialFixture(*Actor, MaterialFixture) ||
+			!ApplyAgeFixture(*Actor, AgeFixture))
 		{
 			Actor->Destroy();
 			return false;
@@ -270,12 +285,12 @@ namespace
 	FString AuditJsonFields(const FCarrierLabPhaseIIIB4PolarityAudit& Audit, const TCHAR* Prefix)
 	{
 		return FString::Printf(
-			TEXT(",\"%s_step\":%d,\"%s_reset\":%d,\"%s_matrix_pairs\":%d,\"%s_decisions\":%d,\"%s_oceanic_under_continental\":%d,\"%s_collision_candidate\":%d,\"%s_ocean_ocean_deferred\":%d,\"%s_invalid\":%d,\"%s_missing\":%d,\"%s_subduction_polarity\":%d,\"%s_probe_a\":%d,\"%s_probe_b\":%d,\"%s_probe_under\":%d,\"%s_probe_over\":%d,\"%s_probe_a_continental_fraction\":%.12f,\"%s_probe_b_continental_fraction\":%.12f,\"%s_probe_class\":%s,\"%s_polarity_hash\":%s,\"%s_convergence_hash\":%s"),
+			TEXT(",\"%s_step\":%d,\"%s_matrix_pairs\":%d,\"%s_decisions\":%d,\"%s_oceanic_under_continental\":%d,\"%s_older_oceanic_under_younger\":%d,\"%s_collision_candidate\":%d,\"%s_ocean_ocean_deferred\":%d,\"%s_invalid\":%d,\"%s_missing\":%d,\"%s_subduction_polarity\":%d,\"%s_probe_a\":%d,\"%s_probe_b\":%d,\"%s_probe_under\":%d,\"%s_probe_over\":%d,\"%s_probe_a_continental_fraction\":%.12f,\"%s_probe_b_continental_fraction\":%.12f,\"%s_probe_a_oceanic_age\":%.12f,\"%s_probe_b_oceanic_age\":%.12f,\"%s_probe_class\":%s,\"%s_polarity_hash\":%s,\"%s_convergence_hash\":%s"),
 			Prefix, Audit.Step,
-			Prefix, Audit.ResetSerial,
 			Prefix, Audit.MatrixPairCount,
 			Prefix, Audit.DecisionCount,
 			Prefix, Audit.OceanicUnderContinentalCount,
+			Prefix, Audit.OlderOceanicUnderYoungerOceanicCount,
 			Prefix, Audit.CollisionCandidateCount,
 			Prefix, Audit.OceanOceanDeferredCount,
 			Prefix, Audit.InvalidDecisionCount,
@@ -287,15 +302,17 @@ namespace
 			Prefix, Audit.ProbeOverPlate,
 			Prefix, Audit.ProbePlateAContinentalFraction,
 			Prefix, Audit.ProbePlateBContinentalFraction,
+			Prefix, Audit.ProbePlateAOceanicAge,
+			Prefix, Audit.ProbePlateBOceanicAge,
 			Prefix, *JsonString(PolarityClassName(Audit.ProbeDecisionClass)),
 			Prefix, *JsonString(Audit.PolarityHash),
 			Prefix, *JsonString(Audit.ConvergenceTrackingHash));
 	}
 
-	FString ReplayJson(const FPolarityReplayResult& Result)
+	FString ReplayJson(const FAgePolarityReplayResult& Result)
 	{
 		FString Json = FString::Printf(
-			TEXT("{\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"samples\":%d,\"plates\":%d,\"steps\":%d,\"seconds\":%.6f,\"projection_hash_after\":%s,\"state_hash_after\":%s,\"crust_state_hash_after\":%s,\"initial_matrix_pairs\":%d,\"final_matrix_pairs\":%d"),
+			TEXT("{\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"samples\":%d,\"plates\":%d,\"steps\":%d,\"seconds\":%.6f,\"projection_hash_after\":%s,\"state_hash_after\":%s,\"crust_state_hash_after\":%s"),
 			*JsonString(Result.Fixture),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -305,16 +322,19 @@ namespace
 			Result.TotalSeconds,
 			*JsonString(Result.ProjectionHashAfter),
 			*JsonString(Result.StateHashAfter),
-			*JsonString(Result.CrustStateHashAfter),
-			Result.MatrixInitial.MatrixPairCount,
-			Result.MatrixFinal.MatrixPairCount);
+			*JsonString(Result.CrustStateHashAfter));
 		Json += AuditJsonFields(Result.PolarityInitial, TEXT("initial"));
 		Json += AuditJsonFields(Result.PolarityFinal, TEXT("final"));
 		Json += TEXT("}");
 		return Json;
 	}
 
-	bool IsMixedPolarityResult(const FPolarityReplayResult& Result, const int32 ExpectedUnder, const int32 ExpectedOver)
+	bool IsAgePolarityResult(
+		const FAgePolarityReplayResult& Result,
+		const int32 ExpectedUnder,
+		const int32 ExpectedOver,
+		const double ExpectedPlateAAge,
+		const double ExpectedPlateBAge)
 	{
 		const FCarrierLabPhaseIIIB4PolarityDecisionAudit* Decision = FindPairDecision(Result.PolarityFinal, 0, 1);
 		return Result.bCompleted &&
@@ -322,36 +342,22 @@ namespace
 			Result.PolarityInitial.DecisionCount == 0 &&
 			Result.MatrixFinal.MatrixPairCount == 1 &&
 			Result.PolarityFinal.DecisionCount == 1 &&
-			Result.PolarityFinal.OceanicUnderContinentalCount == 1 &&
+			Result.PolarityFinal.OlderOceanicUnderYoungerOceanicCount == 1 &&
 			Result.PolarityFinal.SubductionPolarityCount == 1 &&
+			Result.PolarityFinal.OceanicUnderContinentalCount == 0 &&
 			Result.PolarityFinal.CollisionCandidateCount == 0 &&
 			Result.PolarityFinal.OceanOceanDeferredCount == 0 &&
 			Result.PolarityFinal.InvalidDecisionCount == 0 &&
 			Result.PolarityFinal.MissingDecisionCount == 0 &&
 			Decision != nullptr &&
-			Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::OceanicUnderContinental &&
+			Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::OlderOceanicUnderYoungerOceanic &&
 			Decision->UnderPlate == ExpectedUnder &&
-			Decision->OverPlate == ExpectedOver;
+			Decision->OverPlate == ExpectedOver &&
+			FMath::IsNearlyEqual(Decision->PlateAOceanicAge, ExpectedPlateAAge, 1.0e-6) &&
+			FMath::IsNearlyEqual(Decision->PlateBOceanicAge, ExpectedPlateBAge, 1.0e-6);
 	}
 
-	bool IsCollisionCandidateResult(const FPolarityReplayResult& Result)
-	{
-		const FCarrierLabPhaseIIIB4PolarityDecisionAudit* Decision = FindPairDecision(Result.PolarityFinal, 0, 1);
-		return Result.bCompleted &&
-			Result.MatrixFinal.MatrixPairCount == 1 &&
-			Result.PolarityFinal.DecisionCount == 1 &&
-			Result.PolarityFinal.CollisionCandidateCount == 1 &&
-			Result.PolarityFinal.SubductionPolarityCount == 0 &&
-			Result.PolarityFinal.OceanicUnderContinentalCount == 0 &&
-			Result.PolarityFinal.InvalidDecisionCount == 0 &&
-			Result.PolarityFinal.MissingDecisionCount == 0 &&
-			Decision != nullptr &&
-			Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate &&
-			Decision->UnderPlate == INDEX_NONE &&
-			Decision->OverPlate == INDEX_NONE;
-	}
-
-	bool IsOceanOceanDeferredResult(const FPolarityReplayResult& Result)
+	bool IsEqualAgeDeferredResult(const FAgePolarityReplayResult& Result)
 	{
 		const FCarrierLabPhaseIIIB4PolarityDecisionAudit* Decision = FindPairDecision(Result.PolarityFinal, 0, 1);
 		return Result.bCompleted &&
@@ -359,6 +365,7 @@ namespace
 			Result.PolarityFinal.DecisionCount == 1 &&
 			Result.PolarityFinal.OceanOceanDeferredCount == 1 &&
 			Result.PolarityFinal.SubductionPolarityCount == 0 &&
+			Result.PolarityFinal.OlderOceanicUnderYoungerOceanicCount == 0 &&
 			Result.PolarityFinal.InvalidDecisionCount == 0 &&
 			Result.PolarityFinal.MissingDecisionCount == 0 &&
 			Decision != nullptr &&
@@ -367,7 +374,37 @@ namespace
 			Decision->OverPlate == INDEX_NONE;
 	}
 
-	bool IsEmptyResult(const FPolarityReplayResult& Result)
+	bool IsMixedRegressionResult(const FAgePolarityReplayResult& Result)
+	{
+		const FCarrierLabPhaseIIIB4PolarityDecisionAudit* Decision = FindPairDecision(Result.PolarityFinal, 0, 1);
+		return Result.bCompleted &&
+			Result.MatrixFinal.MatrixPairCount == 1 &&
+			Result.PolarityFinal.DecisionCount == 1 &&
+			Result.PolarityFinal.OceanicUnderContinentalCount == 1 &&
+			Result.PolarityFinal.OlderOceanicUnderYoungerOceanicCount == 0 &&
+			Result.PolarityFinal.SubductionPolarityCount == 1 &&
+			Decision != nullptr &&
+			Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::OceanicUnderContinental &&
+			Decision->UnderPlate == 1 &&
+			Decision->OverPlate == 0;
+	}
+
+	bool IsCollisionRegressionResult(const FAgePolarityReplayResult& Result)
+	{
+		const FCarrierLabPhaseIIIB4PolarityDecisionAudit* Decision = FindPairDecision(Result.PolarityFinal, 0, 1);
+		return Result.bCompleted &&
+			Result.MatrixFinal.MatrixPairCount == 1 &&
+			Result.PolarityFinal.DecisionCount == 1 &&
+			Result.PolarityFinal.CollisionCandidateCount == 1 &&
+			Result.PolarityFinal.SubductionPolarityCount == 0 &&
+			Result.PolarityFinal.OlderOceanicUnderYoungerOceanicCount == 0 &&
+			Decision != nullptr &&
+			Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate &&
+			Decision->UnderPlate == INDEX_NONE &&
+			Decision->OverPlate == INDEX_NONE;
+	}
+
+	bool IsEmptyResult(const FAgePolarityReplayResult& Result)
 	{
 		return Result.bCompleted &&
 			Result.MatrixFinal.MatrixPairCount == 0 &&
@@ -380,7 +417,7 @@ namespace
 			Result.PolarityFinal.MissingDecisionCount == 0;
 	}
 
-	bool ReplayHashesMatch(const FPolarityReplayResult& A, const FPolarityReplayResult& B)
+	bool ReplayHashesMatch(const FAgePolarityReplayResult& A, const FAgePolarityReplayResult& B)
 	{
 		return A.bCompleted && B.bCompleted &&
 			A.PolarityFinal.PolarityHash == B.PolarityFinal.PolarityHash &&
@@ -392,45 +429,51 @@ namespace
 
 	FString BuildReport(
 		const FString& OutputRoot,
-		const FPolarityReplayResult& MixedA,
-		const FPolarityReplayResult& MixedB,
-		const FPolarityReplayResult& SwappedA,
-		const FPolarityReplayResult& SwappedB,
-		const FPolarityReplayResult& CollisionA,
-		const FPolarityReplayResult& CollisionB,
-		const FPolarityReplayResult& OceanA,
-		const FPolarityReplayResult& OceanB,
-		const FPolarityReplayResult& DivergenceA,
-		const FPolarityReplayResult& DivergenceB,
-		const FPolarityReplayResult& ZeroA,
-		const FPolarityReplayResult& ZeroB)
+		const FAgePolarityReplayResult& Older0A,
+		const FAgePolarityReplayResult& Older0B,
+		const FAgePolarityReplayResult& Older1A,
+		const FAgePolarityReplayResult& Older1B,
+		const FAgePolarityReplayResult& EqualA,
+		const FAgePolarityReplayResult& EqualB,
+		const FAgePolarityReplayResult& MixedA,
+		const FAgePolarityReplayResult& MixedB,
+		const FAgePolarityReplayResult& CollisionA,
+		const FAgePolarityReplayResult& CollisionB,
+		const FAgePolarityReplayResult& DivergenceA,
+		const FAgePolarityReplayResult& DivergenceB,
+		const FAgePolarityReplayResult& ZeroA,
+		const FAgePolarityReplayResult& ZeroB)
 	{
-		const bool bMixed = IsMixedPolarityResult(MixedA, 1, 0) && ReplayHashesMatch(MixedA, MixedB);
-		const bool bSwapped = IsMixedPolarityResult(SwappedA, 0, 1) && ReplayHashesMatch(SwappedA, SwappedB);
-		const bool bSwapFlips = MixedA.PolarityFinal.PolarityHash != SwappedA.PolarityFinal.PolarityHash &&
-			MixedA.PolarityFinal.ProbeUnderPlate == 1 &&
-			SwappedA.PolarityFinal.ProbeUnderPlate == 0;
-		const bool bCollision = IsCollisionCandidateResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
-		const bool bOcean = IsOceanOceanDeferredResult(OceanA) && ReplayHashesMatch(OceanA, OceanB);
+		const bool bOlder0 = IsAgePolarityResult(Older0A, 0, 1, 120.0, 20.0) && ReplayHashesMatch(Older0A, Older0B);
+		const bool bOlder1 = IsAgePolarityResult(Older1A, 1, 0, 20.0, 120.0) && ReplayHashesMatch(Older1A, Older1B);
+		const bool bAgeFlip = Older0A.PolarityFinal.PolarityHash != Older1A.PolarityFinal.PolarityHash &&
+			Older0A.PolarityFinal.ProbeUnderPlate == 0 &&
+			Older1A.PolarityFinal.ProbeUnderPlate == 1;
+		const bool bEqual = IsEqualAgeDeferredResult(EqualA) && ReplayHashesMatch(EqualA, EqualB);
+		const bool bMixed = IsMixedRegressionResult(MixedA) && ReplayHashesMatch(MixedA, MixedB);
+		const bool bCollision = IsCollisionRegressionResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
 		const bool bDivergence = IsEmptyResult(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
 		const bool bZero = IsEmptyResult(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 			ZeroA.PolarityInitial.PolarityHash == ZeroA.PolarityFinal.PolarityHash;
+		const bool bAllPass = bOlder0 && bOlder1 && bAgeFlip && bEqual && bMixed && bCollision && bDivergence && bZero;
 
 		FString Report;
-		Report += TEXT("# Phase III Slice IIIB.4 Checkpoint: Oceanic-Under-Continental Polarity Rule\n\n");
+		Report += TEXT("# Phase III Slice IIIB.5 Checkpoint: Ocean-Ocean Age Polarity Rule\n\n");
 		Report += FString::Printf(TEXT("Artifacts root: `%s`\n\n"), *OutputRoot);
-		Report += TEXT("This slice evaluates polarity for existing `SubductionMatrix` plate-pair entries. It is read-only: it does not mark triangles, filter projection candidates, resample material, or advance any IIIC mutation path.\n\n");
+		Report += TEXT("This slice completes the read-only polarity decision layer for oceanic-oceanic convergence. It uses plate-local `OceanicAge` as inert crust authority and records older-oceanic-under-younger decisions without marking triangles, filtering projection candidates, resampling material, or mutating process state.\n\n");
 
 		Report += TEXT("## Gate Summary\n\n");
 		Report += TEXT("| Gate | Result | Evidence |\n|---|---|---|\n");
-		Report += FString::Printf(TEXT("| Mixed oceanic/continental polarity | %s | plate 1 under plate 0, hash `%s` |\n"),
-			*PassFail(bMixed), *MixedA.PolarityFinal.PolarityHash);
-		Report += FString::Printf(TEXT("| Polarity-swap fixture flips under/over | %s | mixed under %d, swapped under %d, swapped hash `%s` |\n"),
-			*PassFail(bSwapped && bSwapFlips), MixedA.PolarityFinal.ProbeUnderPlate, SwappedA.PolarityFinal.ProbeUnderPlate, *SwappedA.PolarityFinal.PolarityHash);
-		Report += FString::Printf(TEXT("| Continental-continental emits collision-candidate only | %s | collision %d, subduction polarity %d |\n"),
+		Report += FString::Printf(TEXT("| Older plate 0 subducts under younger plate 1 | %s | ages %.1f / %.1f Ma, under %d, hash `%s` |\n"),
+			*PassFail(bOlder0), Older0A.PolarityFinal.ProbePlateAOceanicAge, Older0A.PolarityFinal.ProbePlateBOceanicAge, Older0A.PolarityFinal.ProbeUnderPlate, *Older0A.PolarityFinal.PolarityHash);
+		Report += FString::Printf(TEXT("| Reversing ages reverses polarity | %s | older0 under %d, older1 under %d, reversed hash `%s` |\n"),
+			*PassFail(bOlder1 && bAgeFlip), Older0A.PolarityFinal.ProbeUnderPlate, Older1A.PolarityFinal.ProbeUnderPlate, *Older1A.PolarityFinal.PolarityHash);
+		Report += FString::Printf(TEXT("| Equal-age ocean-ocean remains deferred | %s | deferred %d, age-polarity %d |\n"),
+			*PassFail(bEqual), EqualA.PolarityFinal.OceanOceanDeferredCount, EqualA.PolarityFinal.OlderOceanicUnderYoungerOceanicCount);
+		Report += FString::Printf(TEXT("| Mixed-material IIIB.4 regression unchanged | %s | oceanic-under %d, age-polarity %d |\n"),
+			*PassFail(bMixed), MixedA.PolarityFinal.OceanicUnderContinentalCount, MixedA.PolarityFinal.OlderOceanicUnderYoungerOceanicCount);
+		Report += FString::Printf(TEXT("| Continental collision regression unchanged | %s | collision %d, subduction polarity %d |\n"),
 			*PassFail(bCollision), CollisionA.PolarityFinal.CollisionCandidateCount, CollisionA.PolarityFinal.SubductionPolarityCount);
-		Report += FString::Printf(TEXT("| Ocean-ocean defers to IIIB.5 | %s | deferred %d, subduction polarity %d |\n"),
-			*PassFail(bOcean), OceanA.PolarityFinal.OceanOceanDeferredCount, OceanA.PolarityFinal.SubductionPolarityCount);
 		Report += FString::Printf(TEXT("| Forced divergence remains empty | %s | matrix pairs %d, decisions %d |\n"),
 			*PassFail(bDivergence), DivergenceA.PolarityFinal.MatrixPairCount, DivergenceA.PolarityFinal.DecisionCount);
 		Report += FString::Printf(TEXT("| Zero-motion remains empty and stable | %s | initial `%s`, final `%s` |\n"),
@@ -438,36 +481,39 @@ namespace
 		Report += TEXT("\n");
 
 		Report += TEXT("## Polarity Audits\n\n");
-		Report += TEXT("| Fixture | Replay | Step | Matrix pairs | Decisions | Oceanic-under | Collision | Ocean-ocean deferred | Under | Over | A/B continental fraction | Polarity hash | Convergence hash |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|\n");
-		auto AddRow = [&Report](const FPolarityReplayResult& Result)
+		Report += TEXT("| Fixture | Replay | Step | Matrix pairs | Decisions | Oceanic-under | Age-polarity | Collision | Ocean-ocean deferred | Under | Over | A/B oceanic age Ma | Polarity hash | Convergence hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|\n");
+		auto AddRow = [&Report](const FAgePolarityReplayResult& Result)
 		{
 			const FCarrierLabPhaseIIIB4PolarityAudit& Audit = Result.PolarityFinal;
 			Report += FString::Printf(
-				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %.3f / %.3f | `%s` | `%s` |\n"),
+				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %.3f / %.3f | `%s` | `%s` |\n"),
 				*Result.Fixture,
 				Result.Replay,
 				Audit.Step,
 				Audit.MatrixPairCount,
 				Audit.DecisionCount,
 				Audit.OceanicUnderContinentalCount,
+				Audit.OlderOceanicUnderYoungerOceanicCount,
 				Audit.CollisionCandidateCount,
 				Audit.OceanOceanDeferredCount,
 				Audit.ProbeUnderPlate,
 				Audit.ProbeOverPlate,
-				Audit.ProbePlateAContinentalFraction,
-				Audit.ProbePlateBContinentalFraction,
+				Audit.ProbePlateAOceanicAge,
+				Audit.ProbePlateBOceanicAge,
 				*Audit.PolarityHash,
 				*Audit.ConvergenceTrackingHash);
 		};
+		AddRow(Older0A);
+		AddRow(Older0B);
+		AddRow(Older1A);
+		AddRow(Older1B);
+		AddRow(EqualA);
+		AddRow(EqualB);
 		AddRow(MixedA);
 		AddRow(MixedB);
-		AddRow(SwappedA);
-		AddRow(SwappedB);
 		AddRow(CollisionA);
 		AddRow(CollisionB);
-		AddRow(OceanA);
-		AddRow(OceanB);
 		AddRow(DivergenceA);
 		AddRow(DivergenceB);
 		AddRow(ZeroA);
@@ -475,21 +521,19 @@ namespace
 		Report += TEXT("\n");
 
 		Report += TEXT("## Notes\n\n");
-		Report += TEXT("- Dominant material is computed from plate-local vertex continental fraction, not from persistent global ownership.\n");
-		Report += TEXT("- `OceanicUnderContinental` records an under/over plate pair but does not mark any triangle as subducting; IIIC owns triangle marking and filter integration.\n");
-		Report += TEXT("- Continental-continental entries are logged as collision candidates for IIID. Ocean-ocean entries are deferred to IIIB.5 for age polarity.\n");
-		Report += TEXT("- Empty matrix controls produce no polarity decisions, preserving IIIB.3's forced-divergence and zero-motion gates.\n\n");
+		Report += TEXT("- Oceanic age is averaged from plate-local vertices using area weights. Global samples are updated only by the explicit test seeding helper so fixtures survive projection/replay checks.\n");
+		Report += TEXT("- Equal oceanic ages still defer, preserving the IIIB.4 no-invented-policy discipline when age evidence cannot distinguish polarity.\n");
+		Report += TEXT("- The age rule is a decision record only. IIIB.6 may propagate from active decisions, but this slice does not label neighbors, filter resampling, or mutate crust.\n\n");
 
-		const bool bAllPass = bMixed && bSwapped && bSwapFlips && bCollision && bOcean && bDivergence && bZero;
 		Report += TEXT("## Recommendation\n\n");
 		Report += bAllPass
-			? TEXT("IIIB.4 passes. Pause for user review before IIIB.5 (ocean-ocean age polarity rule).\n")
-			: TEXT("IIIB.4 does not pass. Investigate before IIIB.5.\n");
+			? TEXT("IIIB.5 passes. Pause for user review before IIIB.6 (neighbor propagation).\n")
+			: TEXT("IIIB.5 does not pass. Investigate before IIIB.6.\n");
 		return Report;
 	}
 }
 
-UCarrierLabPhaseIIIB4Commandlet::UCarrierLabPhaseIIIB4Commandlet()
+UCarrierLabPhaseIIIB5Commandlet::UCarrierLabPhaseIIIB5Commandlet()
 {
 	IsClient = false;
 	IsEditor = true;
@@ -497,51 +541,63 @@ UCarrierLabPhaseIIIB4Commandlet::UCarrierLabPhaseIIIB4Commandlet()
 	LogToConsole = true;
 }
 
-int32 UCarrierLabPhaseIIIB4Commandlet::Main(const FString& Params)
+int32 UCarrierLabPhaseIIIB5Commandlet::Main(const FString& Params)
 {
 	const int32 FixtureSamples = FMath::Max(12, ParseIntParam(Params, TEXT("FixtureSamples="), 10000));
 	const FString OutputRoot = GetOutputRoot(Params);
 	IFileManager::Get().MakeDirectory(*OutputRoot, true);
 
-	FPolarityReplayResult MixedA;
-	FPolarityReplayResult MixedB;
-	const bool bMixedA = RunPolarityReplay(TEXT("mixed_oceanic_under_continental"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::MixedPlate0Continental, 0, FixtureSamples, 2, 4, MixedA);
-	const bool bMixedB = RunPolarityReplay(TEXT("mixed_oceanic_under_continental"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::MixedPlate0Continental, 1, FixtureSamples, 2, 4, MixedB);
+	const FAgeFixture OlderPlate0{ true, 120.0, 20.0 };
+	const FAgeFixture OlderPlate1{ true, 20.0, 120.0 };
+	const FAgeFixture EqualAges{ true, 64.0, 64.0 };
+	const FAgeFixture NoAges{ false, 0.0, 0.0 };
 
-	FPolarityReplayResult SwappedA;
-	FPolarityReplayResult SwappedB;
-	const bool bSwappedA = RunPolarityReplay(TEXT("mixed_polarity_swap"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::MixedPlate1Continental, 0, FixtureSamples, 2, 4, SwappedA);
-	const bool bSwappedB = RunPolarityReplay(TEXT("mixed_polarity_swap"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::MixedPlate1Continental, 1, FixtureSamples, 2, 4, SwappedB);
+	FAgePolarityReplayResult Older0A;
+	FAgePolarityReplayResult Older0B;
+	const bool bOlder0A = RunAgePolarityReplay(TEXT("ocean_ocean_plate0_older"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, OlderPlate0, 0, FixtureSamples, 2, 4, Older0A);
+	const bool bOlder0B = RunAgePolarityReplay(TEXT("ocean_ocean_plate0_older"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, OlderPlate0, 1, FixtureSamples, 2, 4, Older0B);
 
-	FPolarityReplayResult CollisionA;
-	FPolarityReplayResult CollisionB;
-	const bool bCollisionA = RunPolarityReplay(TEXT("continental_continental_collision_candidate"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllContinental, 0, FixtureSamples, 2, 4, CollisionA);
-	const bool bCollisionB = RunPolarityReplay(TEXT("continental_continental_collision_candidate"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllContinental, 1, FixtureSamples, 2, 4, CollisionB);
+	FAgePolarityReplayResult Older1A;
+	FAgePolarityReplayResult Older1B;
+	const bool bOlder1A = RunAgePolarityReplay(TEXT("ocean_ocean_plate1_older"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, OlderPlate1, 0, FixtureSamples, 2, 4, Older1A);
+	const bool bOlder1B = RunAgePolarityReplay(TEXT("ocean_ocean_plate1_older"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, OlderPlate1, 1, FixtureSamples, 2, 4, Older1B);
 
-	FPolarityReplayResult OceanA;
-	FPolarityReplayResult OceanB;
-	const bool bOceanA = RunPolarityReplay(TEXT("ocean_ocean_deferred"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, 0, FixtureSamples, 2, 4, OceanA);
-	const bool bOceanB = RunPolarityReplay(TEXT("ocean_ocean_deferred"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, 1, FixtureSamples, 2, 4, OceanB);
+	FAgePolarityReplayResult EqualA;
+	FAgePolarityReplayResult EqualB;
+	const bool bEqualA = RunAgePolarityReplay(TEXT("ocean_ocean_equal_age_deferred"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, EqualAges, 0, FixtureSamples, 2, 4, EqualA);
+	const bool bEqualB = RunAgePolarityReplay(TEXT("ocean_ocean_equal_age_deferred"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllOceanic, EqualAges, 1, FixtureSamples, 2, 4, EqualB);
 
-	FPolarityReplayResult DivergenceA;
-	FPolarityReplayResult DivergenceB;
-	const bool bDivergenceA = RunPolarityReplay(TEXT("forced_divergence_empty"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::MixedPlate0Continental, 0, FixtureSamples, 2, 1, DivergenceA);
-	const bool bDivergenceB = RunPolarityReplay(TEXT("forced_divergence_empty"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::MixedPlate0Continental, 1, FixtureSamples, 2, 1, DivergenceB);
+	FAgePolarityReplayResult MixedA;
+	FAgePolarityReplayResult MixedB;
+	const bool bMixedA = RunAgePolarityReplay(TEXT("mixed_material_regression"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::MixedPlate0Continental, OlderPlate1, 0, FixtureSamples, 2, 4, MixedA);
+	const bool bMixedB = RunAgePolarityReplay(TEXT("mixed_material_regression"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::MixedPlate0Continental, OlderPlate1, 1, FixtureSamples, 2, 4, MixedB);
 
-	FPolarityReplayResult ZeroA;
-	FPolarityReplayResult ZeroB;
-	const bool bZeroA = RunPolarityReplay(TEXT("zero_motion_empty"), ECarrierLabPhaseIIMotionFixture::Zero, EMaterialFixture::Default, 0, FixtureSamples, 40, 10, ZeroA);
-	const bool bZeroB = RunPolarityReplay(TEXT("zero_motion_empty"), ECarrierLabPhaseIIMotionFixture::Zero, EMaterialFixture::Default, 1, FixtureSamples, 40, 10, ZeroB);
+	FAgePolarityReplayResult CollisionA;
+	FAgePolarityReplayResult CollisionB;
+	const bool bCollisionA = RunAgePolarityReplay(TEXT("continental_collision_regression"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllContinental, OlderPlate0, 0, FixtureSamples, 2, 4, CollisionA);
+	const bool bCollisionB = RunAgePolarityReplay(TEXT("continental_collision_regression"), ECarrierLabPhaseIIMotionFixture::ForcedConvergence, EMaterialFixture::AllContinental, OlderPlate0, 1, FixtureSamples, 2, 4, CollisionB);
+
+	FAgePolarityReplayResult DivergenceA;
+	FAgePolarityReplayResult DivergenceB;
+	const bool bDivergenceA = RunAgePolarityReplay(TEXT("forced_divergence_empty"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::AllOceanic, OlderPlate0, 0, FixtureSamples, 2, 1, DivergenceA);
+	const bool bDivergenceB = RunAgePolarityReplay(TEXT("forced_divergence_empty"), ECarrierLabPhaseIIMotionFixture::ForcedDivergence, EMaterialFixture::AllOceanic, OlderPlate0, 1, FixtureSamples, 2, 1, DivergenceB);
+
+	FAgePolarityReplayResult ZeroA;
+	FAgePolarityReplayResult ZeroB;
+	const bool bZeroA = RunAgePolarityReplay(TEXT("zero_motion_empty"), ECarrierLabPhaseIIMotionFixture::Zero, EMaterialFixture::Default, NoAges, 0, FixtureSamples, 40, 10, ZeroA);
+	const bool bZeroB = RunAgePolarityReplay(TEXT("zero_motion_empty"), ECarrierLabPhaseIIMotionFixture::Zero, EMaterialFixture::Default, NoAges, 1, FixtureSamples, 40, 10, ZeroB);
 
 	FString MetricsJsonl;
+	MetricsJsonl += ReplayJson(Older0A) + LINE_TERMINATOR;
+	MetricsJsonl += ReplayJson(Older0B) + LINE_TERMINATOR;
+	MetricsJsonl += ReplayJson(Older1A) + LINE_TERMINATOR;
+	MetricsJsonl += ReplayJson(Older1B) + LINE_TERMINATOR;
+	MetricsJsonl += ReplayJson(EqualA) + LINE_TERMINATOR;
+	MetricsJsonl += ReplayJson(EqualB) + LINE_TERMINATOR;
 	MetricsJsonl += ReplayJson(MixedA) + LINE_TERMINATOR;
 	MetricsJsonl += ReplayJson(MixedB) + LINE_TERMINATOR;
-	MetricsJsonl += ReplayJson(SwappedA) + LINE_TERMINATOR;
-	MetricsJsonl += ReplayJson(SwappedB) + LINE_TERMINATOR;
 	MetricsJsonl += ReplayJson(CollisionA) + LINE_TERMINATOR;
 	MetricsJsonl += ReplayJson(CollisionB) + LINE_TERMINATOR;
-	MetricsJsonl += ReplayJson(OceanA) + LINE_TERMINATOR;
-	MetricsJsonl += ReplayJson(OceanB) + LINE_TERMINATOR;
 	MetricsJsonl += ReplayJson(DivergenceA) + LINE_TERMINATOR;
 	MetricsJsonl += ReplayJson(DivergenceB) + LINE_TERMINATOR;
 	MetricsJsonl += ReplayJson(ZeroA) + LINE_TERMINATOR;
@@ -549,30 +605,31 @@ int32 UCarrierLabPhaseIIIB4Commandlet::Main(const FString& Params)
 	const FString MetricsPath = FPaths::Combine(OutputRoot, TEXT("metrics.jsonl"));
 	FFileHelper::SaveStringToFile(MetricsJsonl, *MetricsPath);
 
-	const FString Report = BuildReport(OutputRoot, MixedA, MixedB, SwappedA, SwappedB, CollisionA, CollisionB, OceanA, OceanB, DivergenceA, DivergenceB, ZeroA, ZeroB);
+	const FString Report = BuildReport(OutputRoot, Older0A, Older0B, Older1A, Older1B, EqualA, EqualB, MixedA, MixedB, CollisionA, CollisionB, DivergenceA, DivergenceB, ZeroA, ZeroB);
 	const FString ReportPath = ResolveReportPath(Params);
 	FFileHelper::SaveStringToFile(Report, *ReportPath);
 
-	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIB.4 metrics: %s"), *MetricsPath);
-	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIB.4 report: %s"), *ReportPath);
+	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIB.5 metrics: %s"), *MetricsPath);
+	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIB.5 report: %s"), *ReportPath);
 
-	const bool bMixed = bMixedA && bMixedB && IsMixedPolarityResult(MixedA, 1, 0) && ReplayHashesMatch(MixedA, MixedB);
-	const bool bSwapped = bSwappedA && bSwappedB && IsMixedPolarityResult(SwappedA, 0, 1) && ReplayHashesMatch(SwappedA, SwappedB);
-	const bool bSwapFlips = MixedA.PolarityFinal.PolarityHash != SwappedA.PolarityFinal.PolarityHash &&
-		MixedA.PolarityFinal.ProbeUnderPlate == 1 &&
-		SwappedA.PolarityFinal.ProbeUnderPlate == 0;
-	const bool bCollision = bCollisionA && bCollisionB && IsCollisionCandidateResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
-	const bool bOcean = bOceanA && bOceanB && IsOceanOceanDeferredResult(OceanA) && ReplayHashesMatch(OceanA, OceanB);
+	const bool bOlder0 = bOlder0A && bOlder0B && IsAgePolarityResult(Older0A, 0, 1, 120.0, 20.0) && ReplayHashesMatch(Older0A, Older0B);
+	const bool bOlder1 = bOlder1A && bOlder1B && IsAgePolarityResult(Older1A, 1, 0, 20.0, 120.0) && ReplayHashesMatch(Older1A, Older1B);
+	const bool bAgeFlip = Older0A.PolarityFinal.PolarityHash != Older1A.PolarityFinal.PolarityHash &&
+		Older0A.PolarityFinal.ProbeUnderPlate == 0 &&
+		Older1A.PolarityFinal.ProbeUnderPlate == 1;
+	const bool bEqual = bEqualA && bEqualB && IsEqualAgeDeferredResult(EqualA) && ReplayHashesMatch(EqualA, EqualB);
+	const bool bMixed = bMixedA && bMixedB && IsMixedRegressionResult(MixedA) && ReplayHashesMatch(MixedA, MixedB);
+	const bool bCollision = bCollisionA && bCollisionB && IsCollisionRegressionResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
 	const bool bDivergence = bDivergenceA && bDivergenceB && IsEmptyResult(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
 	const bool bZero = bZeroA && bZeroB && IsEmptyResult(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 		ZeroA.PolarityInitial.PolarityHash == ZeroA.PolarityFinal.PolarityHash;
 
-	if (!(bMixed && bSwapped && bSwapFlips && bCollision && bOcean && bDivergence && bZero))
+	if (!(bOlder0 && bOlder1 && bAgeFlip && bEqual && bMixed && bCollision && bDivergence && bZero))
 	{
-		UE_LOG(LogTemp, Error, TEXT("CarrierLab Phase IIIB.4 gates failed."));
+		UE_LOG(LogTemp, Error, TEXT("CarrierLab Phase IIIB.5 gates failed."));
 		return 1;
 	}
 
-	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIB.4 gates passed."));
+	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIB.5 gates passed."));
 	return 0;
 }
