@@ -402,11 +402,140 @@ namespace
 		}
 	}
 
+	void SetPixelSafe(TArray<FColor>& Pixels, int32 Width, int32 Height, int32 X, int32 Y, const FColor& Color);
+
+	uint8 GlyphRow(const TCHAR Ch, const int32 Row)
+	{
+		const TCHAR Upper = FChar::ToUpper(Ch);
+		switch (Upper)
+		{
+		case TEXT('A'): { static constexpr uint8 R[] = { 14, 17, 17, 31, 17, 17, 17 }; return R[Row]; }
+		case TEXT('B'): { static constexpr uint8 R[] = { 30, 17, 17, 30, 17, 17, 30 }; return R[Row]; }
+		case TEXT('C'): { static constexpr uint8 R[] = { 14, 17, 16, 16, 16, 17, 14 }; return R[Row]; }
+		case TEXT('D'): { static constexpr uint8 R[] = { 30, 17, 17, 17, 17, 17, 30 }; return R[Row]; }
+		case TEXT('E'): { static constexpr uint8 R[] = { 31, 16, 16, 30, 16, 16, 31 }; return R[Row]; }
+		case TEXT('F'): { static constexpr uint8 R[] = { 31, 16, 16, 30, 16, 16, 16 }; return R[Row]; }
+		case TEXT('G'): { static constexpr uint8 R[] = { 14, 17, 16, 23, 17, 17, 14 }; return R[Row]; }
+		case TEXT('H'): { static constexpr uint8 R[] = { 17, 17, 17, 31, 17, 17, 17 }; return R[Row]; }
+		case TEXT('I'): { static constexpr uint8 R[] = { 14, 4, 4, 4, 4, 4, 14 }; return R[Row]; }
+		case TEXT('J'): { static constexpr uint8 R[] = { 7, 2, 2, 2, 18, 18, 12 }; return R[Row]; }
+		case TEXT('K'): { static constexpr uint8 R[] = { 17, 18, 20, 24, 20, 18, 17 }; return R[Row]; }
+		case TEXT('L'): { static constexpr uint8 R[] = { 16, 16, 16, 16, 16, 16, 31 }; return R[Row]; }
+		case TEXT('M'): { static constexpr uint8 R[] = { 17, 27, 21, 21, 17, 17, 17 }; return R[Row]; }
+		case TEXT('N'): { static constexpr uint8 R[] = { 17, 25, 21, 19, 17, 17, 17 }; return R[Row]; }
+		case TEXT('O'): { static constexpr uint8 R[] = { 14, 17, 17, 17, 17, 17, 14 }; return R[Row]; }
+		case TEXT('P'): { static constexpr uint8 R[] = { 30, 17, 17, 30, 16, 16, 16 }; return R[Row]; }
+		case TEXT('Q'): { static constexpr uint8 R[] = { 14, 17, 17, 17, 21, 18, 13 }; return R[Row]; }
+		case TEXT('R'): { static constexpr uint8 R[] = { 30, 17, 17, 30, 20, 18, 17 }; return R[Row]; }
+		case TEXT('S'): { static constexpr uint8 R[] = { 15, 16, 16, 14, 1, 1, 30 }; return R[Row]; }
+		case TEXT('T'): { static constexpr uint8 R[] = { 31, 4, 4, 4, 4, 4, 4 }; return R[Row]; }
+		case TEXT('U'): { static constexpr uint8 R[] = { 17, 17, 17, 17, 17, 17, 14 }; return R[Row]; }
+		case TEXT('V'): { static constexpr uint8 R[] = { 17, 17, 17, 17, 17, 10, 4 }; return R[Row]; }
+		case TEXT('W'): { static constexpr uint8 R[] = { 17, 17, 17, 21, 21, 21, 10 }; return R[Row]; }
+		case TEXT('X'): { static constexpr uint8 R[] = { 17, 17, 10, 4, 10, 17, 17 }; return R[Row]; }
+		case TEXT('Y'): { static constexpr uint8 R[] = { 17, 17, 10, 4, 4, 4, 4 }; return R[Row]; }
+		case TEXT('Z'): { static constexpr uint8 R[] = { 31, 1, 2, 4, 8, 16, 31 }; return R[Row]; }
+		case TEXT('0'): { static constexpr uint8 R[] = { 14, 17, 19, 21, 25, 17, 14 }; return R[Row]; }
+		case TEXT('1'): { static constexpr uint8 R[] = { 4, 12, 4, 4, 4, 4, 14 }; return R[Row]; }
+		case TEXT('2'): { static constexpr uint8 R[] = { 14, 17, 1, 2, 4, 8, 31 }; return R[Row]; }
+		case TEXT('3'): { static constexpr uint8 R[] = { 30, 1, 1, 14, 1, 1, 30 }; return R[Row]; }
+		case TEXT('4'): { static constexpr uint8 R[] = { 2, 6, 10, 18, 31, 2, 2 }; return R[Row]; }
+		case TEXT('5'): { static constexpr uint8 R[] = { 31, 16, 16, 30, 1, 1, 30 }; return R[Row]; }
+		case TEXT('6'): { static constexpr uint8 R[] = { 14, 16, 16, 30, 17, 17, 14 }; return R[Row]; }
+		case TEXT('7'): { static constexpr uint8 R[] = { 31, 1, 2, 4, 8, 8, 8 }; return R[Row]; }
+		case TEXT('8'): { static constexpr uint8 R[] = { 14, 17, 17, 14, 17, 17, 14 }; return R[Row]; }
+		case TEXT('9'): { static constexpr uint8 R[] = { 14, 17, 17, 15, 1, 1, 14 }; return R[Row]; }
+		case TEXT('-'): { static constexpr uint8 R[] = { 0, 0, 0, 31, 0, 0, 0 }; return R[Row]; }
+		case TEXT('/'): { static constexpr uint8 R[] = { 1, 1, 2, 4, 8, 16, 16 }; return R[Row]; }
+		default:
+			return 0;
+		}
+	}
+
+	void DrawTextSmall(TArray<FColor>& Pixels, const int32 Width, const int32 Height, const int32 X, const int32 Y, const FString& Text, const FColor& Color, const int32 Scale = 2)
+	{
+		int32 CursorX = X;
+		for (const TCHAR Ch : Text)
+		{
+			if (Ch == TEXT(' '))
+			{
+				CursorX += 4 * Scale;
+				continue;
+			}
+			for (int32 Row = 0; Row < 7; ++Row)
+			{
+				const uint8 Bits = GlyphRow(Ch, Row);
+				for (int32 Col = 0; Col < 5; ++Col)
+				{
+					if ((Bits & (1u << (4 - Col))) == 0)
+					{
+						continue;
+					}
+					for (int32 Sy = 0; Sy < Scale; ++Sy)
+					{
+						for (int32 Sx = 0; Sx < Scale; ++Sx)
+						{
+							SetPixelSafe(Pixels, Width, Height, CursorX + Col * Scale + Sx, Y + Row * Scale + Sy, Color);
+						}
+					}
+				}
+			}
+			CursorX += 6 * Scale;
+		}
+	}
+
 	void SetPixelSafe(TArray<FColor>& Pixels, const int32 Width, const int32 Height, const int32 X, const int32 Y, const FColor& Color)
 	{
 		if (X >= 0 && X < Width && Y >= 0 && Y < Height)
 		{
 			Pixels[Y * Width + X] = Color;
+		}
+	}
+
+	FColor BlendPixel(const FColor& Base, const FColor& Overlay, const double Alpha)
+	{
+		return FColor(
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(static_cast<double>(Base.R), static_cast<double>(Overlay.R), Alpha))),
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(static_cast<double>(Base.G), static_cast<double>(Overlay.G), Alpha))),
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(static_cast<double>(Base.B), static_cast<double>(Overlay.B), Alpha))),
+			255);
+	}
+
+	bool IsBrightBoundaryPixel(const FColor& Pixel)
+	{
+		return Pixel.R > 160 && Pixel.G > 160 && Pixel.B > 150;
+	}
+
+	bool IsSubductionRolePixel(const FColor& Pixel)
+	{
+		const bool bSubductingBlue = Pixel.B > 165 && Pixel.R < 120;
+		const bool bOverridingYellow = Pixel.R > 185 && Pixel.G > 135 && Pixel.B < 110;
+		const bool bMixedOrange = Pixel.R > 160 && Pixel.G > 65 && Pixel.G < 160 && Pixel.B < 95;
+		return bSubductingBlue || bOverridingYellow || bMixedOrange;
+	}
+
+	void OverlayBoundary(TArray<FColor>& Base, const TArray<FColor>& Boundary)
+	{
+		const int32 Count = FMath::Min(Base.Num(), Boundary.Num());
+		const FColor BoundaryColor(188, 208, 222, 255);
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			if (IsBrightBoundaryPixel(Boundary[Index]))
+			{
+				Base[Index] = BlendPixel(Base[Index], BoundaryColor, 0.72);
+			}
+		}
+	}
+
+	void OverlaySubductionRoles(TArray<FColor>& Base, const TArray<FColor>& Roles, const double Alpha)
+	{
+		const int32 Count = FMath::Min(Base.Num(), Roles.Num());
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			if (IsSubductionRolePixel(Roles[Index]))
+			{
+				Base[Index] = BlendPixel(Base[Index], Roles[Index], Alpha);
+			}
 		}
 	}
 
@@ -680,76 +809,149 @@ namespace
 		FString& OutContactSheetPath)
 	{
 		IFileManager::Get().MakeDirectory(*ReplayDir, true);
-		const ECarrierLabVisualizationLayer Layers[] =
-		{
-			ECarrierLabVisualizationLayer::PhaseIIISummary,
-			ECarrierLabVisualizationLayer::ElevationHeatmap,
-			ECarrierLabVisualizationLayer::SubductionMask,
-			ECarrierLabVisualizationLayer::DistanceToFrontHeatmap
-		};
-
 		struct FLayerPixels
 		{
 			FLayerExport Export;
 			TArray<FColor> Pixels;
 			int32 Width = 0;
 			int32 Height = 0;
+			FString Label;
 		};
 
-		TArray<FLayerPixels> Images;
-		for (const ECarrierLabVisualizationLayer Layer : Layers)
+		auto SaveImage = [&ReplayDir](FLayerPixels& Image) -> bool
 		{
-			FLayerPixels Image;
-			Image.Export.Layer = Layer;
-			Image.Export.Name = LayerName(Layer);
-			if (!Actor.BuildVisualizationLayerMap(Layer, Image.Pixels, Image.Width, Image.Height))
-			{
-				return false;
-			}
-			if (Layer == ECarrierLabVisualizationLayer::PhaseIIISummary)
-			{
-				DrawMotionArrows(Actor, Image.Pixels, Image.Width, Image.Height);
-			}
 			Image.Export.Path = FPaths::Combine(ReplayDir, Image.Export.Name + TEXT(".png"));
 			Image.Export.Hash = HashToString(HashPixels(Image.Pixels));
 			Image.Export.NonBackgroundPixelCount = CountNonBackgroundPixels(Image.Pixels);
-			if (!SavePng(Image.Export.Path, Image.Pixels, Image.Width, Image.Height))
-			{
-				return false;
-			}
-			Images.Add(MoveTemp(Image));
+			return SavePng(Image.Export.Path, Image.Pixels, Image.Width, Image.Height);
+		};
+
+		auto CaptureLayer = [&Actor](
+			const ECarrierLabVisualizationLayer Layer,
+			const FString& Name,
+			const FString& Label,
+			FLayerPixels& OutImage) -> bool
+		{
+			OutImage = FLayerPixels();
+			OutImage.Export.Layer = Layer;
+			OutImage.Export.Name = Name;
+			OutImage.Label = Label;
+			return Actor.BuildVisualizationLayerMap(Layer, OutImage.Pixels, OutImage.Width, OutImage.Height);
+		};
+
+		FLayerPixels CrustType;
+		FLayerPixels BoundaryMaskImage;
+		FLayerPixels ElevationImage;
+		FLayerPixels SubductionRoles;
+		FLayerPixels DistanceToFront;
+		if (!CaptureLayer(ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("CrustType"), TEXT("CRUST TYPE"), CrustType) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::BoundaryMask, TEXT("_BoundarySource"), TEXT("BOUNDARY SOURCE"), BoundaryMaskImage) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Elevation"), TEXT("ELEVATION"), ElevationImage) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::SubductionMask, TEXT("SubductionRoles"), TEXT("SUBDUCTION ROLES"), SubductionRoles) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap, TEXT("DistanceToFront"), TEXT("DISTANCE TO FRONT"), DistanceToFront))
+		{
+			return false;
 		}
+
+		TArray<FLayerPixels> Images;
+
+		if (!SaveImage(CrustType))
+		{
+			return false;
+		}
+		Images.Add(CrustType);
+
+		FLayerPixels PlateBoundaries = CrustType;
+		PlateBoundaries.Export.Layer = ECarrierLabVisualizationLayer::BoundaryMask;
+		PlateBoundaries.Export.Name = TEXT("PlateBoundaries");
+		PlateBoundaries.Label = TEXT("PLATE BOUNDARIES");
+		OverlayBoundary(PlateBoundaries.Pixels, BoundaryMaskImage.Pixels);
+		if (!SaveImage(PlateBoundaries))
+		{
+			return false;
+		}
+		Images.Add(PlateBoundaries);
+
+		FLayerPixels VelocityField = CrustType;
+		VelocityField.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
+		VelocityField.Export.Name = TEXT("VelocityField");
+		VelocityField.Label = TEXT("VELOCITY FIELD");
+		DrawMotionArrows(Actor, VelocityField.Pixels, VelocityField.Width, VelocityField.Height);
+		if (!SaveImage(VelocityField))
+		{
+			return false;
+		}
+		Images.Add(VelocityField);
+
+		if (!SaveImage(SubductionRoles))
+		{
+			return false;
+		}
+		Images.Add(SubductionRoles);
+
+		if (!SaveImage(ElevationImage))
+		{
+			return false;
+		}
+		Images.Add(ElevationImage);
+
+		FLayerPixels Combined = CrustType;
+		Combined.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
+		Combined.Export.Name = TEXT("CombinedTectonicSummary");
+		Combined.Label = TEXT("COMBINED SUMMARY");
+		OverlaySubductionRoles(Combined.Pixels, SubductionRoles.Pixels, 0.58);
+		OverlayBoundary(Combined.Pixels, BoundaryMaskImage.Pixels);
+		DrawMotionArrows(Actor, Combined.Pixels, Combined.Width, Combined.Height);
+		if (!SaveImage(Combined))
+		{
+			return false;
+		}
+		Images.Add(Combined);
+
+		if (!SaveImage(DistanceToFront))
+		{
+			return false;
+		}
+		Images.Add(DistanceToFront);
 
 		FLayerPixels ProfileImage;
 		ProfileImage.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
 		ProfileImage.Export.Name = TEXT("ElevationProfile");
+		ProfileImage.Label = TEXT("ELEVATION PROFILE");
 		if (!BuildElevationProfile(UpliftAudit, ProfileImage.Pixels, ProfileImage.Width, ProfileImage.Height))
 		{
 			return false;
 		}
-		ProfileImage.Export.Path = FPaths::Combine(ReplayDir, ProfileImage.Export.Name + TEXT(".png"));
-		ProfileImage.Export.Hash = HashToString(HashPixels(ProfileImage.Pixels));
-		ProfileImage.Export.NonBackgroundPixelCount = CountNonBackgroundPixels(ProfileImage.Pixels);
-		if (!SavePng(ProfileImage.Export.Path, ProfileImage.Pixels, ProfileImage.Width, ProfileImage.Height))
+		if (!SaveImage(ProfileImage))
 		{
 			return false;
 		}
 		Images.Add(MoveTemp(ProfileImage));
 
 		const int32 ContactWidth = ContactThumbWidth * Images.Num();
-		const int32 ContactHeight = ContactThumbHeight;
+		const int32 HeaderHeight = 32;
+		const int32 ContactHeight = ContactThumbHeight + HeaderHeight;
 		TArray<FColor> ContactPixels;
-		ContactPixels.Init(FColor(0, 0, 0, 255), ContactWidth * ContactHeight);
+		ContactPixels.Init(FColor(4, 7, 10, 255), ContactWidth * ContactHeight);
 		for (int32 Index = 0; Index < Images.Num(); ++Index)
 		{
+			const int32 PanelX = Index * ContactThumbWidth;
+			for (int32 Y = 0; Y < HeaderHeight; ++Y)
+			{
+				for (int32 X = 0; X < ContactThumbWidth; ++X)
+				{
+					ContactPixels[Y * ContactWidth + PanelX + X] = FColor(16, 21, 27, 255);
+				}
+			}
+			DrawTextSmall(ContactPixels, ContactWidth, ContactHeight, PanelX + 10, 9, Images[Index].Label, FColor(232, 238, 242, 255), 2);
 			BlitThumbnail(
 				Images[Index].Pixels,
 				Images[Index].Width,
 				Images[Index].Height,
 				ContactPixels,
 				ContactWidth,
-				Index * ContactThumbWidth,
-				0);
+				PanelX,
+				HeaderHeight);
 		}
 
 		OutContactSheetPath = FPaths::Combine(ReplayDir, TEXT("ContactSheet.png"));
@@ -1055,22 +1257,20 @@ namespace
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
-		Report += TEXT("- `PhaseIIISummary` is the human-inspection layer: filled crust type, plate-boundary emphasis, velocity arrows in PNG exports, IIIB distance context, IIIC subduction roles, and IIIC elevation overlays in one map. It is still a color diagnostic on a unit sphere, not terrain displacement.\n");
-		Report += bIIICMode
-			? TEXT("- `ElevationHeatmap` should show the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color overlays on the filled continental/oceanic base map.\n")
-			: TEXT("- `ElevationHeatmap` uses the filled continental/oceanic base map when elevation is still zero, then overlays positive/negative elevation once IIIC.2/IIIC.3 mutate the scalar field.\n");
-		Report += bIIICMode
-			? TEXT("- `SubductionMask` should show the consolidated IIIC subducting/overriding roles produced from persistent plate-local marks, not only the earlier pre-mutation IIIB inspection overlay.\n")
-			: TEXT("- `SubductionMask` uses the filled base map plus IIIB polarity-derived role overlays; the forced-convergence fixture is the human-inspection map, not persistent IIIC subducting-triangle authority.\n");
-		Report += bIIICMode
-			? TEXT("- `DistanceToFrontHeatmap` remains the front-distance spatial context for the same fixture; it is diagnostic context, not a source of authority.\n\n")
-			: TEXT("- `DistanceToFrontHeatmap` uses the filled base map plus active boundary distance overlays; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.\n\n");
+		Report += TEXT("- The export names now follow the Aurous-style diagnostic grammar: `CrustType`, `PlateBoundaries`, `VelocityField`, `SubductionRoles`, `Elevation`, `CombinedTectonicSummary`, `DistanceToFront`, and `ElevationProfile`.\n");
+		Report += TEXT("- `CrustType` is the calm base map: blue ocean, green land, no process overlay.\n");
+		Report += TEXT("- `PlateBoundaries` adds only thin light boundary evidence over the same base. This is the first map to check when the summary feels noisy.\n");
+		Report += TEXT("- `VelocityField` adds sparse red plate-motion arrows over the base map.\n");
+		Report += TEXT("- `SubductionRoles` shows the consolidated IIIC subducting/overriding roles produced from plate-local marks and role masks.\n");
+		Report += TEXT("- `Elevation` shows the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color on the filled continental/oceanic base map.\n");
+		Report += TEXT("- `CombinedTectonicSummary` is deliberately restrained: crust + boundaries + velocity + subduction roles. Elevation remains separate so uplift heat does not swamp the overview.\n");
+		Report += TEXT("- `DistanceToFront` remains the front-distance spatial context for the same fixture; it is diagnostic context, not a source of authority.\n");
 		Report += TEXT("- `ElevationProfile` plots uplift delta against distance-to-front and includes the expected thesis distance-transfer curve as a visual shape reference. It is paired with the IIIC.3 numeric oracle; the plot alone is not a gate.\n\n");
 		Report += TEXT("## Recommendation\n\n");
 		if (bIIICMode)
 		{
 			Report += bOverallPass
-				? TEXT("IIIC map export passes. These images are suitable human spatial sanity artifacts for the consolidated IIIC process layer before Phase IIID work begins.\n")
+				? TEXT("IIIC map export passes. These images are suitable human spatial sanity artifacts for the consolidated IIIC process layer before Phase IIID work begins; they remain read-only evidence maps, not terrain morphology reproduction.\n")
 				: TEXT("IIIC map export fails. Pause before Phase IIID and investigate the failed export/read-only/determinism gate.\n");
 		}
 		else

@@ -1604,9 +1604,9 @@ namespace
 	FLinearColor ContinentalColor(const double Fraction)
 	{
 		const double Alpha = FMath::Clamp(Fraction, 0.0, 1.0);
-		const FLinearColor Ocean(0.02f, 0.18f, 0.44f, 1.0f);
-		const FLinearColor Coast(0.12f, 0.52f, 0.40f, 1.0f);
-		const FLinearColor Land(0.76f, 0.62f, 0.30f, 1.0f);
+		const FLinearColor Ocean(0.03f, 0.26f, 0.48f, 1.0f);
+		const FLinearColor Coast(0.28f, 0.56f, 0.44f, 1.0f);
+		const FLinearColor Land(0.54f, 0.68f, 0.39f, 1.0f);
 		return Alpha < 0.5
 			? FMath::Lerp(Ocean, Coast, static_cast<float>(Alpha * 2.0))
 			: FMath::Lerp(Coast, Land, static_cast<float>((Alpha - 0.5) * 2.0));
