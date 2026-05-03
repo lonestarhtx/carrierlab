@@ -18,6 +18,14 @@ public:
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 
 private:
+	enum class EPanelPage : uint8
+	{
+		LiveActor,
+		Contacts,
+		Maps,
+		Gates
+	};
+
 	struct FLiveProjectionSnapshot
 	{
 		bool bHasSnapshot = false;
@@ -82,6 +90,26 @@ private:
 		bool bThirdPlateExplicitness = false;
 	};
 
+	struct FLatestMapArtifactSnapshot
+	{
+		bool bHasArtifact = false;
+		FString StatusText = TEXT("No Phase III map export loaded.");
+		FString MetricsPath;
+		FString OutputRoot;
+		FString ContactSheetPath;
+		FString ScenarioName;
+		FDateTime ArtifactTimestamp;
+		FDateTime LoadedAt;
+		int32 Replay = 0;
+		int32 Step = 0;
+		int32 EventCount = 0;
+		int32 NextResampleStep = 0;
+		int32 CadenceSteps = 0;
+		double CadenceDeltaTMa = 0.0;
+		double ObservedMaxPlateSpeedMmPerYear = 0.0;
+		int32 ExportedMapCount = 0;
+	};
+
 	TWeakObjectPtr<ACarrierLabVisualizationActor> TargetActor;
 	TArray<TSharedPtr<int32>> ResolutionOptions;
 	TArray<TSharedPtr<ECarrierLabMultiHitPolicy>> PolicyOptions;
@@ -89,7 +117,9 @@ private:
 	FLiveProjectionSnapshot LiveProjection;
 	FLiveContactDetectionSnapshot LiveContact;
 	FSlice1ArtifactSnapshot Slice1Artifact;
+	FLatestMapArtifactSnapshot LatestMapArtifact;
 
+	EPanelPage ActivePage = EPanelPage::LiveActor;
 	int32 PendingResolution = 60000;
 	int32 PendingPlateCount = 40;
 	int32 PendingSeed = 42;
@@ -108,6 +138,8 @@ private:
 	void CaptureLiveProjectionSnapshot();
 	void LoadLatestSlice1Artifact();
 	bool ParseSlice1Artifact(const FString& MetricsPath, const FDateTime& ArtifactTimestamp, FString& OutError);
+	void LoadLatestMapArtifact();
+	bool ParseLatestMapArtifact(const FString& MetricsPath, const FDateTime& ArtifactTimestamp, FString& OutError);
 
 	FReply OnInitializeClicked();
 	FReply OnStepClicked();
@@ -116,8 +148,25 @@ private:
 	FReply OnResetClicked();
 	FReply OnDetectContactsClicked();
 	FReply OnLoadArtifactClicked();
+	FReply OnLoadMapsClicked();
+	FReply OnOpenContactSheetClicked();
+	FReply OnOpenMapFolderClicked();
 
 	TSharedRef<SWidget> BuildSection(const FText& Title, const TSharedRef<SWidget>& Body) const;
+	TSharedRef<SWidget> BuildShell();
+	TSharedRef<SWidget> BuildSidebar();
+	TSharedRef<SWidget> BuildSidebarButton(const FText& Label, EPanelPage Page) const;
+	TSharedRef<SWidget> BuildTopStatusBar();
+	TSharedRef<SWidget> BuildMainSwitcher();
+	TSharedRef<SWidget> BuildLiveActorPage();
+	TSharedRef<SWidget> BuildContactsPage();
+	TSharedRef<SWidget> BuildMapsPage();
+	TSharedRef<SWidget> BuildGatesPage();
+	TSharedRef<SWidget> BuildCard(const FText& Title, const TSharedRef<SWidget>& Body) const;
+	TSharedRef<SWidget> BuildMetricCard(const FText& Label, TAttribute<FText> Value, TAttribute<FText> Detail, const FLinearColor& AccentColor) const;
+	TSharedRef<SWidget> BuildGateRow(const FText& Label, TAttribute<FText> Source, TAttribute<FText> Status, TAttribute<FSlateColor> StatusColor) const;
+	TSharedRef<SWidget> BuildActionButton(TAttribute<FText> Label, TAttribute<FText> Detail, const FLinearColor& Color, const FOnClicked& OnClicked, bool bRequiresExistingActor = false) const;
+	TSharedRef<SWidget> BuildLabeledValue(const FText& Label, TAttribute<FText> Value) const;
 	TSharedRef<SWidget> BuildTargetSection();
 	TSharedRef<SWidget> BuildCarrierControls();
 	TSharedRef<SWidget> BuildLiveProjectionSection();
@@ -158,8 +207,10 @@ private:
 	FText GetGateSummaryText() const;
 	FText GetArtifactProvenanceText() const;
 	FText GetArtifactRowsText() const;
+	FText GetLatestMapSummaryText() const;
 
 	static FString PolicyToString(ECarrierLabMultiHitPolicy Policy);
 	static FString LayerToString(ECarrierLabVisualizationLayer Layer);
 	static FString FormatTimestamp(const FDateTime& Timestamp);
+	static FString ShortHash(const FString& Hash, int32 MaxChars = 16);
 };
