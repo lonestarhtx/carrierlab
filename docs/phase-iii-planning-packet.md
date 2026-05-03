@@ -74,6 +74,14 @@ If accepted, record:
 
 `Phase III planning packet approved. Begin sub-phase IIIA only. No subsequent sub-phase is approved beyond IIIA's first slice (inert Elevation field, hash-gated against Phase II baseline). Sub-phase IIIA will be reviewed at consolidation before IIIB starts; subsequent sub-phases are reviewed at their own consolidation.`
 
+Recorded follow-up approvals:
+
+- 2026-05-03: Stage 1.5 reframing approved after
+  `docs/paper-resampling-extraction.md` review. Standalone Stage 1.5 remains
+  foundation characterization; paper-faithful remeshing is owned by IIIE after
+  convergence/collision state exists. IIID.1 is unblocked as the next staged
+  lab slice, not as a claim that full PTP/Cortial alignment is complete.
+
 ## Out-Of-Scope For This Packet
 
 - Phase IV (amplification) planning. A separate Phase IV planning packet will follow Phase III closeout. Per the agreed roadmap, Phase IV will lead with thesis §4.2 hyper-amplification; §4.1 collage is optional comparison/control.
