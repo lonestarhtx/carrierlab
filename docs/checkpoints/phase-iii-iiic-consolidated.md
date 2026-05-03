@@ -1,8 +1,8 @@
 # Phase III Sub-Phase IIIC Consolidated Checkpoint
 
-Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIICConsolidation/20260503T043803Z`
+Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIICConsolidation/20260503T071142Z`
 
-Status: IIIC.1-IIIC.5 consolidated. This checkpoint closes the subduction-mutation sub-phase by proving the consolidated process-layer preset, the disabled regression path, and the slab-pull on/off differential. It does not add collision, rifting, erosion, terrain displacement, projection-derived ownership, or any new resampling mutation path.
+Status: IIIC.1-IIIC.5 consolidated. This checkpoint closes the subduction-mutation sub-phase by demonstrating the consolidated process-layer preset, the disabled regression path, and the slab-pull on/off differential in fixed fixtures. It does not add collision, rifting, erosion, terrain displacement, projection-derived ownership, or any new resampling mutation path.
 
 Consolidated control shape: `ConfigurePhaseIIICProcessLayer(true, false)` enables subducting-triangle marks, visible/historical elevation split, and overriding-plate uplift. Slab pull remains a separate authority-feedback switch and stays off unless requested with `ConfigurePhaseIIICProcessLayer(true, true)`.
 
@@ -15,21 +15,21 @@ Consolidated control shape: `ConfigurePhaseIIICProcessLayer(true, false)` enable
 | Consolidated process layer, slab pull off | pass | marks 84 / 84, trench 149 / 149, uplift 11040 / 11040, rollup `97ccacbfb1abb524` |
 | Disabled process layer | pass | marks 0, records 0, motion `96d2f3bac07b3cda` -> `96d2f3bac07b3cda` |
 | Slab pull opt-in differential | pass | contributions 84 / 84, motion `96d2f3bac07b3cda` -> `7b00b66aaa1c9e83`, rollup `d911006702f6d4df` |
-| Slab pull independent oracle | pass | axis 0.000000000000e+00, angular 0.000000000000e+00, contribution 0.000000000000e+00, max velocity 100.000000 mm/yr |
+| Slab pull independent oracle | pass | mirror captured yes, hashes match / match, axis 0.000000000000e+00, angular 0.000000000000e+00, contribution 0.000000000000e+00, max velocity 100.000000 mm/yr |
 | Negative controls | pass | zero 0, single 0, divergence-no-subduction 0 ledger records |
 
 ## Primary Replays
 
 | Fixture | Replay | Process layer | Slab pull | Marks | Trench records | Uplift records | Ledger records | Actual delta km | Ledger residual km | Motion before | Motion after | Rollup | Seconds |
 |---|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---:|
-| process_layer_default | 0 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `97ccacbfb1abb524` | 0.097 |
-| process_layer_default | 1 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `97ccacbfb1abb524` | 0.089 |
-| process_layer_disabled | 0 | off | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `f61f5ba6c0cc2a7d` | 0.099 |
-| slab_pull_opt_in | 0 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `d911006702f6d4df` | 0.092 |
-| slab_pull_opt_in | 1 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `d911006702f6d4df` | 0.099 |
-| zero_motion | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `84ba588e474acf95` | `84ba588e474acf95` | `071e3ccbcffbd162` | 0.094 |
-| single_plate | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `b42b5f5c6fc22793` | `b42b5f5c6fc22793` | `02ecf8776bcdf33c` | 0.070 |
-| forced_divergence_no_subduction | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `aa96c1b974567fbe` | `aa96c1b974567fbe` | `34598c2256d9a24a` | 0.060 |
+| process_layer_default | 0 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `97ccacbfb1abb524` | 0.084 |
+| process_layer_default | 1 | on | off | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `97ccacbfb1abb524` | 0.084 |
+| process_layer_disabled | 0 | off | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `96d2f3bac07b3cda` | `96d2f3bac07b3cda` | `f61f5ba6c0cc2a7d` | 0.079 |
+| slab_pull_opt_in | 0 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `d911006702f6d4df` | 0.084 |
+| slab_pull_opt_in | 1 | on | on | 84 | 149 | 11040 | 11189 | -51.176588935012 | 1.854516540334e-12 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `d911006702f6d4df` | 0.083 |
+| zero_motion | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `84ba588e474acf95` | `84ba588e474acf95` | `071e3ccbcffbd162` | 0.075 |
+| single_plate | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `b42b5f5c6fc22793` | `b42b5f5c6fc22793` | `02ecf8776bcdf33c` | 0.055 |
+| forced_divergence_no_subduction | 0 | on | off | 0 | 0 | 0 | 0 | 0.000000000000 | 0.000000000000e+00 | `aa96c1b974567fbe` | `aa96c1b974567fbe` | `34598c2256d9a24a` | 0.057 |
 
 ## IIIB Regression Signature
 
@@ -54,6 +54,8 @@ This is a replay of the IIIB hardening discriminator fixture inside the IIIC con
 
 - IIIC is now consolidated as a process-layer preset plus an independent slab-pull switch. The slice-level booleans remain for commandlet fixtures and narrow regression tests, but new Phase III code should prefer `ConfigurePhaseIIICProcessLayer` for the normal IIIC stack.
 - Slab pull remains default-off and opt-in because it is the first authority-feedback loop. Turning it on is deterministic and oracle-checked here, but future paper-faithful long-horizon runs must still declare it explicitly.
+- The slab-pull oracle is computed from the process-layer replay with slab pull disabled, after the same marks are produced. It uses that mirror state, plate vertices, motion vectors, marks, and configured constants, then compares against the enabled slab-pull replay.
+- Direct thesis inspection for this hardening tranche found that the source says slab pull updates both axis and speed of `G_i`; IIIC keeps the axis+speed omega update and rejects the audit's axis-only reading.
 - Stage 1.5 and Slice 5.5 open evidence remains preserved. IIIC explains subduction/elevation/slab-pull behavior only; it does not claim carrier success, collision resolution, rifting, divergent oceanic generation, erosion, or terrain morphology.
 - The disabled process-layer replay is a fixed-fixture regression, not a proof that every possible run is unchanged.
 

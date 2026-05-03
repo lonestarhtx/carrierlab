@@ -1,6 +1,6 @@
 # Phase III Sub-phase IIIB Consolidation Checkpoint
 
-Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIBConsolidation/20260502T194304Z`
+Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIBConsolidation/20260503T070339Z`
 
 This hardening checkpoint keeps IIIB.1-IIIB.7 read-only and addresses the GPT-5.5 Pro pause-pending-investigation review. It adds no subduction mutation, no triangle consumption, no material transfer, and no new global ownership authority. The gates below demonstrate deterministic local-vs-pair discriminator evidence, a true no-admissible-convergence negative, and an independent component signature for future Phase III regression checks.
 
@@ -11,7 +11,8 @@ This hardening checkpoint keeps IIIB.1-IIIB.7 read-only and addresses the GPT-5.
 | Slice 5.5 baseline replay regression | pass | replay hashes stable: pass; state `3b4a85366dab80db`, material ledger `bc3077100ba291b4` |
 | local_vs_pair_discriminator | pass | pair signed -0.075341390677, accepted local positives 432, rejected local non-positives 293, propagated 22 |
 | no_admissible_convergence_negative | pass | pair signed -0.000000000000, matrix pairs 0, decisions 0, seed hits 0, added 0 |
-| IIIB independent signature replay | pass | discriminator `4df40569f5e51e1a` vs `4df40569f5e51e1a`; negative `576825ec7d779dd2` vs `576825ec7d779dd2` |
+| IIIB independent signature replay | pass | discriminator `bf8818a26ed7b1dc` vs `bf8818a26ed7b1dc`; negative `531e8de4f37715c4` vs `531e8de4f37715c4` |
+| IIIB expected-token gate | pass | discriminator computed `bf8818a26ed7b1dc` / `bf8818a26ed7b1dc`, expected `bf8818a26ed7b1dc`; negative signatures are diagnostic only |
 
 ## Slice 5.5 Baseline Regression
 
@@ -19,8 +20,8 @@ This is a fixed-fixture regression against Phase II Slice 5.5, not a global no-m
 
 | Replay | State hash | Material ledger hash | Contact hash | Label hash | Filter hash | Expected state | Expected ledger | Seconds |
 |---:|---|---|---|---|---|---|---|---:|
-| 0 | `3b4a85366dab80db` | `bc3077100ba291b4` | `b21ee68fa450142a` | `5279c470b8ff7c1c` | `68428bf8efa6b3c6` | `3b4a85366dab80db` | `bc3077100ba291b4` | 3.225 |
-| 1 | `3b4a85366dab80db` | `bc3077100ba291b4` | `b21ee68fa450142a` | `5279c470b8ff7c1c` | `68428bf8efa6b3c6` | `3b4a85366dab80db` | `bc3077100ba291b4` | 3.212 |
+| 0 | `3b4a85366dab80db` | `bc3077100ba291b4` | `b21ee68fa450142a` | `5279c470b8ff7c1c` | `42a8f46665086a2f` | `3b4a85366dab80db` | `bc3077100ba291b4` | 3.330 |
+| 1 | `3b4a85366dab80db` | `bc3077100ba291b4` | `b21ee68fa450142a` | `5279c470b8ff7c1c` | `42a8f46665086a2f` | `3b4a85366dab80db` | `bc3077100ba291b4` | 3.297 |
 
 ## Local-Vs-Pair Discriminator Fixture
 
@@ -28,8 +29,8 @@ Fixture: two plates, forced-divergence motion, searched up to 80 steps. The gate
 
 | Replay | Step | Pair sign | Probe local sign | Accepted local + | Rejected local <=0 | Matrix pairs | Decisions | Seed evidence | Seed triangle | Seed velocity | Seed hits | Added | Closure hash | Legacy smoke token | Independent signature |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|
-| 0 | 51 | -0.075341390677 | 0.001023993020 | 432 | 293 | 1 | 1 | 21 | 956 | 0.010932563893 | 413 | 22 | `5445f4e8caa2c020` | `df36a5bc9e8f175e` | `4df40569f5e51e1a` |
-| 1 | 51 | -0.075341390677 | 0.001023993020 | 432 | 293 | 1 | 1 | 21 | 956 | 0.010932563893 | 413 | 22 | `5445f4e8caa2c020` | `df36a5bc9e8f175e` | `4df40569f5e51e1a` |
+| 0 | 51 | -0.075341390677 | 0.001023993020 | 432 | 293 | 1 | 1 | 21 | 956 | 0.010932563893 | 413 | 22 | `5445f4e8caa2c020` | `df36a5bc9e8f175e` | `bf8818a26ed7b1dc` |
+| 1 | 51 | -0.075341390677 | 0.001023993020 | 432 | 293 | 1 | 1 | 21 | 956 | 0.010932563893 | 413 | 22 | `5445f4e8caa2c020` | `df36a5bc9e8f175e` | `bf8818a26ed7b1dc` |
 
 ### Representative Matrix Evidence
 
@@ -58,25 +59,25 @@ Fixture: two plates, zero-motion plus one synthetic rejected local-evidence reco
 
 | Replay | Step | Pair sign | Accepted local + | Rejected local <=0 | Matrix pairs | Decisions | Seed hits | Added | Matrix evidence hash | Independent signature |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| 0 | 1 | -0.000000000000 | 0 | 1 | 0 | 0 | 0 | 0 | `05913fcbdf31ffbf` | `576825ec7d779dd2` |
-| 1 | 1 | -0.000000000000 | 0 | 1 | 0 | 0 | 0 | 0 | `05913fcbdf31ffbf` | `576825ec7d779dd2` |
+| 0 | 1 | -0.000000000000 | 0 | 1 | 0 | 0 | 0 | 0 | `05913fcbdf31ffbf` | `531e8de4f37715c4` |
+| 1 | 1 | -0.000000000000 | 0 | 1 | 0 | 0 | 0 | 0 | `05913fcbdf31ffbf` | `531e8de4f37715c4` |
 
 ## IIIB Independent Signature Components
 
 | Component | Discriminator replay 0 | Discriminator replay 1 | Negative replay 0 | Negative replay 1 |
 |---|---|---|---|---|
-| Slice 5.5 baseline | `c4455d7be67c6260` | `c4455d7be67c6260` | `c4455d7be67c6260` | `c4455d7be67c6260` |
+| Slice 5.5 baseline | `5d14e0433e3a1e96` | `5d14e0433e3a1e96` | `5d14e0433e3a1e96` | `5d14e0433e3a1e96` |
 | IIIB.1 active list | `b224faa17a2f3671` | `b224faa17a2f3671` | `70734b200cf5066f` | `70734b200cf5066f` |
 | IIIB.2 distance-to-front | `74fd0a310cbf3387` | `74fd0a310cbf3387` | `62bc202e8b68f8c5` | `62bc202e8b68f8c5` |
 | IIIB.3 matrix evidence | `30d9b017a369c45b` | `30d9b017a369c45b` | `32cafdbf46e1d63d` | `32cafdbf46e1d63d` |
 | IIIB.4 polarity | `454fde119a98913c` | `454fde119a98913c` | `60ecbc76f203575a` | `60ecbc76f203575a` |
 | IIIB.6 propagation | `958d94c1ee8cff33` | `958d94c1ee8cff33` | `58b6f08b764af422` | `58b6f08b764af422` |
 | IIIB.7 closure | `ee128f05184d6b3c` | `ee128f05184d6b3c` | `55d720eb628817aa` | `55d720eb628817aa` |
-| Independent IIIB signature | `4df40569f5e51e1a` | `4df40569f5e51e1a` | `576825ec7d779dd2` | `576825ec7d779dd2` |
+| Independent IIIB signature | `bf8818a26ed7b1dc` | `bf8818a26ed7b1dc` | `531e8de4f37715c4` | `531e8de4f37715c4` |
 
 ## Historical Smoke Token
 
-The previous consolidated IIIB smoke token `df36a5bc9e8f175e` is retained only as historical comparison. The new gate is the independent component signature above; it does not reuse the same aggregate convergence hash as every component.
+The previous consolidated IIIB smoke token `df36a5bc9e8f175e` is retained only as historical comparison. The expected-token gate now compares the local-vs-pair independent signature directly to `bf8818a26ed7b1dc`; negative-fixture signatures remain diagnostic because they intentionally describe a different no-admission fixture.
 
 
 ## Notes

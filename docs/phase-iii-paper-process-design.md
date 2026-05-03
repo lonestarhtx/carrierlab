@@ -4,7 +4,7 @@ Status: draft for user review. This document is an ADR-shaped design contract fo
 
 ## Context
 
-Phase I established the core carrier substrate: Stage 0/1 validate plate-local duplicated topology, ray-from-origin projection, and rigid geodetic motion. Stage 1.5 is now treated as a foundation-characterization slice, not as standalone paper-faithful resampling. The focused reread in `docs/paper-resampling-extraction.md` shows that the paper remesher consumes convergence/collision state as input: subducting and colliding triangles are filtered before resampling rays, and continental persistence is handled by collision-driven terrane transfer before the remesh. Phase II (Slices 0–5 plus 5.5) added the minimum process-coupled subduction machinery needed to make convergent multi-hit resolution explicit and auditable, and showed that paper Table 2 runtime is comfortably within reach for the measured kernel (~6× headroom at 250k samples).
+Phase I established the core carrier substrate: Stage 0/1 validate plate-local duplicated topology, ray-from-origin projection, and rigid geodetic motion. Stage 1.5 remains a foundation-characterization slice, not the thesis remesh path. Its evidence now has two distinct meanings: pre-remesh miss/overlap accumulation is a rigid-window projection finding, while remesh/material preservation cannot claim thesis alignment until the remesher consumes Phase III process state. The focused reread in `docs/paper-resampling-extraction.md` shows that the paper remesher consumes convergence/collision state as input: subducting and colliding triangles are filtered before resampling rays, and continental persistence is handled by collision-driven terrane transfer before the remesh. Phase II (Slices 0–5 plus 5.5) added the minimum process-coupled subduction machinery needed to make convergent multi-hit resolution explicit and auditable, and showed that paper Table 2 runtime is comfortably within reach for the measured kernel (~6× headroom at 250k samples).
 
 Phase II also produced an unexpected piece of evidence in Slice 5.5: the dominant single-hit continental delta is *not* mixed-triangle barycentric smear (only 168 of 23,967 single-hit records, contributing -0.004 of the -0.375 net at 60k). It is *coherent transfer* — continental samples reading from uniformly-oceanic interior triangles of plates that have moved into their position via geodetic motion, and the converse. The asymmetry (loss exceeding gain by ~0.37) is consistent with continental plates losing area at convergent zones because no collision/suture process exists to transfer continental material rather than lose it.
 
@@ -119,7 +119,7 @@ Names will evolve in code, but the separations are binding.
   - A separate `motion_with_slab_pull_hash` is computed independently of `motion_no_slab_pull_hash`. Determinism gates check both.
 - Fold direction `f` updates on continental over-plate samples per the relative convergence direction.
 
-**Non-decisions:** IIIC does not implement continental collision (continental-continental contacts continue to be logged as candidates, not acted on). It does not implement obduction's distinct uplift profile beyond the unified subduction-or-obduction handling the thesis itself uses.
+**Non-decisions:** IIIC does not implement continental collision (continental-continental contacts continue to be logged as candidates, not acted on). The distinct obduction uplift profile remains a pre-IIID uplift/event check; IIIC's current uplift path may not be used to claim that obduction has been implemented.
 
 ### IIID — Continental Collision
 
@@ -186,7 +186,7 @@ Names will evolve in code, but the separations are binding.
 
 ### IIIH — Tectonic-Only Long-Horizon Validation
 
-**Goal:** prove the Phase III stack is stable over multi-event horizons before Phase IV amplification consumes it.
+**Goal:** demonstrate that the Phase III stack is stable over multi-event horizons before Phase IV amplification consumes it.
 
 **Architectural decisions:**
 
@@ -239,7 +239,7 @@ Phase III is also not Phase II rescue work:
 - No additional carrier numerical hardening beyond what's needed to support new state.
 - No new ownership-recovery, hysteresis, or backfill heuristics under any name.
 - No centroid/random tie-breaks promoted to the primary path.
-- No Stage 1.5 standalone remesh policy promoted to paper-faithful evidence; IIIE is the first paper-remesh integration point.
+- No standalone Stage 1.5 remesh policy promoted to thesis-aligned evidence; IIIE is the first paper-remesh integration point.
 
 ## Consequences
 
@@ -251,4 +251,4 @@ Phase III is also not Phase II rescue work:
 validated within its scope. Stage 1.5 remains preserved as evidence about what
 happens when remeshing is isolated from the process state the paper expects.
 Phase III is additive on top of that measured substrate, not a retroactive
-claim that standalone Stage 1.5 was paper-faithful.
+claim that standalone Stage 1.5 matched the thesis remesh path.

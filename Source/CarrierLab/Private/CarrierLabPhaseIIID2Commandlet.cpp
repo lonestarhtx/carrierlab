@@ -209,6 +209,7 @@ namespace
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureBefore;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAfter;
 		FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+		int32 PolicyResolvedMultiHitCount = 0;
 		FString ReplayHash;
 	};
 
@@ -649,6 +650,7 @@ namespace
 		HashMixString(Hash, Result.ClosureBefore.ComputedConvergenceTrackingHash);
 		HashMixString(Hash, Result.ClosureAfter.ComputedConvergenceTrackingHash);
 		HashMixString(Hash, Result.GroupingAudit.GroupingHash);
+		HashMix(Hash, static_cast<uint64>(Result.PolicyResolvedMultiHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.GroupingAudit.GroupCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.GroupingAudit.AcceptedGroupCount + 1));
 		HashMixDouble(Hash, Result.GroupingAudit.MaxInterpenetrationKm);
@@ -711,6 +713,7 @@ namespace
 				return false;
 			}
 
+			OutResult.PolicyResolvedMultiHitCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
 			OutResult.bReadOnlyHashesStable = ClosureStateMatches(OutResult.ClosureBefore, OutResult.ClosureAfter);
 			const bool bAccepted = OutResult.GroupingAudit.AcceptedGroupCount > 0;
 			const bool bSubThreshold =
@@ -754,6 +757,7 @@ namespace
 			A.GroupingAudit.GroupingHash == B.GroupingAudit.GroupingHash &&
 			A.GroupingAudit.GroupCount == B.GroupingAudit.GroupCount &&
 			A.GroupingAudit.AcceptedGroupCount == B.GroupingAudit.AcceptedGroupCount &&
+			A.PolicyResolvedMultiHitCount == B.PolicyResolvedMultiHitCount &&
 			FMath::IsNearlyEqual(A.GroupingAudit.MaxInterpenetrationKm, B.GroupingAudit.MaxInterpenetrationKm, 1.0e-9);
 	}
 
@@ -763,7 +767,8 @@ namespace
 			A.GroupingAudit.GroupCount > 0 &&
 			A.GroupingAudit.AcceptedGroupCount == 0 &&
 			A.GroupingAudit.SubThresholdGroupCount == A.GroupingAudit.GroupCount &&
-			A.GroupingAudit.MaxInterpenetrationKm < CollisionThresholdKm;
+			A.GroupingAudit.MaxInterpenetrationKm < CollisionThresholdKm &&
+			A.PolicyResolvedMultiHitCount == 0;
 	}
 
 	bool ThresholdPasses(const FGroupingReplayResult& A, const FGroupingReplayResult& B)
@@ -778,7 +783,8 @@ namespace
 			A.GroupingAudit.Groups[0].CandidateRecordCount > 0 &&
 			A.GroupingAudit.Groups[0].MaxInterpenetrationKm >= CollisionThresholdKm &&
 			A.GroupingAudit.Groups[0].ValidDistanceCount > 0 &&
-			A.GroupingAudit.Groups[0].InvalidDistanceCount == 0;
+			A.GroupingAudit.Groups[0].InvalidDistanceCount == 0 &&
+			A.PolicyResolvedMultiHitCount == 0;
 	}
 
 	bool PureOceanicNegativePasses(const FGroupingReplayResult& A, const FGroupingReplayResult& B)
@@ -788,13 +794,14 @@ namespace
 			A.PolarityAudit.DecisionCount > 0 &&
 			A.PolarityAudit.CollisionCandidateCount == 0 &&
 			A.GroupingAudit.GroupCount == 0 &&
-			A.GroupingAudit.AcceptedGroupCount == 0;
+			A.GroupingAudit.AcceptedGroupCount == 0 &&
+			A.PolicyResolvedMultiHitCount == 0;
 	}
 
 	void AppendGroupingJson(const FGroupingReplayResult& Result, TArray<FString>& Lines)
 	{
 		Lines.Add(FString::Printf(
-			TEXT("{\"kind\":\"iiid2_grouping_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"read_only_hashes_stable\":%s,\"step\":%d,\"matrix_hits\":%d,\"collision_candidates\":%d,\"terrane_records\":%d,\"groups\":%d,\"accepted_groups\":%d,\"subthreshold_groups\":%d,\"max_interpenetration_km\":%.9f,\"threshold_km\":%.3f,\"grouping_hash\":%s,\"replay_hash\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"iiid2_grouping_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"read_only_hashes_stable\":%s,\"step\":%d,\"matrix_hits\":%d,\"collision_candidates\":%d,\"terrane_records\":%d,\"groups\":%d,\"accepted_groups\":%d,\"subthreshold_groups\":%d,\"max_interpenetration_km\":%.9f,\"threshold_km\":%.3f,\"policy_resolved_multi_hits\":%d,\"grouping_hash\":%s,\"replay_hash\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Fixture),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -808,6 +815,7 @@ namespace
 			Result.GroupingAudit.SubThresholdGroupCount,
 			Result.GroupingAudit.MaxInterpenetrationKm,
 			Result.GroupingAudit.ThresholdKm,
+			Result.PolicyResolvedMultiHitCount,
 			*JsonString(Result.GroupingAudit.GroupingHash),
 			*JsonString(Result.ReplayHash),
 			Result.Seconds));
@@ -854,7 +862,14 @@ namespace
 		const bool bSubThresholdPass = SubThresholdPasses(SubThresholdA, SubThresholdB);
 		const bool bThresholdPass = ThresholdPasses(ThresholdA, ThresholdB);
 		const bool bOceanPass = PureOceanicNegativePasses(OceanA, OceanB);
-		const bool bAllPass = bSlice55Pass && bIIIBPass && bSubThresholdPass && bThresholdPass && bOceanPass;
+		const bool bPolicyIndependent =
+			SubThresholdA.PolicyResolvedMultiHitCount == 0 &&
+			SubThresholdB.PolicyResolvedMultiHitCount == 0 &&
+			ThresholdA.PolicyResolvedMultiHitCount == 0 &&
+			ThresholdB.PolicyResolvedMultiHitCount == 0 &&
+			OceanA.PolicyResolvedMultiHitCount == 0 &&
+			OceanB.PolicyResolvedMultiHitCount == 0;
+		const bool bAllPass = bSlice55Pass && bIIIBPass && bSubThresholdPass && bThresholdPass && bOceanPass && bPolicyIndependent;
 
 		FString Report;
 		Report += TEXT("# Phase III Slice IIID.2 Report - Collision Candidate Grouping And Interpenetration Gate\n\n");
@@ -891,20 +906,29 @@ namespace
 			ThresholdA.GroupingAudit.MaxInterpenetrationKm,
 			ThresholdA.GroupingAudit.AcceptedGroupCount);
 		Report += FString::Printf(
-			TEXT("| Pure-oceanic negative emits no collision groups | %s | decisions %d, collision candidates %d, groups %d |\n\n"),
+			TEXT("| Pure-oceanic negative emits no collision groups | %s | decisions %d, collision candidates %d, groups %d |\n"),
 			*PassFail(bOceanPass),
 			OceanA.PolarityAudit.DecisionCount,
 			OceanA.PolarityAudit.CollisionCandidateCount,
 			OceanA.GroupingAudit.GroupCount);
+		Report += FString::Printf(
+			TEXT("| No lab multi-hit policy influence | %s | policy-resolved multi-hit counts %d / %d / %d / %d / %d / %d |\n\n"),
+			*PassFail(bPolicyIndependent),
+			SubThresholdA.PolicyResolvedMultiHitCount,
+			SubThresholdB.PolicyResolvedMultiHitCount,
+			ThresholdA.PolicyResolvedMultiHitCount,
+			ThresholdB.PolicyResolvedMultiHitCount,
+			OceanA.PolicyResolvedMultiHitCount,
+			OceanB.PolicyResolvedMultiHitCount);
 
 		Report += TEXT("## Fixture Results\n\n");
-		Report += TEXT("| Fixture | Replay | Step | Matrix hits | Collision candidates | Terrane records | Groups | Accepted | Subthreshold | Max d km | Read-only stable | Hash |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += TEXT("| Fixture | Replay | Step | Matrix hits | Collision candidates | Terrane records | Groups | Accepted | Subthreshold | Max d km | Policy multi-hits | Read-only stable | Hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		const FGroupingReplayResult* Results[] = { &SubThresholdA, &SubThresholdB, &ThresholdA, &ThresholdB, &OceanA, &OceanB };
 		for (const FGroupingReplayResult* Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %.3f | %s | `%s` |\n"),
+				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %.3f | %d | %s | `%s` |\n"),
 				*Result->Fixture,
 				Result->Replay,
 				Result->StepCount,
@@ -915,6 +939,7 @@ namespace
 				Result->GroupingAudit.AcceptedGroupCount,
 				Result->GroupingAudit.SubThresholdGroupCount,
 				Result->GroupingAudit.MaxInterpenetrationKm,
+				Result->PolicyResolvedMultiHitCount,
 				Result->bReadOnlyHashesStable ? TEXT("yes") : TEXT("no"),
 				*Result->GroupingAudit.GroupingHash);
 		}
@@ -1062,7 +1087,13 @@ int32 UCarrierLabPhaseIIID2Commandlet::Main(const FString& Params)
 		IIIBIndependentSignaturePasses(IIIBSignatureA, IIIBSignatureB) &&
 		SubThresholdPasses(SubThresholdA, SubThresholdB) &&
 		ThresholdPasses(ThresholdA, ThresholdB) &&
-		PureOceanicNegativePasses(OceanA, OceanB);
+		PureOceanicNegativePasses(OceanA, OceanB) &&
+		SubThresholdA.PolicyResolvedMultiHitCount == 0 &&
+		SubThresholdB.PolicyResolvedMultiHitCount == 0 &&
+		ThresholdA.PolicyResolvedMultiHitCount == 0 &&
+		ThresholdB.PolicyResolvedMultiHitCount == 0 &&
+		OceanA.PolicyResolvedMultiHitCount == 0 &&
+		OceanB.PolicyResolvedMultiHitCount == 0;
 
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIID.2 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIID.2 metrics: %s"), *MetricsPath);

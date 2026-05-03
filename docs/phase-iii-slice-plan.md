@@ -549,8 +549,8 @@ Work:
 - Duplicate, re-index, and re-compact plate-local triangulations.
 - Preserve each plate's geodetic motion `G`.
 - Invalidate subduction marks, active convergence lists, distance-to-front
-  records, and the subduction matrix at remesh, then prove the next step
-  rebuilds them from geometry rather than carrying stale state.
+  records, and the subduction matrix at remesh, then demonstrate that the next
+  step rebuilds them from geometry rather than carrying stale state.
 
 Exit gate:
 
@@ -583,9 +583,11 @@ Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie6-report.md`.
 
 Work: `docs/checkpoints/phase-iii-iiie-consolidated.md` summarizing the full
 paper remesh integration, oceanic generation completeness, process-state reset,
-and the ledger reframe. The consolidation must say whether Stage 1.5's
-standalone failure has been architecturally explained by the integrated
-paper-remesh path; it must not claim Stage 1.5 itself was retroactively proven.
+and the ledger reframe. The consolidation must split Stage 1.5 evidence into
+the rigid-window miss/overlap finding and the remesh/material-preservation
+finding. It may say whether the integrated paper-remesh path addresses the
+remesh/material-preservation side; it must not claim Stage 1.5 itself was
+retroactively validated or that pre-remesh rigid-window evidence disappeared.
 
 ## Sub-Phase IIIF: Plate Rifting
 
@@ -743,7 +745,7 @@ Work: `docs/checkpoints/phase-iii-iiig-consolidated.md`.
 
 ## Sub-Phase IIIH: Tectonic-Only Long-Horizon Validation
 
-Goal: prove the Phase III stack is stable over multi-hundred-event horizons before Phase IV.
+Goal: demonstrate that the Phase III stack is stable over multi-hundred-event horizons before Phase IV.
 
 ### IIIH.1: 60k Multi-Hundred-Event Run
 

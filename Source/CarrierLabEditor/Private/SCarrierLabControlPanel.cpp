@@ -1487,8 +1487,8 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 			+ SUniformGridPanel::Slot(3, 0)
 			[
 				BuildActionButton(
-					LOCTEXT("ResampleNow", "Resample Now"),
-					LOCTEXT("ResampleNowDetail", "Manual carrier remesh."),
+					LOCTEXT("ResampleNow", "Lab Resample Now"),
+					LOCTEXT("ResampleNowDetail", "Stage 1.5 lab-policy remesh."),
 					MutationColor(),
 					FOnClicked::CreateSP(this, &SCarrierLabControlPanel::OnResampleClicked),
 					true)
@@ -1505,7 +1505,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 6.0f)
 		[
 			SNew(STextBlock)
-			.Text(LOCTEXT("MutationNote", "Resample Now mutates carrier state. It is not Phase II read-only evidence."))
+			.Text(LOCTEXT("MutationNote", "Lab Resample Now mutates carrier state through the Stage 1.5 lab-policy remesh path until IIIE replaces it. It is not paper-primary evidence."))
 			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
 			.AutoWrapText(true)
 		]
@@ -1906,7 +1906,8 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		TEXT("Source: Live Actor snapshot @ %s\n")
 		TEXT("actor: %s | initialized: %s | playing: %s | step: %d | next resample: %d | events: %d\n")
 		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | auto resample: %s\n")
-		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | boundary hits: %d | NaN/Inf: %d\n")
+		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | policy-resolved multi-hit: %d | boundary hits: %d | NaN/Inf: %d\n")
+		TEXT("last remesh mode: %s\n")
 		TEXT("Auth CAF: %.6f | Projected CAF: %.6f | drift mean: %.9f km | drift p95: %.9f km\n")
 		TEXT("projection hash: %s | state hash: %s"),
 		*FormatTimestamp(LiveProjection.CapturedAt),
@@ -1926,8 +1927,10 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		Metrics.RawMissCount,
 		*PercentString(Metrics.RawMultiHitCount, Metrics.SampleCount),
 		Metrics.RawMultiHitCount,
+		Metrics.PolicyResolvedMultiHitCount,
 		Metrics.BoundaryHitCount,
 		Metrics.NaNOrInfCount,
+		Metrics.LastRemeshMode.IsEmpty() ? TEXT("none") : *Metrics.LastRemeshMode,
 		Metrics.AuthoritativeCAF,
 		Metrics.ProjectedCAF,
 		Metrics.DriftErrorMeanKm,

@@ -1,12 +1,12 @@
 # Phase III Slice IIID.2 Report - Collision Candidate Grouping And Interpenetration Gate
 
-Generated: `2026-05-03 06:14:18` UTC
+Generated: `2026-05-03 07:06:40` UTC
 
 ## Scope
 
 IIID.2 groups IIID.1 continental terrane evidence by opposing plate pair and applies the paper's 300 km interpenetration threshold as a read-only gate. It does not detach terranes, mutate topology, apply sutures, alter plate motion, resample, or change carrier authority.
 
-Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIID2/20260503T061331Z/metrics.jsonl`
+Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIID2/20260503T070601Z/metrics.jsonl`
 
 ## Gate Summary
 
@@ -17,17 +17,18 @@ Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab
 | Sub-threshold candidate group rejected | pass | max d 72.000 km, accepted groups 0 |
 | Forced collision reaches 300 km threshold | pass | step 2, max d 480.000 km, accepted groups 1 |
 | Pure-oceanic negative emits no collision groups | pass | decisions 1, collision candidates 0, groups 0 |
+| No lab multi-hit policy influence | pass | policy-resolved multi-hit counts 0 / 0 / 0 / 0 / 0 / 0 |
 
 ## Fixture Results
 
-| Fixture | Replay | Step | Matrix hits | Collision candidates | Terrane records | Groups | Accepted | Subthreshold | Max d km | Read-only stable | Hash |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| subthreshold_all_continental | 0 | 1 | 52 | 1 | 52 | 1 | 0 | 1 | 72.000 | yes | `d58c9fea824a63e8` |
-| subthreshold_all_continental | 1 | 1 | 52 | 1 | 52 | 1 | 0 | 1 | 72.000 | yes | `d58c9fea824a63e8` |
-| forced_collision_threshold | 0 | 2 | 346 | 1 | 176 | 1 | 1 | 0 | 480.000 | yes | `f8ceb65a27894b80` |
-| forced_collision_threshold | 1 | 2 | 346 | 1 | 176 | 1 | 1 | 0 | 480.000 | yes | `f8ceb65a27894b80` |
-| pure_oceanic_negative | 0 | 1 | 170 | 0 | 0 | 0 | 0 | 0 | 0.000 | yes | `3902224e451a8fb7` |
-| pure_oceanic_negative | 1 | 1 | 170 | 0 | 0 | 0 | 0 | 0 | 0.000 | yes | `3902224e451a8fb7` |
+| Fixture | Replay | Step | Matrix hits | Collision candidates | Terrane records | Groups | Accepted | Subthreshold | Max d km | Policy multi-hits | Read-only stable | Hash |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| subthreshold_all_continental | 0 | 1 | 52 | 1 | 52 | 1 | 0 | 1 | 72.000 | 0 | yes | `d58c9fea824a63e8` |
+| subthreshold_all_continental | 1 | 1 | 52 | 1 | 52 | 1 | 0 | 1 | 72.000 | 0 | yes | `d58c9fea824a63e8` |
+| forced_collision_threshold | 0 | 2 | 346 | 1 | 176 | 1 | 1 | 0 | 480.000 | 0 | yes | `f8ceb65a27894b80` |
+| forced_collision_threshold | 1 | 2 | 346 | 1 | 176 | 1 | 1 | 0 | 480.000 | 0 | yes | `f8ceb65a27894b80` |
+| pure_oceanic_negative | 0 | 1 | 170 | 0 | 0 | 0 | 0 | 0 | 0.000 | 0 | yes | `3902224e451a8fb7` |
+| pure_oceanic_negative | 1 | 1 | 170 | 0 | 0 | 0 | 0 | 0 | 0.000 | 0 | yes | `3902224e451a8fb7` |
 
 ## Representative Groups
 

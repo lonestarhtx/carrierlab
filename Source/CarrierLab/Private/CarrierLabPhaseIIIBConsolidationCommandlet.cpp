@@ -23,6 +23,7 @@ namespace
 	constexpr double VelocityMmPerYear = 66.6666666667;
 	constexpr TCHAR ExpectedSlice55StateHash[] = TEXT("3b4a85366dab80db");
 	constexpr TCHAR ExpectedSlice55MaterialLedgerHash[] = TEXT("bc3077100ba291b4");
+	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("bf8818a26ed7b1dc");
 	constexpr TCHAR HistoricalIIIBSmokeToken[] = TEXT("df36a5bc9e8f175e");
 
 	FString JsonString(const FString& Value)
@@ -781,7 +782,7 @@ namespace
 		const CarrierLab::FConvergenceSubductionMatrixEvidence* Accepted = Result.MatrixAudit.AcceptedEvidence.IsEmpty() ? nullptr : &Result.MatrixAudit.AcceptedEvidence[0];
 		const CarrierLab::FConvergenceSubductionMatrixEvidence* Rejected = Result.MatrixAudit.RejectedEvidence.IsEmpty() ? nullptr : &Result.MatrixAudit.RejectedEvidence[0];
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"replay\":%d,\"samples\":%d,\"plates\":%d,\"steps\":%d,\"completed\":%s,\"seconds\":%.6f,\"pair_signed_convergence_velocity\":%.12f,\"probe_local_signed_convergence_velocity\":%.12f,\"accepted_local_positive_hits\":%d,\"rejected_local_non_positive_hits\":%d,\"representative_accepted\":%s,\"representative_rejected\":%s,\"active_triangles\":%d,\"distance_records\":%d,\"matrix_pairs\":%d,\"matrix_hits\":%d,\"matrix_nonconvergent_hits\":%d,\"matrix_evidence_hash\":%s,\"polarity_decisions\":%d,\"polarity_hash\":%s,\"propagation_seed_hits\":%d,\"propagation_added\":%d,\"seed_evidence_id\":%d,\"seed_plate_id\":%d,\"seed_other_plate_id\":%d,\"seed_local_triangle_id\":%d,\"seed_signed_convergence_velocity\":%.12f,\"closure_metrics_hash\":%s,\"closure_computed_hash\":%s,\"closure_matches\":%s,\"legacy_iiib_smoke_token\":%s,\"iiib_rollup_signature_hash\":%s,\"iiib_independent_signature_hash\":%s,\"active_component_hash\":%s,\"distance_component_hash\":%s,\"matrix_evidence_component_hash\":%s,\"polarity_component_hash\":%s,\"propagation_component_hash\":%s,\"closure_component_hash\":%s,\"slice55_component_hash\":%s,\"memory_gb\":%.12f}"),
+			TEXT("{\"fixture\":%s,\"replay\":%d,\"samples\":%d,\"plates\":%d,\"steps\":%d,\"completed\":%s,\"seconds\":%.6f,\"pair_signed_convergence_velocity\":%.12f,\"probe_local_signed_convergence_velocity\":%.12f,\"accepted_local_positive_hits\":%d,\"rejected_local_non_positive_hits\":%d,\"representative_accepted\":%s,\"representative_rejected\":%s,\"active_triangles\":%d,\"distance_records\":%d,\"matrix_pairs\":%d,\"matrix_hits\":%d,\"matrix_nonconvergent_hits\":%d,\"matrix_evidence_hash\":%s,\"polarity_decisions\":%d,\"polarity_hash\":%s,\"propagation_seed_hits\":%d,\"propagation_added\":%d,\"seed_evidence_id\":%d,\"seed_plate_id\":%d,\"seed_other_plate_id\":%d,\"seed_local_triangle_id\":%d,\"seed_signed_convergence_velocity\":%.12f,\"closure_metrics_hash\":%s,\"closure_computed_hash\":%s,\"closure_matches\":%s,\"legacy_iiib_smoke_token\":%s,\"expected_iiib_independent_signature\":%s,\"expected_signature_match\":%s,\"iiib_rollup_signature_hash\":%s,\"iiib_independent_signature_hash\":%s,\"active_component_hash\":%s,\"distance_component_hash\":%s,\"matrix_evidence_component_hash\":%s,\"polarity_component_hash\":%s,\"propagation_component_hash\":%s,\"closure_component_hash\":%s,\"slice55_component_hash\":%s,\"memory_gb\":%.12f}"),
 			*JsonString(Result.FixtureName),
 			Result.Replay,
 			MixedSignalSamples,
@@ -814,6 +815,8 @@ namespace
 			*JsonString(Result.ClosureAudit.ComputedConvergenceTrackingHash),
 			Result.ClosureAudit.bMetricsHashMatchesComputed ? TEXT("true") : TEXT("false"),
 			*JsonString(HistoricalIIIBSmokeToken),
+			*JsonString(ExpectedIIIBIndependentSignature),
+			Result.IndependentSignatureHash == ExpectedIIIBIndependentSignature ? TEXT("true") : TEXT("false"),
 			*JsonString(Result.RollupSignatureHash),
 			*JsonString(Result.IndependentSignatureHash),
 			*JsonString(Result.ActiveListComponentHash),
@@ -841,7 +844,10 @@ namespace
 		const bool bNegative = NoAdmissibleConvergenceNegativePasses(NegativeA) && NoAdmissibleConvergenceNegativePasses(NegativeB);
 		const bool bDiscriminatorReplay = SignatureReplayStable(DiscriminatorA, DiscriminatorB);
 		const bool bNegativeReplay = SignatureReplayStable(NegativeA, NegativeB);
-		const bool bAllPass = bBaselineReplay && bBaselineExpected && bLocalDiscriminator && bNegative && bDiscriminatorReplay && bNegativeReplay;
+		const bool bExpectedSignature =
+			DiscriminatorA.IndependentSignatureHash == ExpectedIIIBIndependentSignature &&
+			DiscriminatorB.IndependentSignatureHash == ExpectedIIIBIndependentSignature;
+		const bool bAllPass = bBaselineReplay && bBaselineExpected && bLocalDiscriminator && bNegative && bDiscriminatorReplay && bNegativeReplay && bExpectedSignature;
 
 		FString Report = TEXT("# Phase III Sub-phase IIIB Consolidation Checkpoint\n\n");
 		Report += FString::Printf(TEXT("Artifacts root: `%s`\n\n"), *OutputRoot);
@@ -877,6 +883,12 @@ namespace
 			*DiscriminatorB.IndependentSignatureHash,
 			*NegativeA.IndependentSignatureHash,
 			*NegativeB.IndependentSignatureHash);
+		Report += FString::Printf(
+			TEXT("| IIIB expected-token gate | %s | discriminator computed `%s` / `%s`, expected `%s`; negative signatures are diagnostic only |\n"),
+			*PassFail(bExpectedSignature),
+			*DiscriminatorA.IndependentSignatureHash,
+			*DiscriminatorB.IndependentSignatureHash,
+			ExpectedIIIBIndependentSignature);
 
 		Report += TEXT("\n## Slice 5.5 Baseline Regression\n\n");
 		Report += TEXT("This is a fixed-fixture regression against Phase II Slice 5.5, not a global no-mutation proof. It protects the known 60k/40/seed-42 filtered-resampling baseline while the IIIB tracking data is active.\n\n");
@@ -990,7 +1002,7 @@ namespace
 		AddComponentRow(TEXT("Independent IIIB signature"), DiscriminatorA.IndependentSignatureHash, DiscriminatorB.IndependentSignatureHash, NegativeA.IndependentSignatureHash, NegativeB.IndependentSignatureHash);
 
 		Report += TEXT("\n## Historical Smoke Token\n\n");
-		Report += FString::Printf(TEXT("The previous consolidated IIIB smoke token `%s` is retained only as historical comparison. The new gate is the independent component signature above; it does not reuse the same aggregate convergence hash as every component.\n\n"), HistoricalIIIBSmokeToken);
+		Report += FString::Printf(TEXT("The previous consolidated IIIB smoke token `%s` is retained only as historical comparison. The expected-token gate now compares the local-vs-pair independent signature directly to `%s`; negative-fixture signatures remain diagnostic because they intentionally describe a different no-admission fixture.\n\n"), HistoricalIIIBSmokeToken, ExpectedIIIBIndependentSignature);
 
 		Report += TEXT("\n## Notes\n\n");
 		Report += TEXT("- Matrix admission is based on local signed convergence at the active triangle barycenter. Pair keys remain canonical metadata, not the convergence oracle.\n");
@@ -1062,7 +1074,9 @@ int32 UCarrierLabPhaseIIIBConsolidationCommandlet::Main(const FString& Params)
 	const bool bDiscriminator = bDiscriminatorA && bDiscriminatorB &&
 		LocalVsPairDiscriminatorPasses(DiscriminatorA) &&
 		LocalVsPairDiscriminatorPasses(DiscriminatorB) &&
-		SignatureReplayStable(DiscriminatorA, DiscriminatorB);
+		SignatureReplayStable(DiscriminatorA, DiscriminatorB) &&
+		DiscriminatorA.IndependentSignatureHash == ExpectedIIIBIndependentSignature &&
+		DiscriminatorB.IndependentSignatureHash == ExpectedIIIBIndependentSignature;
 	const bool bNegative = bNegativeA && bNegativeB &&
 		NoAdmissibleConvergenceNegativePasses(NegativeA) &&
 		NoAdmissibleConvergenceNegativePasses(NegativeB) &&

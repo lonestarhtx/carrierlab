@@ -1,6 +1,6 @@
 # Phase III Slice IIIC.4 Checkpoint
 
-Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIC4/20260502T224220Z`
+Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIC4/20260503T070418Z`
 
 Status: opt-in slab pull feedback. This slice mutates only plate motion authority from IIIC subducting-triangle marks. It does not add collision, rifting, erosion, terrain displacement, projection-derived ownership, repair, recovery, backfill, or any new resampling mutation path.
 
@@ -11,9 +11,9 @@ Formula in code units: `omega' = clamp_v0(omega + angular(vs) * Sum(normalize(c_
 | Gate | Result | Evidence |
 |---|---|---|
 | Slice 5.5 bypass | pass | state `3b4a85366dab80db` / `3b4a85366dab80db`, ledger `bc3077100ba291b4` / `bc3077100ba291b4` |
-| IIIB closure smoke (superseded) | pass | expected independent token `bf8818a26ed7b1dc` is listed for continuity only; this standalone slice checked closure recomputation `51f1c267444ff160`, while IIIC consolidation performs the computed-vs-expected comparison |
+| IIIB closure continuity (non-gating smoke) | pass | expected independent token `bf8818a26ed7b1dc` is listed for continuity only; this standalone slice does not claim an IIIB signature gate |
 | Slab pull opt-in on | pass | contributions 84 / 84, affected plates 1 / 1, motion `96d2f3bac07b3cda` -> `7b00b66aaa1c9e83` |
-| Independent slab-pull oracle | pass | axis residual 0.000000000000e+00 / 0.000000000000e+00, angular residual 0.000000000000e+00 / 0.000000000000e+00, contribution residual 0.000000000000e+00 / 0.000000000000e+00 |
+| Independent slab-pull oracle | pass | disabled mirror captured yes; hashes match / match; axis residual 0.000000000000e+00 / 0.000000000000e+00, angular residual 0.000000000000e+00 / 0.000000000000e+00, contribution residual 0.000000000000e+00 / 0.000000000000e+00 |
 | Bounded omega | pass | max velocity 100.000000 / 100.000000 mm/yr, v0 100.000000 |
 | Off/on differential | pass | disabled `96d2f3bac07b3cda` -> `96d2f3bac07b3cda`, enabled after `7b00b66aaa1c9e83` |
 | Negative controls | pass | zero 0, single 0, divergence-no-subduction 0 contributions |
@@ -23,7 +23,7 @@ Formula in code units: `omega' = clamp_v0(omega + angular(vs) * Sum(normalize(c_
 | Replay | Marks | Contributions | Affected plates | Max velocity mm/yr | Axis residual | Angular residual | Contribution residual | Motion before | Motion after | Slab hash | Seconds |
 |---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---:|
 | 0 | 84 | 84 | 1 | 100.000000 | 0.000000000000e+00 | 0.000000000000e+00 | 0.000000000000e+00 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `88c9151641182bbf` | 0.072 |
-| 1 | 84 | 84 | 1 | 100.000000 | 0.000000000000e+00 | 0.000000000000e+00 | 0.000000000000e+00 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `88c9151641182bbf` | 0.072 |
+| 1 | 84 | 84 | 1 | 100.000000 | 0.000000000000e+00 | 0.000000000000e+00 | 0.000000000000e+00 | `96d2f3bac07b3cda` | `7b00b66aaa1c9e83` | `88c9151641182bbf` | 0.075 |
 
 ### Affected Plate Records
 
@@ -65,7 +65,8 @@ Formula in code units: `omega' = clamp_v0(omega + angular(vs) * Sum(normalize(c_
 
 - Slab pull is opt-in and defaults off on the actor. The commandlet enables it only for the primary on-state fixture.
 - The off-state fixture has IIIC marks present but slab pull disabled, so marks alone cannot mutate motion authority.
-- The independent oracle recomputes `normalize(c_i x q_k)`, contribution sums, speed clamping, and axis decomposition from audit geometry and constants.
+- The independent oracle is computed from a slab-pull-disabled mirror run after the same marks are produced, using the mirror plate vertices, motion state, marks, and configured constants. It does not recompute expected values from the enabled run's slab-pull contribution records.
+- Direct thesis inspection for this hardening tranche found that the source says slab pull updates both axis and speed of `G_i`; this slice therefore keeps the existing axis+speed omega update instead of changing it to an axis-only variant.
 - This checkpoint may claim only IIIC.4 slab-pull feedback behavior. It does not claim Stage 1.5 carrier success, Slice 5.5 asymmetry resolution, collision, rifting, erosion, or terrain morphology.
 
 ## Recommendation

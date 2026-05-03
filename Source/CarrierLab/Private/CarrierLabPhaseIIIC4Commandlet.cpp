@@ -220,56 +220,92 @@ namespace
 		double Seconds = 0.0;
 		FCarrierLabPhaseIIIC1SubductingMarkAudit MarkAudit;
 		FCarrierLabPhaseIIIC4SlabPullAudit SlabPullAudit;
+		FCarrierLabPhaseIIIC4SlabPullAudit ExpectedSlabPullAudit;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+		bool bIndependentOracleCaptured = false;
+		bool bIndependentOracleCompared = false;
+		bool bIndependentOracleHashesMatch = false;
 		double OracleMaxAxisResidual = 0.0;
 		double OracleMaxAngularResidual = 0.0;
 		double OracleMaxContributionResidual = 0.0;
 	};
 
-	void ComputeSlabPullOracle(FSlabPullReplayResult& Result)
+	void CompareSlabPullOracle(const FCarrierLabPhaseIIIC4SlabPullAudit& Expected, FSlabPullReplayResult& Result)
 	{
-		TMap<int32, FVector3d> ContributionSumsByPlate;
-		for (const FCarrierLabPhaseIIIC4SlabPullContributionRecord& Record : Result.SlabPullAudit.Contributions)
+		Result.OracleMaxAxisResidual = 0.0;
+		Result.OracleMaxAngularResidual = 0.0;
+		Result.OracleMaxContributionResidual = 0.0;
+		Result.bIndependentOracleCompared = Result.SlabPullAudit.bSlabPullEnabled && !Expected.SlabPullHash.IsEmpty();
+		Result.bIndependentOracleHashesMatch =
+			Result.bIndependentOracleCompared &&
+			Expected.MotionHashBefore == Result.SlabPullAudit.MotionHashBefore &&
+			Expected.MotionHashAfter == Result.SlabPullAudit.MotionHashAfter &&
+			Expected.SlabPullHash == Result.SlabPullAudit.SlabPullHash;
+		if (!Result.bIndependentOracleCompared)
 		{
-			const FVector3d Raw = FVector3d::CrossProduct(Record.PlateCenter, Record.FrontBarycenter);
-			const FVector3d ExpectedUnit = Raw.SquaredLength() > UE_DOUBLE_SMALL_NUMBER
-				? Raw.GetSafeNormal()
-				: FVector3d::ZeroVector;
-			Result.OracleMaxContributionResidual = FMath::Max(
-				Result.OracleMaxContributionResidual,
-				(ExpectedUnit - Record.ContributionUnit).Size());
-			ContributionSumsByPlate.FindOrAdd(Record.PlateId) += ExpectedUnit;
+			return;
 		}
 
-		const double PullAngularStep = AngularSpeedRadiansPerStep(Result.SlabPullAudit.SlabPullSpeedMmPerYear);
-		const double MaxAngularStep = AngularSpeedRadiansPerStep(Result.SlabPullAudit.ReferenceVelocityMmPerYear);
+		if (Expected.ContributionCount != Result.SlabPullAudit.ContributionCount ||
+			Expected.AffectedPlateCount != Result.SlabPullAudit.AffectedPlateCount ||
+			Expected.InvalidInputCount != Result.SlabPullAudit.InvalidInputCount)
+		{
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+		}
+
+		const int32 ContributionPairs = FMath::Min(Expected.Contributions.Num(), Result.SlabPullAudit.Contributions.Num());
+		for (int32 Index = 0; Index < ContributionPairs; ++Index)
+		{
+			const FCarrierLabPhaseIIIC4SlabPullContributionRecord& A = Expected.Contributions[Index];
+			const FCarrierLabPhaseIIIC4SlabPullContributionRecord& B = Result.SlabPullAudit.Contributions[Index];
+			const bool bSameSource =
+				A.MarkId == B.MarkId &&
+				A.PlateId == B.PlateId &&
+				A.OtherPlateId == B.OtherPlateId &&
+				A.LocalTriangleId == B.LocalTriangleId;
+			if (!bSameSource)
+			{
+				Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+			}
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (A.PlateCenter - B.PlateCenter).Size());
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (A.FrontBarycenter - B.FrontBarycenter).Size());
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (A.ContributionUnit - B.ContributionUnit).Size());
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, FMath::Abs(A.SignedConvergenceVelocity - B.SignedConvergenceVelocity));
+		}
+		if (Expected.Contributions.Num() != Result.SlabPullAudit.Contributions.Num())
+		{
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+		}
+
+		TMap<int32, const FCarrierLabPhaseIIIC4SlabPullPlateRecord*> ActualByPlate;
 		for (const FCarrierLabPhaseIIIC4SlabPullPlateRecord& Record : Result.SlabPullAudit.PlateRecords)
 		{
-			const FVector3d ContributionSum = ContributionSumsByPlate.Contains(Record.PlateId)
-				? ContributionSumsByPlate[Record.PlateId]
-				: FVector3d::ZeroVector;
-			Result.OracleMaxContributionResidual = FMath::Max(
-				Result.OracleMaxContributionResidual,
-				(ContributionSum - Record.ContributionSum).Size());
-
-			const FVector3d OldOmega = Record.OldAxis * Record.OldAngularSpeedRadiansPerStep;
-			const FVector3d RawOmega = OldOmega + ContributionSum * PullAngularStep;
-			const double RawSpeed = RawOmega.Size();
-			FVector3d ExpectedOmega = RawOmega;
-			if (RawSpeed > MaxAngularStep && RawSpeed > UE_DOUBLE_SMALL_NUMBER)
+			ActualByPlate.Add(Record.PlateId, &Record);
+		}
+		for (const FCarrierLabPhaseIIIC4SlabPullPlateRecord& ExpectedRecord : Expected.PlateRecords)
+		{
+			const FCarrierLabPhaseIIIC4SlabPullPlateRecord* ActualRecord = ActualByPlate.FindRef(ExpectedRecord.PlateId);
+			if (ActualRecord == nullptr)
 			{
-				ExpectedOmega = RawOmega / RawSpeed * MaxAngularStep;
+				Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, 1.0);
+				continue;
 			}
-			const double ExpectedSpeed = ExpectedOmega.Size();
-			const FVector3d ExpectedAxis = ExpectedSpeed > UE_DOUBLE_SMALL_NUMBER
-				? ExpectedOmega / ExpectedSpeed
-				: Record.OldAxis;
-			Result.OracleMaxAxisResidual = FMath::Max(
-				Result.OracleMaxAxisResidual,
-				(ExpectedAxis - Record.NewAxis).Size());
-			Result.OracleMaxAngularResidual = FMath::Max(
-				Result.OracleMaxAngularResidual,
-				FMath::Abs(ExpectedSpeed - Record.NewAngularSpeedRadiansPerStep));
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (ExpectedRecord.ContributionSum - ActualRecord->ContributionSum).Size());
+			Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, (ExpectedRecord.OldAxis - ActualRecord->OldAxis).Size());
+			Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, (ExpectedRecord.NewAxis - ActualRecord->NewAxis).Size());
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.OldAngularSpeedRadiansPerStep - ActualRecord->OldAngularSpeedRadiansPerStep));
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.RawAngularSpeedRadiansPerStep - ActualRecord->RawAngularSpeedRadiansPerStep));
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.NewAngularSpeedRadiansPerStep - ActualRecord->NewAngularSpeedRadiansPerStep));
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.NewVelocityMmPerYear - ActualRecord->NewVelocityMmPerYear));
+			if (ExpectedRecord.ContributionCount != ActualRecord->ContributionCount ||
+				ExpectedRecord.bClampedToReferenceSpeed != ActualRecord->bClampedToReferenceSpeed)
+			{
+				Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+			}
+		}
+		if (Expected.PlateRecords.Num() != Result.SlabPullAudit.PlateRecords.Num())
+		{
+			Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, 1.0);
 		}
 	}
 
@@ -323,9 +359,9 @@ namespace
 			Actor->GetPhaseIIIC1SubductingMarkAudit(OutResult.MarkAudit) &&
 			Actor->GetPhaseIIIC4SlabPullAudit(OutResult.SlabPullAudit) &&
 			Actor->GetPhaseIIIB7HashClosureAudit(OutResult.ClosureAudit);
-		if (bAudits)
+		if (bAudits && bEnableMarks && !bEnableSlabPull)
 		{
-			ComputeSlabPullOracle(OutResult);
+			OutResult.bIndependentOracleCaptured = Actor->BuildPhaseIIIC4SlabPullOracleFromCurrentState(OutResult.ExpectedSlabPullAudit);
 		}
 
 		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
@@ -351,6 +387,8 @@ namespace
 			Result.SlabPullAudit.AffectedPlateCount > 0 &&
 			Result.SlabPullAudit.MotionHashBefore != Result.SlabPullAudit.MotionHashAfter &&
 			Result.SlabPullAudit.MaxVelocityMmPerYear <= ReferenceVelocityMmPerYear + 1.0e-6 &&
+			Result.bIndependentOracleCompared &&
+			Result.bIndependentOracleHashesMatch &&
 			Result.OracleMaxAxisResidual <= GateTolerance &&
 			Result.OracleMaxAngularResidual <= GateTolerance &&
 			Result.OracleMaxContributionResidual <= GateTolerance &&
@@ -381,7 +419,7 @@ namespace
 	FString SlabPullJson(const FSlabPullReplayResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"kind\":\"slab_pull\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"marks\":%d,\"contributions\":%d,\"affected_plates\":%d,\"invalid_inputs\":%d,\"max_velocity_mm_per_year\":%.12f,\"oracle_axis_residual\":%.15e,\"oracle_angular_residual\":%.15e,\"oracle_contribution_residual\":%.15e,\"motion_hash_before\":%s,\"motion_hash_after\":%s,\"slab_pull_hash\":%s,\"closure_hash\":%s,\"closure_matches\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"slab_pull\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"marks\":%d,\"contributions\":%d,\"affected_plates\":%d,\"invalid_inputs\":%d,\"max_velocity_mm_per_year\":%.12f,\"oracle_captured\":%s,\"oracle_compared\":%s,\"oracle_hashes_match\":%s,\"oracle_axis_residual\":%.15e,\"oracle_angular_residual\":%.15e,\"oracle_contribution_residual\":%.15e,\"motion_hash_before\":%s,\"motion_hash_after\":%s,\"slab_pull_hash\":%s,\"closure_hash\":%s,\"closure_matches\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Fixture),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -390,6 +428,9 @@ namespace
 			Result.SlabPullAudit.AffectedPlateCount,
 			Result.SlabPullAudit.InvalidInputCount,
 			Result.SlabPullAudit.MaxVelocityMmPerYear,
+			Result.bIndependentOracleCaptured ? TEXT("true") : TEXT("false"),
+			Result.bIndependentOracleCompared ? TEXT("true") : TEXT("false"),
+			Result.bIndependentOracleHashesMatch ? TEXT("true") : TEXT("false"),
 			Result.OracleMaxAxisResidual,
 			Result.OracleMaxAngularResidual,
 			Result.OracleMaxContributionResidual,
@@ -429,12 +470,11 @@ namespace
 			NegativePasses(ZeroMotion) &&
 			NegativePasses(SinglePlate) &&
 			NegativePasses(ForcedDivergenceNoSubduction);
-		const bool bIIIBClosureSmokeGate =
+		const bool bIIIBClosureContinuity =
 			PullA.ClosureAudit.bMetricsHashMatchesComputed &&
 			Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
-			ZeroMotion.ClosureAudit.bMetricsHashMatchesComputed &&
-			FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
-		const bool bAllPass = bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass && bIIIBClosureSmokeGate;
+			ZeroMotion.ClosureAudit.bMetricsHashMatchesComputed;
+		const bool bAllPass = bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass;
 
 		FString Report;
 		Report += TEXT("# Phase III Slice IIIC.4 Checkpoint\n\n");
@@ -453,10 +493,9 @@ namespace
 			*BypassA.LedgerMetrics.MaterialLedgerHash,
 			*BypassB.LedgerMetrics.MaterialLedgerHash);
 		Report += FString::Printf(
-			TEXT("| IIIB closure smoke (superseded) | %s | expected independent token `%s` is listed for continuity only; this standalone slice checks closure recomputation `%s`, while IIIC consolidation performs computed-vs-expected comparison |\n"),
-			*PassFail(bIIIBClosureSmokeGate),
-			ExpectedIIIBIndependentSignature,
-			*PullA.ClosureAudit.ComputedConvergenceTrackingHash);
+			TEXT("| IIIB closure continuity (non-gating smoke) | %s | expected independent token `%s` is listed for continuity only; this standalone slice does not claim an IIIB signature gate |\n"),
+			*PassFail(bIIIBClosureContinuity),
+			ExpectedIIIBIndependentSignature);
 		Report += FString::Printf(
 			TEXT("| Slab pull opt-in on | %s | contributions %d / %d, affected plates %d / %d, motion `%s` -> `%s` |\n"),
 			*PassFail(bPrimaryPass),
@@ -467,8 +506,11 @@ namespace
 			*PullA.SlabPullAudit.MotionHashBefore,
 			*PullA.SlabPullAudit.MotionHashAfter);
 		Report += FString::Printf(
-			TEXT("| Independent slab-pull oracle | %s | axis residual %.12e / %.12e, angular residual %.12e / %.12e, contribution residual %.12e / %.12e |\n"),
+			TEXT("| Independent slab-pull oracle | %s | disabled mirror captured %s; hashes %s / %s; axis residual %.12e / %.12e, angular residual %.12e / %.12e, contribution residual %.12e / %.12e |\n"),
 			*PassFail(bPrimaryPass),
+			Disabled.bIndependentOracleCaptured ? TEXT("yes") : TEXT("no"),
+			PullA.bIndependentOracleHashesMatch ? TEXT("match") : TEXT("mismatch"),
+			PullB.bIndependentOracleHashesMatch ? TEXT("match") : TEXT("mismatch"),
 			PullA.OracleMaxAxisResidual,
 			PullB.OracleMaxAxisResidual,
 			PullA.OracleMaxAngularResidual,
@@ -589,7 +631,8 @@ namespace
 		Report += TEXT("\n## Scope Notes\n\n");
 		Report += TEXT("- Slab pull is opt-in and defaults off on the actor. The commandlet enables it only for the primary on-state fixture.\n");
 		Report += TEXT("- The off-state fixture has IIIC marks present but slab pull disabled, so marks alone cannot mutate motion authority.\n");
-		Report += TEXT("- The independent oracle recomputes `normalize(c_i x q_k)`, contribution sums, speed clamping, and axis decomposition from audit geometry and constants.\n");
+		Report += TEXT("- The independent oracle is computed from a slab-pull-disabled mirror run after the same marks are produced, using the mirror plate vertices, motion state, marks, and configured constants. It does not recompute expected values from the enabled run's slab-pull contribution records.\n");
+		Report += TEXT("- Direct thesis inspection for this hardening tranche found that the source says slab pull updates both axis and speed of `G_i`; this slice therefore keeps the existing axis+speed omega update instead of changing it to an axis-only variant.\n");
 		Report += TEXT("- This checkpoint may claim only IIIC.4 slab-pull feedback behavior. It does not claim Stage 1.5 carrier success, Slice 5.5 asymmetry resolution, collision, rifting, erosion, or terrain morphology.\n\n");
 
 		Report += TEXT("## Recommendation\n\n");
@@ -705,6 +748,12 @@ int32 UCarrierLabPhaseIIIC4Commandlet::Main(const FString& Params)
 		true,
 		ForcedDivergence);
 
+	if (Disabled.bIndependentOracleCaptured)
+	{
+		CompareSlabPullOracle(Disabled.ExpectedSlabPullAudit, PullA);
+		CompareSlabPullOracle(Disabled.ExpectedSlabPullAudit, PullB);
+	}
+
 	TArray<FString> JsonLines;
 	JsonLines.Add(BypassJson(BypassA));
 	JsonLines.Add(BypassJson(BypassB));
@@ -743,12 +792,7 @@ int32 UCarrierLabPhaseIIIC4Commandlet::Main(const FString& Params)
 		NegativePasses(ZeroMotion) &&
 		NegativePasses(SinglePlate) &&
 		NegativePasses(ForcedDivergence);
-	const bool bIIIBClosureSmokeGate =
-		PullA.ClosureAudit.bMetricsHashMatchesComputed &&
-		Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
-		FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
-
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.4 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.4 metrics: %s"), *MetricsPath);
-	return (bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass && bIIIBClosureSmokeGate) ? 0 : 1;
+	return (bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass) ? 0 : 1;
 }

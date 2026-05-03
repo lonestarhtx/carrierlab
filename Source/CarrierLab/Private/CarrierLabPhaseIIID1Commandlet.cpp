@@ -203,6 +203,7 @@ namespace
 		FCarrierLabPhaseIIIB4PolarityAudit PolarityAudit;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
 		FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+		int32 PolicyResolvedMultiHitCount = 0;
 		FString ReplayHash;
 	};
 
@@ -631,6 +632,7 @@ namespace
 		HashMixString(Hash, Result.PolarityAudit.PolarityHash);
 		HashMixString(Hash, Result.ClosureAudit.ComputedConvergenceTrackingHash);
 		HashMixString(Hash, Result.TerraneAudit.TerraneDetectionHash);
+		HashMix(Hash, static_cast<uint64>(Result.PolicyResolvedMultiHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.TerraneAudit.CollisionCandidateHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.TerraneAudit.TerraneRecordCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.TerraneAudit.TotalTerraneTriangleCount + 1));
@@ -688,6 +690,7 @@ namespace
 				Actor->Destroy();
 				return false;
 			}
+			OutResult.PolicyResolvedMultiHitCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
 
 			const bool bFoundCollisionTerranes =
 				OutResult.PolarityAudit.CollisionCandidateCount > 0 &&
@@ -723,7 +726,8 @@ namespace
 			A.ClosureAudit.ComputedConvergenceTrackingHash == B.ClosureAudit.ComputedConvergenceTrackingHash &&
 			A.TerraneAudit.TerraneDetectionHash == B.TerraneAudit.TerraneDetectionHash &&
 			A.TerraneAudit.TerraneRecordCount == B.TerraneAudit.TerraneRecordCount &&
-			A.TerraneAudit.TotalTerraneTriangleCount == B.TerraneAudit.TotalTerraneTriangleCount;
+			A.TerraneAudit.TotalTerraneTriangleCount == B.TerraneAudit.TotalTerraneTriangleCount &&
+			A.PolicyResolvedMultiHitCount == B.PolicyResolvedMultiHitCount;
 	}
 
 	bool CollisionTerranePasses(const FTerraneReplayResult& A, const FTerraneReplayResult& B)
@@ -737,7 +741,8 @@ namespace
 			A.TerraneAudit.NonCollisionDecisionHitCount != 0 ||
 			A.TerraneAudit.NonContinentalSeedCount != 0 ||
 			A.TerraneAudit.EmptyTerraneCount != 0 ||
-			A.TerraneAudit.TotalInnerSeaTriangleCount != 0)
+			A.TerraneAudit.TotalInnerSeaTriangleCount != 0 ||
+			A.PolicyResolvedMultiHitCount != 0)
 		{
 			return false;
 		}
@@ -763,13 +768,14 @@ namespace
 			A.TerraneAudit.CollisionCandidateHitCount == 0 &&
 			A.TerraneAudit.TerraneRecordCount == 0 &&
 			A.TerraneAudit.InvalidSeedCount == 0 &&
-			A.TerraneAudit.NonContinentalSeedCount == 0;
+			A.TerraneAudit.NonContinentalSeedCount == 0 &&
+			A.PolicyResolvedMultiHitCount == 0;
 	}
 
 	void AppendTerraneJson(const FTerraneReplayResult& Result, TArray<FString>& Lines)
 	{
 		Lines.Add(FString::Printf(
-			TEXT("{\"kind\":\"terrane_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"step\":%d,\"matrix_hits\":%d,\"collision_candidates\":%d,\"terrane_records\":%d,\"total_triangles\":%d,\"inner_sea_triangles\":%d,\"invalid_seeds\":%d,\"non_collision_hits\":%d,\"hash\":%s,\"terrane_hash\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"terrane_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"step\":%d,\"matrix_hits\":%d,\"collision_candidates\":%d,\"terrane_records\":%d,\"total_triangles\":%d,\"inner_sea_triangles\":%d,\"invalid_seeds\":%d,\"non_collision_hits\":%d,\"policy_resolved_multi_hits\":%d,\"hash\":%s,\"terrane_hash\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Fixture),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -781,6 +787,7 @@ namespace
 			Result.TerraneAudit.TotalInnerSeaTriangleCount,
 			Result.TerraneAudit.InvalidSeedCount,
 			Result.TerraneAudit.NonCollisionDecisionHitCount,
+			Result.PolicyResolvedMultiHitCount,
 			*JsonString(Result.ReplayHash),
 			*JsonString(Result.TerraneAudit.TerraneDetectionHash),
 			Result.Seconds));
@@ -824,7 +831,12 @@ namespace
 		const bool bIIIBPass = IIIBIndependentSignaturePasses(IIIBSignatureA, IIIBSignatureB);
 		const bool bCollisionPass = CollisionTerranePasses(CollisionA, CollisionB);
 		const bool bOceanPass = PureOceanicNegativePasses(OceanA, OceanB);
-		const bool bAllPass = bSlice55Pass && bIIIBPass && bCollisionPass && bOceanPass;
+		const bool bPolicyIndependent =
+			CollisionA.PolicyResolvedMultiHitCount == 0 &&
+			CollisionB.PolicyResolvedMultiHitCount == 0 &&
+			OceanA.PolicyResolvedMultiHitCount == 0 &&
+			OceanB.PolicyResolvedMultiHitCount == 0;
+		const bool bAllPass = bSlice55Pass && bIIIBPass && bCollisionPass && bOceanPass && bPolicyIndependent;
 
 		FString Report;
 		Report += TEXT("# Phase III Slice IIID.1 Report - Connected Continental Terrane Detection\n\n");
@@ -857,20 +869,27 @@ namespace
 			CollisionA.TerraneAudit.TerraneRecordCount,
 			CollisionB.TerraneAudit.TerraneRecordCount);
 		Report += FString::Printf(
-			TEXT("| Pure-oceanic negative | %s | matrix hits %d, decisions %d, terrane records %d |\n\n"),
+			TEXT("| Pure-oceanic negative | %s | matrix hits %d, decisions %d, terrane records %d |\n"),
 			*PassFail(bOceanPass),
 			OceanA.MatrixAudit.HitCount,
 			OceanA.PolarityAudit.DecisionCount,
 			OceanA.TerraneAudit.TerraneRecordCount);
+		Report += FString::Printf(
+			TEXT("| No lab multi-hit policy influence | %s | policy-resolved multi-hit counts %d / %d / %d / %d |\n\n"),
+			*PassFail(bPolicyIndependent),
+			CollisionA.PolicyResolvedMultiHitCount,
+			CollisionB.PolicyResolvedMultiHitCount,
+			OceanA.PolicyResolvedMultiHitCount,
+			OceanB.PolicyResolvedMultiHitCount);
 
 		Report += TEXT("## Fixture Results\n\n");
-		Report += TEXT("| Fixture | Replay | Step | Matrix hits | Collision candidates | Terrane records | Total triangles | Inner sea triangles | Invalid seeds | Non-collision hits | Hash |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += TEXT("| Fixture | Replay | Step | Matrix hits | Collision candidates | Terrane records | Total triangles | Inner sea triangles | Invalid seeds | Non-collision hits | Policy multi-hits | Hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		const FTerraneReplayResult* Results[] = { &CollisionA, &CollisionB, &OceanA, &OceanB };
 		for (const FTerraneReplayResult* Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | `%s` |\n"),
+				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | `%s` |\n"),
 				*Result->Fixture,
 				Result->Replay,
 				Result->StepCount,
@@ -881,6 +900,7 @@ namespace
 				Result->TerraneAudit.TotalInnerSeaTriangleCount,
 				Result->TerraneAudit.InvalidSeedCount,
 				Result->TerraneAudit.NonCollisionDecisionHitCount,
+				Result->PolicyResolvedMultiHitCount,
 				*Result->TerraneAudit.TerraneDetectionHash);
 		}
 
@@ -889,7 +909,7 @@ namespace
 		Report += FString::Printf(TEXT("- Forced collision replay B: %s\n\n"), *FirstRecordSummary(CollisionB.TerraneAudit));
 
 		Report += TEXT("## Interpretation\n\n");
-		Report += TEXT("The all-continental forced-collision fixture exercises the IIIB `CollisionCandidate` path and traverses the source plate's plate-local triangle connectivity from each candidate triangle. Since both fixture plates are entirely continental, every emitted terrane is expected to contain only continental triangles and no inner-sea additions. The pure-oceanic fixture proves that accepted convergence evidence alone does not fabricate terranes when polarity is not continental collision.\n\n");
+		Report += TEXT("The all-continental forced-collision fixture exercises the IIIB `CollisionCandidate` path and traverses the source plate's plate-local triangle connectivity from each candidate triangle. Since both fixture plates are entirely continental, every emitted terrane is expected to contain only continental triangles and no inner-sea additions. The pure-oceanic fixture demonstrates, for this fixed case, that accepted convergence evidence alone does not fabricate terranes when polarity is not continental collision.\n\n");
 		Report += TEXT("Inner-sea inclusion is implemented in the traversal: enclosed oceanic triangle regions that do not touch a plate boundary and whose continental neighbors all belong to the detected component are included in the terrane. This fixture has no inner seas, so the count is expected to remain zero.\n\n");
 		Report += TEXT("## Verdict\n\n");
 		Report += bAllPass
@@ -1006,7 +1026,11 @@ int32 UCarrierLabPhaseIIID1Commandlet::Main(const FString& Params)
 		BypassB.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash &&
 		IIIBIndependentSignaturePasses(IIIBSignatureA, IIIBSignatureB) &&
 		CollisionTerranePasses(CollisionA, CollisionB) &&
-		PureOceanicNegativePasses(OceanA, OceanB);
+		PureOceanicNegativePasses(OceanA, OceanB) &&
+		CollisionA.PolicyResolvedMultiHitCount == 0 &&
+		CollisionB.PolicyResolvedMultiHitCount == 0 &&
+		OceanA.PolicyResolvedMultiHitCount == 0 &&
+		OceanB.PolicyResolvedMultiHitCount == 0;
 
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIID.1 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIID.1 metrics: %s"), *MetricsPath);

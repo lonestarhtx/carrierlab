@@ -82,6 +82,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 LastNoBoundaryPairMissCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	int32 PolicyResolvedMultiHitCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double AuthoritativeCAF = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
@@ -140,6 +143,9 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	FString ConvergenceTrackingHash;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	FString LastRemeshMode;
 };
 
 struct FCarrierLabVisualizationMotion
@@ -1242,6 +1248,7 @@ public:
 	bool GetPhaseIIIC2ElevationAudit(FCarrierLabPhaseIIIC2ElevationAudit& OutAudit) const;
 	bool GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const;
 	bool GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
+	bool BuildPhaseIIIC4SlabPullOracleFromCurrentState(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
 	bool GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const;
 	bool DetectPhaseIIID1ConnectedTerranes(FCarrierLabPhaseIIID1TerraneAudit& OutAudit) const;
 	bool DetectPhaseIIID2CollisionGroups(

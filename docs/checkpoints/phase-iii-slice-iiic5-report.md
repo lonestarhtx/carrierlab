@@ -1,6 +1,6 @@
 # Phase III Slice IIIC.5 Checkpoint
 
-Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIC5/20260502T230310Z`
+Artifacts root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIC5/20260503T070430Z`
 
 Status: IIIC elevation-ledger extension. This slice adds named audit lines for IIIC visible-elevation deltas, separate from the Phase II material ledger. It does not add new tectonic behavior, collision, rifting, erosion, terrain displacement, projection-derived ownership, or any new resampling mutation path.
 
@@ -11,7 +11,7 @@ Ledger equation: `actual plate-local visible elevation delta = trench_visible_el
 | Gate | Result | Evidence |
 |---|---|---|
 | Slice 5.5 bypass | pass | state `3b4a85366dab80db` / `3b4a85366dab80db`, material ledger `bc3077100ba291b4` / `bc3077100ba291b4` |
-| IIIB closure smoke (superseded) | pass | expected independent token `bf8818a26ed7b1dc` is listed for continuity only; this standalone slice checked closure recomputation `51f1c267444ff160`, while IIIC consolidation performs the computed-vs-expected comparison |
+| IIIB closure continuity (non-gating smoke) | pass | expected independent token `bf8818a26ed7b1dc` is listed for continuity only; this standalone slice does not claim an IIIB signature gate |
 | Full elevation ledger | pass | records 11189 / 11189, trench 149 / 149, uplift 11040 / 11040, residual 1.854516540334e-12 / 1.854516540334e-12 km |
 | Trench-only ledger line | pass | trench records 149, uplift records 0, residual 0.000000000000e+00 km |
 | Disabled elevation mutations | pass | marks 84, records 0, actual delta 0.000000000000 km |
@@ -22,8 +22,8 @@ Ledger equation: `actual plate-local visible elevation delta = trench_visible_el
 
 | Replay | Marks | Records | Unique vertices | Actual delta km | Ledger delta km | Trench delta km | Uplift delta km | Residual km | Uplift audit residual km | Ledger hash | Visible hash | Crust hash | Seconds |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---:|
-| 0 | 84 | 11189 | 1048 | -51.176588935012 | -51.176588935014 | -1862.500000000000 | 1811.323411064979 | 1.854516540334e-12 | 4.547473508865e-13 | `a27dee465fa17ffb` | `a5bbbb2372fed5d1` | `b89051dccbd392c8` | 0.084 |
-| 1 | 84 | 11189 | 1048 | -51.176588935012 | -51.176588935014 | -1862.500000000000 | 1811.323411064979 | 1.854516540334e-12 | 4.547473508865e-13 | `a27dee465fa17ffb` | `a5bbbb2372fed5d1` | `b89051dccbd392c8` | 0.083 |
+| 0 | 84 | 11189 | 1048 | -51.176588935012 | -51.176588935014 | -1862.500000000000 | 1811.323411064979 | 1.854516540334e-12 | 4.547473508865e-13 | `a27dee465fa17ffb` | `a5bbbb2372fed5d1` | `f4e6ecb3d7bebff4` | 0.084 |
+| 1 | 84 | 11189 | 1048 | -51.176588935012 | -51.176588935014 | -1862.500000000000 | 1811.323411064979 | 1.854516540334e-12 | 4.547473508865e-13 | `a27dee465fa17ffb` | `a5bbbb2372fed5d1` | `f4e6ecb3d7bebff4` | 0.085 |
 
 ### Representative Elevation Ledger Records
 
@@ -66,7 +66,6 @@ Ledger equation: `actual plate-local visible elevation delta = trench_visible_el
 - The Phase II material ledger categories and `MaterialLedgerHash` remain unchanged; IIIC.5 adds a separate elevation-ledger audit for process-state deltas.
 - Slab pull is intentionally excluded from the elevation ledger because it mutates motion authority, not elevation or material.
 - The ledger sums plate-local vertices, preserving carrier authority. It does not read projected global samples as authority.
-- The standalone IIIC.5 report's old "IIIB independent signature" label is superseded by the IIIC consolidation checkpoint, which recomputes the independent signature and compares it directly to `bf8818a26ed7b1dc`. This slice remains evidence for IIIC.5 elevation-ledger accounting only.
 - This checkpoint may claim only IIIC.5 elevation accounting. It does not claim Stage 1.5 carrier success, Slice 5.5 asymmetry resolution, collision, rifting, erosion, slab-pull correctness beyond its exclusion from the elevation ledger, or terrain morphology.
 
 ## Recommendation

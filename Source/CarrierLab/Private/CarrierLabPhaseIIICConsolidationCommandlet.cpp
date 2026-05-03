@@ -221,8 +221,12 @@ namespace
 		FCarrierLabPhaseIIIC2ElevationAudit ElevationAudit;
 		FCarrierLabPhaseIIIC3UpliftAudit UpliftAudit;
 		FCarrierLabPhaseIIIC4SlabPullAudit SlabPullAudit;
+		FCarrierLabPhaseIIIC4SlabPullAudit ExpectedSlabPullAudit;
 		FCarrierLabPhaseIIIC5ElevationLedgerAudit LedgerAudit;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+		bool bIndependentSlabPullOracleCaptured = false;
+		bool bIndependentSlabPullOracleCompared = false;
+		bool bIndependentSlabPullOracleHashesMatch = false;
 		double OracleRecordDeltaKm = 0.0;
 		double OracleLedgerResidualKm = 0.0;
 		double OracleActualResidualKm = 0.0;
@@ -676,46 +680,80 @@ namespace
 		Result.OracleLedgerResidualKm = FMath::Max(Result.OracleLedgerResidualKm, FMath::Abs(UpliftDeltaKm - Result.LedgerAudit.UpliftVisibleElevationDeltaKm));
 	}
 
-	void ComputeSlabPullOracle(FIIICReplayResult& Result)
+	void CompareSlabPullOracle(const FCarrierLabPhaseIIIC4SlabPullAudit& Expected, FIIICReplayResult& Result)
 	{
-		TMap<int32, FVector3d> ContributionSumsByPlate;
-		for (const FCarrierLabPhaseIIIC4SlabPullContributionRecord& Record : Result.SlabPullAudit.Contributions)
+		Result.OracleMaxAxisResidual = 0.0;
+		Result.OracleMaxAngularResidual = 0.0;
+		Result.OracleMaxContributionResidual = 0.0;
+		Result.bIndependentSlabPullOracleCompared = Result.SlabPullAudit.bSlabPullEnabled && !Expected.SlabPullHash.IsEmpty();
+		Result.bIndependentSlabPullOracleHashesMatch =
+			Result.bIndependentSlabPullOracleCompared &&
+			Expected.MotionHashBefore == Result.SlabPullAudit.MotionHashBefore &&
+			Expected.MotionHashAfter == Result.SlabPullAudit.MotionHashAfter &&
+			Expected.SlabPullHash == Result.SlabPullAudit.SlabPullHash;
+		if (!Result.bIndependentSlabPullOracleCompared)
 		{
-			const FVector3d Raw = FVector3d::CrossProduct(Record.PlateCenter, Record.FrontBarycenter);
-			const FVector3d ExpectedUnit = Raw.SquaredLength() > UE_DOUBLE_SMALL_NUMBER
-				? Raw.GetSafeNormal()
-				: FVector3d::ZeroVector;
-			Result.OracleMaxContributionResidual = FMath::Max(
-				Result.OracleMaxContributionResidual,
-				(ExpectedUnit - Record.ContributionUnit).Size());
-			ContributionSumsByPlate.FindOrAdd(Record.PlateId) += ExpectedUnit;
+			return;
 		}
 
-		const double PullAngularStep = AngularSpeedRadiansPerStep(Result.SlabPullAudit.SlabPullSpeedMmPerYear);
-		const double MaxAngularStep = AngularSpeedRadiansPerStep(Result.SlabPullAudit.ReferenceVelocityMmPerYear);
+		if (Expected.ContributionCount != Result.SlabPullAudit.ContributionCount ||
+			Expected.AffectedPlateCount != Result.SlabPullAudit.AffectedPlateCount ||
+			Expected.InvalidInputCount != Result.SlabPullAudit.InvalidInputCount)
+		{
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+		}
+
+		const int32 ContributionPairs = FMath::Min(Expected.Contributions.Num(), Result.SlabPullAudit.Contributions.Num());
+		for (int32 Index = 0; Index < ContributionPairs; ++Index)
+		{
+			const FCarrierLabPhaseIIIC4SlabPullContributionRecord& A = Expected.Contributions[Index];
+			const FCarrierLabPhaseIIIC4SlabPullContributionRecord& B = Result.SlabPullAudit.Contributions[Index];
+			if (A.MarkId != B.MarkId ||
+				A.PlateId != B.PlateId ||
+				A.OtherPlateId != B.OtherPlateId ||
+				A.LocalTriangleId != B.LocalTriangleId)
+			{
+				Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+			}
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (A.PlateCenter - B.PlateCenter).Size());
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (A.FrontBarycenter - B.FrontBarycenter).Size());
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (A.ContributionUnit - B.ContributionUnit).Size());
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, FMath::Abs(A.SignedConvergenceVelocity - B.SignedConvergenceVelocity));
+		}
+		if (Expected.Contributions.Num() != Result.SlabPullAudit.Contributions.Num())
+		{
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+		}
+
+		TMap<int32, const FCarrierLabPhaseIIIC4SlabPullPlateRecord*> ActualByPlate;
 		for (const FCarrierLabPhaseIIIC4SlabPullPlateRecord& Record : Result.SlabPullAudit.PlateRecords)
 		{
-			const FVector3d ContributionSum = ContributionSumsByPlate.Contains(Record.PlateId)
-				? ContributionSumsByPlate[Record.PlateId]
-				: FVector3d::ZeroVector;
-			Result.OracleMaxContributionResidual = FMath::Max(
-				Result.OracleMaxContributionResidual,
-				(ContributionSum - Record.ContributionSum).Size());
-
-			const FVector3d OldOmega = Record.OldAxis * Record.OldAngularSpeedRadiansPerStep;
-			const FVector3d RawOmega = OldOmega + ContributionSum * PullAngularStep;
-			const double RawSpeed = RawOmega.Size();
-			FVector3d ExpectedOmega = RawOmega;
-			if (RawSpeed > MaxAngularStep && RawSpeed > UE_DOUBLE_SMALL_NUMBER)
+			ActualByPlate.Add(Record.PlateId, &Record);
+		}
+		for (const FCarrierLabPhaseIIIC4SlabPullPlateRecord& ExpectedRecord : Expected.PlateRecords)
+		{
+			const FCarrierLabPhaseIIIC4SlabPullPlateRecord* ActualRecord = ActualByPlate.FindRef(ExpectedRecord.PlateId);
+			if (ActualRecord == nullptr)
 			{
-				ExpectedOmega = RawOmega / RawSpeed * MaxAngularStep;
+				Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, 1.0);
+				continue;
 			}
-			const double ExpectedSpeed = ExpectedOmega.Size();
-			const FVector3d ExpectedAxis = ExpectedSpeed > UE_DOUBLE_SMALL_NUMBER
-				? ExpectedOmega / ExpectedSpeed
-				: Record.OldAxis;
-			Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, (ExpectedAxis - Record.NewAxis).Size());
-			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedSpeed - Record.NewAngularSpeedRadiansPerStep));
+			Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, (ExpectedRecord.ContributionSum - ActualRecord->ContributionSum).Size());
+			Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, (ExpectedRecord.OldAxis - ActualRecord->OldAxis).Size());
+			Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, (ExpectedRecord.NewAxis - ActualRecord->NewAxis).Size());
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.OldAngularSpeedRadiansPerStep - ActualRecord->OldAngularSpeedRadiansPerStep));
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.RawAngularSpeedRadiansPerStep - ActualRecord->RawAngularSpeedRadiansPerStep));
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.NewAngularSpeedRadiansPerStep - ActualRecord->NewAngularSpeedRadiansPerStep));
+			Result.OracleMaxAngularResidual = FMath::Max(Result.OracleMaxAngularResidual, FMath::Abs(ExpectedRecord.NewVelocityMmPerYear - ActualRecord->NewVelocityMmPerYear));
+			if (ExpectedRecord.ContributionCount != ActualRecord->ContributionCount ||
+				ExpectedRecord.bClampedToReferenceSpeed != ActualRecord->bClampedToReferenceSpeed)
+			{
+				Result.OracleMaxContributionResidual = FMath::Max(Result.OracleMaxContributionResidual, 1.0);
+			}
+		}
+		if (Expected.PlateRecords.Num() != Result.SlabPullAudit.PlateRecords.Num())
+		{
+			Result.OracleMaxAxisResidual = FMath::Max(Result.OracleMaxAxisResidual, 1.0);
 		}
 	}
 
@@ -799,7 +837,10 @@ namespace
 		if (bAudits)
 		{
 			ComputeLedgerOracle(OutResult);
-			ComputeSlabPullOracle(OutResult);
+			if (bEnableProcessLayer && !bEnableSlabPull)
+			{
+				OutResult.bIndependentSlabPullOracleCaptured = Actor->BuildPhaseIIIC4SlabPullOracleFromCurrentState(OutResult.ExpectedSlabPullAudit);
+			}
 			OutResult.RollupSignature = ComputeReplayRollupSignature(OutResult, Bypass);
 		}
 
@@ -878,6 +919,8 @@ namespace
 			Result.SlabPullAudit.AffectedPlateCount > 0 &&
 			Result.SlabPullAudit.MotionHashBefore != Result.SlabPullAudit.MotionHashAfter &&
 			Result.SlabPullAudit.MaxVelocityMmPerYear <= ReferenceVelocityMmPerYear + 1.0e-6 &&
+			Result.bIndependentSlabPullOracleCompared &&
+			Result.bIndependentSlabPullOracleHashesMatch &&
 			Result.OracleMaxAxisResidual <= GateTolerance &&
 			Result.OracleMaxAngularResidual <= GateTolerance &&
 			Result.OracleMaxContributionResidual <= GateTolerance;
@@ -945,7 +988,7 @@ namespace
 	FString ReplayJson(const FIIICReplayResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"kind\":\"iiic_consolidation\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"process_layer\":%s,\"slab_pull_requested\":%s,\"marks\":%d,\"trench_records\":%d,\"uplift_records\":%d,\"ledger_records\":%d,\"actual_delta_km\":%.15f,\"ledger_delta_km\":%.15f,\"ledger_residual_km\":%.15e,\"uplift_audit_residual_km\":%.15e,\"slab_contributions\":%d,\"affected_plates\":%d,\"max_velocity_mm_per_year\":%.12f,\"oracle_axis_residual\":%.15e,\"oracle_angular_residual\":%.15e,\"oracle_contribution_residual\":%.15e,\"motion_hash_before\":%s,\"motion_hash_after\":%s,\"mark_hash\":%s,\"elevation_hash\":%s,\"uplift_hash\":%s,\"ledger_hash\":%s,\"slab_hash\":%s,\"rollup_signature\":%s,\"closure_hash\":%s,\"closure_matches\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"iiic_consolidation\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"process_layer\":%s,\"slab_pull_requested\":%s,\"marks\":%d,\"trench_records\":%d,\"uplift_records\":%d,\"ledger_records\":%d,\"actual_delta_km\":%.15f,\"ledger_delta_km\":%.15f,\"ledger_residual_km\":%.15e,\"uplift_audit_residual_km\":%.15e,\"slab_contributions\":%d,\"affected_plates\":%d,\"max_velocity_mm_per_year\":%.12f,\"oracle_captured\":%s,\"oracle_compared\":%s,\"oracle_hashes_match\":%s,\"oracle_axis_residual\":%.15e,\"oracle_angular_residual\":%.15e,\"oracle_contribution_residual\":%.15e,\"motion_hash_before\":%s,\"motion_hash_after\":%s,\"mark_hash\":%s,\"elevation_hash\":%s,\"uplift_hash\":%s,\"ledger_hash\":%s,\"slab_hash\":%s,\"rollup_signature\":%s,\"closure_hash\":%s,\"closure_matches\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Fixture),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -962,6 +1005,9 @@ namespace
 			Result.SlabPullAudit.ContributionCount,
 			Result.SlabPullAudit.AffectedPlateCount,
 			Result.SlabPullAudit.MaxVelocityMmPerYear,
+			Result.bIndependentSlabPullOracleCaptured ? TEXT("true") : TEXT("false"),
+			Result.bIndependentSlabPullOracleCompared ? TEXT("true") : TEXT("false"),
+			Result.bIndependentSlabPullOracleHashesMatch ? TEXT("true") : TEXT("false"),
 			Result.OracleMaxAxisResidual,
 			Result.OracleMaxAngularResidual,
 			Result.OracleMaxContributionResidual,
@@ -1021,7 +1067,7 @@ namespace
 		FString Report;
 		Report += TEXT("# Phase III Sub-Phase IIIC Consolidated Checkpoint\n\n");
 		Report += FString::Printf(TEXT("Artifacts root: `%s`\n\n"), *OutputRoot);
-		Report += TEXT("Status: IIIC.1-IIIC.5 consolidated. This checkpoint closes the subduction-mutation sub-phase by proving the consolidated process-layer preset, the disabled regression path, and the slab-pull on/off differential. It does not add collision, rifting, erosion, terrain displacement, projection-derived ownership, or any new resampling mutation path.\n\n");
+		Report += TEXT("Status: IIIC.1-IIIC.5 consolidated. This checkpoint closes the subduction-mutation sub-phase by demonstrating the consolidated process-layer preset, the disabled regression path, and the slab-pull on/off differential in fixed fixtures. It does not add collision, rifting, erosion, terrain displacement, projection-derived ownership, or any new resampling mutation path.\n\n");
 		Report += TEXT("Consolidated control shape: `ConfigurePhaseIIICProcessLayer(true, false)` enables subducting-triangle marks, visible/historical elevation split, and overriding-plate uplift. Slab pull remains a separate authority-feedback switch and stays off unless requested with `ConfigurePhaseIIICProcessLayer(true, true)`.\n\n");
 
 		Report += TEXT("## Gate Summary\n\n");
@@ -1076,8 +1122,11 @@ namespace
 			*SlabPullA.SlabPullAudit.MotionHashAfter,
 			*SlabPullA.RollupSignature);
 		Report += FString::Printf(
-			TEXT("| Slab pull independent oracle | %s | axis %.12e, angular %.12e, contribution %.12e, max velocity %.6f mm/yr |\n"),
+			TEXT("| Slab pull independent oracle | %s | mirror captured %s, hashes %s / %s, axis %.12e, angular %.12e, contribution %.12e, max velocity %.6f mm/yr |\n"),
 			*PassFail(bSlabPass),
+			ProcessA.bIndependentSlabPullOracleCaptured ? TEXT("yes") : TEXT("no"),
+			SlabPullA.bIndependentSlabPullOracleHashesMatch ? TEXT("match") : TEXT("mismatch"),
+			SlabPullB.bIndependentSlabPullOracleHashesMatch ? TEXT("match") : TEXT("mismatch"),
 			SlabPullA.OracleMaxAxisResidual,
 			SlabPullA.OracleMaxAngularResidual,
 			SlabPullA.OracleMaxContributionResidual,
@@ -1159,6 +1208,8 @@ namespace
 		Report += TEXT("\n## Scope Notes\n\n");
 		Report += TEXT("- IIIC is now consolidated as a process-layer preset plus an independent slab-pull switch. The slice-level booleans remain for commandlet fixtures and narrow regression tests, but new Phase III code should prefer `ConfigurePhaseIIICProcessLayer` for the normal IIIC stack.\n");
 		Report += TEXT("- Slab pull remains default-off and opt-in because it is the first authority-feedback loop. Turning it on is deterministic and oracle-checked here, but future paper-faithful long-horizon runs must still declare it explicitly.\n");
+		Report += TEXT("- The slab-pull oracle is computed from the process-layer replay with slab pull disabled, after the same marks are produced. It uses that mirror state, plate vertices, motion vectors, marks, and configured constants, then compares against the enabled slab-pull replay.\n");
+		Report += TEXT("- Direct thesis inspection for this hardening tranche found that the source says slab pull updates both axis and speed of `G_i`; IIIC keeps the axis+speed omega update and rejects the audit's axis-only reading.\n");
 		Report += TEXT("- Stage 1.5 and Slice 5.5 open evidence remains preserved. IIIC explains subduction/elevation/slab-pull behavior only; it does not claim carrier success, collision resolution, rifting, divergent oceanic generation, erosion, or terrain morphology.\n");
 		Report += TEXT("- The disabled process-layer replay is a fixed-fixture regression, not a proof that every possible run is unchanged.\n\n");
 		Report += FString::Printf(TEXT("Overall result: **%s**.\n\n"), *PassFail(bAllPass));
@@ -1302,6 +1353,12 @@ int32 UCarrierLabPhaseIIICConsolidationCommandlet::Main(const FString& Params)
 		false,
 		BypassA,
 		ForcedDivergenceNoSubduction);
+
+	if (ProcessA.bIndependentSlabPullOracleCaptured)
+	{
+		CompareSlabPullOracle(ProcessA.ExpectedSlabPullAudit, SlabPullA);
+		CompareSlabPullOracle(ProcessA.ExpectedSlabPullAudit, SlabPullB);
+	}
 
 	const FString MetricsPath = FPaths::Combine(OutputRoot, TEXT("metrics.jsonl"));
 	TArray<FString> JsonLines;

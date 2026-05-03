@@ -3218,6 +3218,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	CurrentMetrics.LastGapFillCount = OutMetrics.GapFillCount;
 	CurrentMetrics.LastNonSeparatingGapFillCount = OutMetrics.NonSeparatingGapFillCount;
 	CurrentMetrics.LastNoBoundaryPairMissCount = OutMetrics.NoBoundaryPairMissCount;
+	CurrentMetrics.PolicyResolvedMultiHitCount = 0;
+	CurrentMetrics.LastRemeshMode = TEXT("phase_ii_filtered_process");
 	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - EventStartSeconds;
 	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
 
@@ -5356,6 +5358,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	int32 GapFillCount = 0;
 	int32 NonSeparatingGapFillCount = 0;
 	int32 NoBoundaryPairMissCount = 0;
+	int32 PolicyResolvedMultiHitCount = 0;
 	TArray<FCarrierLabVizCandidate> Candidates;
 	for (const CarrierLab::FSphereSample& Sample : State.Samples)
 	{
@@ -5401,9 +5404,16 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 			continue;
 		}
 
-		const int32 ResolvedPlateId = PlateHitCount == 1
-			? LowestSetBitIndex(PlateMask)
-			: ChooseCandidatePlateByPolicy(Sample, Candidates, Motions, MultiHitPolicy, RandomTieBreakSeed, CurrentMetrics.Step, CurrentMetrics.EventCount + 1);
+		int32 ResolvedPlateId = INDEX_NONE;
+		if (PlateHitCount == 1)
+		{
+			ResolvedPlateId = LowestSetBitIndex(PlateMask);
+		}
+		else
+		{
+			++PolicyResolvedMultiHitCount;
+			ResolvedPlateId = ChooseCandidatePlateByPolicy(Sample, Candidates, Motions, MultiHitPolicy, RandomTieBreakSeed, CurrentMetrics.Step, CurrentMetrics.EventCount + 1);
+		}
 		const FCarrierLabVizCandidate* Chosen = Candidates.FindByPredicate([ResolvedPlateId](const FCarrierLabVizCandidate& Candidate)
 		{
 			return Candidate.PlateId == ResolvedPlateId;
@@ -5478,6 +5488,8 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	CurrentMetrics.LastGapFillCount = GapFillCount;
 	CurrentMetrics.LastNonSeparatingGapFillCount = NonSeparatingGapFillCount;
 	CurrentMetrics.LastNoBoundaryPairMissCount = NoBoundaryPairMissCount;
+	CurrentMetrics.PolicyResolvedMultiHitCount = PolicyResolvedMultiHitCount;
+	CurrentMetrics.LastRemeshMode = TEXT("stage_1_5_lab_policy_unfiltered");
 	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
 	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
 }
@@ -6358,6 +6370,189 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 
 	LastPhaseIIIC3UpliftAudit.UniqueUpliftedVertexCount = UpliftedVertexKeys.Num();
 	LastPhaseIIIC3UpliftAudit.UpliftHash = HashToString(UpliftHash);
+}
+
+bool ACarrierLabVisualizationActor::BuildPhaseIIIC4SlabPullOracleFromCurrentState(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIIC4SlabPullAudit();
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+	OutAudit.bSlabPullEnabled = true;
+	OutAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	OutAudit.SlabPullSpeedMmPerYear = PhaseIIICSlabPullSpeedMmPerYear;
+	OutAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	OutAudit.SlabPullAngularStep = AngularSpeedRadiansPerStep(PhaseIIICSlabPullSpeedMmPerYear);
+	OutAudit.MaxAllowedAngularStep = AngularSpeedRadiansPerStep(PhaseIIICReferenceVelocityMmPerYear);
+	OutAudit.MotionHashBefore = ComputeMotionStateHash(Motions);
+
+	uint64 SlabPullHash = 1469598103934665603ull;
+	HashMix(SlabPullHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(SlabPullHash, static_cast<uint64>(State.ConvergenceSubductingTriangleMarks.Num() + 1));
+	HashMix(SlabPullHash, 1ull);
+	HashMixDouble(SlabPullHash, PhaseIIICSlabPullSpeedMmPerYear);
+	HashMixDouble(SlabPullHash, PhaseIIICReferenceVelocityMmPerYear);
+	HashMixDouble(SlabPullHash, OutAudit.SlabPullAngularStep);
+	HashMixDouble(SlabPullHash, OutAudit.MaxAllowedAngularStep);
+
+	if (!bEnablePhaseIIICSubductingMarks || State.ConvergenceSubductingTriangleMarks.IsEmpty())
+	{
+		OutAudit.MotionHashAfter = OutAudit.MotionHashBefore;
+		OutAudit.SlabPullHash = HashToString(SlabPullHash);
+		return true;
+	}
+
+	TMap<int32, FVector3d> ContributionSumsByPlate;
+	TMap<int32, int32> ContributionCountsByPlate;
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		if (!State.Plates.IsValidIndex(Mark.PlateId) ||
+			!State.Plates[Mark.PlateId].LocalTriangles.IsValidIndex(Mark.LocalTriangleId) ||
+			!Motions.IsValidIndex(Mark.PlateId))
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[Mark.PlateId];
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[Mark.LocalTriangleId];
+		const int32 VertexIds[3] = { Triangle.A, Triangle.B, Triangle.C };
+		FVector3d FrontBarycenter = FVector3d::ZeroVector;
+		bool bAllVerticesValid = true;
+		for (const int32 VertexId : VertexIds)
+		{
+			if (!Plate.Vertices.IsValidIndex(VertexId))
+			{
+				bAllVerticesValid = false;
+				break;
+			}
+			FrontBarycenter += Plate.Vertices[VertexId].UnitPosition;
+		}
+		if (!bAllVerticesValid)
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+		FrontBarycenter = NormalizeOrFallback(FrontBarycenter, Plate.Vertices[VertexIds[0]].UnitPosition);
+
+		const FVector3d PlateCenter = Motions[Mark.PlateId].CurrentCenter;
+		const FVector3d ContributionRaw = FVector3d::CrossProduct(PlateCenter, FrontBarycenter);
+		if (ContributionRaw.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+		const FVector3d ContributionUnit = ContributionRaw.GetSafeNormal();
+		ContributionSumsByPlate.FindOrAdd(Mark.PlateId) += ContributionUnit;
+		ContributionCountsByPlate.FindOrAdd(Mark.PlateId) += 1;
+		++OutAudit.ContributionCount;
+
+		FCarrierLabPhaseIIIC4SlabPullContributionRecord& Record = OutAudit.Contributions.AddDefaulted_GetRef();
+		Record.MarkId = Mark.MarkId;
+		Record.PlateId = Mark.PlateId;
+		Record.OtherPlateId = Mark.OtherPlateId;
+		Record.LocalTriangleId = Mark.LocalTriangleId;
+		Record.PlateCenter = PlateCenter;
+		Record.FrontBarycenter = FrontBarycenter;
+		Record.ContributionUnit = ContributionUnit;
+		Record.SignedConvergenceVelocity = Mark.SignedConvergenceVelocity;
+
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.MarkId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.PlateId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.OtherPlateId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Mark.LocalTriangleId + 1));
+		HashMixDouble(SlabPullHash, PlateCenter.X);
+		HashMixDouble(SlabPullHash, PlateCenter.Y);
+		HashMixDouble(SlabPullHash, PlateCenter.Z);
+		HashMixDouble(SlabPullHash, FrontBarycenter.X);
+		HashMixDouble(SlabPullHash, FrontBarycenter.Y);
+		HashMixDouble(SlabPullHash, FrontBarycenter.Z);
+		HashMixDouble(SlabPullHash, ContributionUnit.X);
+		HashMixDouble(SlabPullHash, ContributionUnit.Y);
+		HashMixDouble(SlabPullHash, ContributionUnit.Z);
+		HashMixDouble(SlabPullHash, Mark.SignedConvergenceVelocity);
+	}
+
+	TArray<FCarrierLabVisualizationMotion> ExpectedMotions = Motions;
+	TArray<int32> AffectedPlateIds;
+	ContributionSumsByPlate.GetKeys(AffectedPlateIds);
+	AffectedPlateIds.Sort();
+	OutAudit.AffectedPlateCount = AffectedPlateIds.Num();
+	for (const int32 PlateId : AffectedPlateIds)
+	{
+		if (!ExpectedMotions.IsValidIndex(PlateId))
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+
+		FCarrierLabVisualizationMotion& Motion = ExpectedMotions[PlateId];
+		const FVector3d OldAxis = Motion.Axis;
+		const double OldAngularSpeed = Motion.AngularSpeedRadiansPerStep;
+		const FVector3d OldOmega = OldAxis * OldAngularSpeed;
+		const FVector3d ContributionSum = ContributionSumsByPlate[PlateId];
+		const FVector3d RawOmega = OldOmega + ContributionSum * OutAudit.SlabPullAngularStep;
+		const double RawAngularSpeed = RawOmega.Size();
+
+		FVector3d NewOmega = RawOmega;
+		bool bClamped = false;
+		if (RawAngularSpeed > OutAudit.MaxAllowedAngularStep && RawAngularSpeed > UE_DOUBLE_SMALL_NUMBER)
+		{
+			NewOmega = RawOmega / RawAngularSpeed * OutAudit.MaxAllowedAngularStep;
+			bClamped = true;
+		}
+
+		const double NewAngularSpeed = NewOmega.Size();
+		if (NewAngularSpeed > UE_DOUBLE_SMALL_NUMBER)
+		{
+			Motion.Axis = NewOmega / NewAngularSpeed;
+			Motion.AngularSpeedRadiansPerStep = NewAngularSpeed;
+		}
+		else
+		{
+			Motion.Axis = OldAxis;
+			Motion.AngularSpeedRadiansPerStep = 0.0;
+		}
+
+		const double NewVelocity = VelocityMmPerYearFromAngularSpeed(Motion.AngularSpeedRadiansPerStep);
+		OutAudit.MaxVelocityMmPerYear = FMath::Max(OutAudit.MaxVelocityMmPerYear, NewVelocity);
+
+		FCarrierLabPhaseIIIC4SlabPullPlateRecord& Record = OutAudit.PlateRecords.AddDefaulted_GetRef();
+		Record.PlateId = PlateId;
+		Record.ContributionCount = ContributionCountsByPlate.Contains(PlateId) ? ContributionCountsByPlate[PlateId] : 0;
+		Record.OldAxis = OldAxis;
+		Record.NewAxis = Motion.Axis;
+		Record.ContributionSum = ContributionSum;
+		Record.OldAngularSpeedRadiansPerStep = OldAngularSpeed;
+		Record.RawAngularSpeedRadiansPerStep = RawAngularSpeed;
+		Record.NewAngularSpeedRadiansPerStep = Motion.AngularSpeedRadiansPerStep;
+		Record.MaxAllowedAngularSpeedRadiansPerStep = OutAudit.MaxAllowedAngularStep;
+		Record.NewVelocityMmPerYear = NewVelocity;
+		Record.bClampedToReferenceSpeed = bClamped;
+
+		HashMix(SlabPullHash, static_cast<uint64>(PlateId + 1));
+		HashMix(SlabPullHash, static_cast<uint64>(Record.ContributionCount + 1));
+		HashMixDouble(SlabPullHash, OldAxis.X);
+		HashMixDouble(SlabPullHash, OldAxis.Y);
+		HashMixDouble(SlabPullHash, OldAxis.Z);
+		HashMixDouble(SlabPullHash, OldAngularSpeed);
+		HashMixDouble(SlabPullHash, ContributionSum.X);
+		HashMixDouble(SlabPullHash, ContributionSum.Y);
+		HashMixDouble(SlabPullHash, ContributionSum.Z);
+		HashMixDouble(SlabPullHash, RawAngularSpeed);
+		HashMixDouble(SlabPullHash, Motion.Axis.X);
+		HashMixDouble(SlabPullHash, Motion.Axis.Y);
+		HashMixDouble(SlabPullHash, Motion.Axis.Z);
+		HashMixDouble(SlabPullHash, Motion.AngularSpeedRadiansPerStep);
+		HashMixDouble(SlabPullHash, NewVelocity);
+		HashMix(SlabPullHash, bClamped ? 1ull : 0ull);
+	}
+
+	OutAudit.MotionHashAfter = ComputeMotionStateHash(ExpectedMotions);
+	OutAudit.SlabPullHash = HashToString(SlabPullHash);
+	return true;
 }
 
 void ACarrierLabVisualizationActor::ApplyPhaseIIIC4SlabPull()
@@ -7551,7 +7746,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-8 layers"),
+		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\nremesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R lab resample | 1-8 layers"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -7570,7 +7765,9 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.LastGapFillCount,
 		CurrentMetrics.LastNonSeparatingGapFillCount,
 		CurrentMetrics.LastNoBoundaryPairMissCount,
+		CurrentMetrics.PolicyResolvedMultiHitCount,
 		CurrentMetrics.NaNOrInfCount,
+		CurrentMetrics.LastRemeshMode.IsEmpty() ? TEXT("none") : *CurrentMetrics.LastRemeshMode,
 		CurrentMetrics.AuthoritativeCAF,
 		CurrentMetrics.ProjectedCAF,
 		CurrentMetrics.DriftErrorMeanKm,

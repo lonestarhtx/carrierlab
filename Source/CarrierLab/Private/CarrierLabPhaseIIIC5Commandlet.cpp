@@ -428,11 +428,10 @@ namespace
 			NoLedgerDeltaPasses(ZeroMotion) &&
 			NoLedgerDeltaPasses(SinglePlate) &&
 			NoLedgerDeltaPasses(ForcedDivergenceNoSubduction);
-		const bool bIIIBClosureSmokeGate =
+		const bool bIIIBClosureContinuity =
 			FullA.ClosureAudit.bMetricsHashMatchesComputed &&
-			Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
-			FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
-		const bool bAllPass = bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass && bIIIBClosureSmokeGate;
+			Disabled.ClosureAudit.bMetricsHashMatchesComputed;
+		const bool bAllPass = bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass;
 
 		FString Report;
 		Report += TEXT("# Phase III Slice IIIC.5 Checkpoint\n\n");
@@ -451,10 +450,9 @@ namespace
 			*BypassA.LedgerMetrics.MaterialLedgerHash,
 			*BypassB.LedgerMetrics.MaterialLedgerHash);
 		Report += FString::Printf(
-			TEXT("| IIIB closure smoke (superseded) | %s | expected independent token `%s` is listed for continuity only; this standalone slice checks closure recomputation `%s`, while IIIC consolidation performs computed-vs-expected comparison |\n"),
-			*PassFail(bIIIBClosureSmokeGate),
-			ExpectedIIIBIndependentSignature,
-			*FullA.ClosureAudit.ComputedConvergenceTrackingHash);
+			TEXT("| IIIB closure continuity (non-gating smoke) | %s | expected independent token `%s` is listed for continuity only; this standalone slice does not claim an IIIB signature gate |\n"),
+			*PassFail(bIIIBClosureContinuity),
+			ExpectedIIIBIndependentSignature);
 		Report += FString::Printf(
 			TEXT("| Full elevation ledger | %s | records %d / %d, trench %d / %d, uplift %d / %d, residual %.12e / %.12e km |\n"),
 			*PassFail(bFullPass),
@@ -749,12 +747,7 @@ int32 UCarrierLabPhaseIIIC5Commandlet::Main(const FString& Params)
 		NoLedgerDeltaPasses(ZeroMotion) &&
 		NoLedgerDeltaPasses(SinglePlate) &&
 		NoLedgerDeltaPasses(ForcedDivergence);
-	const bool bIIIBClosureSmokeGate =
-		FullA.ClosureAudit.bMetricsHashMatchesComputed &&
-		Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
-		FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
-
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.5 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.5 metrics: %s"), *MetricsPath);
-	return (bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass && bIIIBClosureSmokeGate) ? 0 : 1;
+	return (bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass) ? 0 : 1;
 }

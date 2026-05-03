@@ -324,6 +324,14 @@ clear this cannot be paper-faithful in isolation:
   rescued by collision is instead overwritten by oceanic plate
   interpolation.
 
+This does not explain away every Stage 1.5 observation. The pre-remesh
+miss/overlap accumulation in long rigid windows is a separate rigid-window
+projection finding: plates can drift far enough between remesh events that
+many fixed global samples see gaps or overlaps before any remesh logic runs.
+The process-state dependency below applies to the remesh/material
+preservation question, not to the existence of pre-remesh miss/overlap
+growth.
+
 Slice 5.5's diagnosed "coherent transfer from uniformly-oceanic interior
 triangles" failure mode is consistent with this reframing: a fast oceanic
 plate sweeps over a former continental coast, and at resample time the
@@ -341,8 +349,9 @@ This reframes the staged architecture:
 
 - Stage 0: plate-local carrier authority + ray-from-origin projection.
 - Stage 1: rigid motion only.
-- Stage 1.5: not a useful standalone slice. The resample step exists
-  but requires Phase III input to operate paper-faithfully.
+- Stage 1.5: foundation characterization. Its rigid-window miss/overlap
+  evidence remains visible, and its remesh/material-preservation path
+  requires Phase III input to operate paper-faithfully.
 - Phase II: per-step process layer baseline. Material/elevation state
   on plate-local vertices.
 - Phase III: convergence tracking, subduction marks, collision marks,
@@ -350,8 +359,10 @@ This reframes the staged architecture:
 - IIIE: implements the resample event as the full algorithm above,
   consuming Phase III state.
 
-The Stage 1.5 hard-gate failure is therefore not an architectural defect
-of the carrier model. It is a layering defect of our staged extraction.
+The Stage 1.5 hard-gate failure remains a real foundation-characterization
+failure. The remesh/material-preservation portion is a layering defect of
+our staged extraction; it is not retroactively solved until the integrated
+IIIE remesh path demonstrates the paper contract with Phase III process state.
 
 ## Implementation Contract for IIIE
 
@@ -417,7 +428,7 @@ contract points:
    conceptually but not implemented in the thesis pseudocode. We need
    to either implement the closed-form solution (project onto each
    edge's great-circle plane, clip to arc, take min over edges) or
-   prove that our discrete approximation is bounded.
+   demonstrate that our discrete approximation is bounded.
 
 3. The "one collision per step" rule (§3.3.1.3) plus the cadence-driven
    resample period interact: in a step where a collision triggers, does
