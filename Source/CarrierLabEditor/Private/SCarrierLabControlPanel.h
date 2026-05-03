@@ -94,6 +94,7 @@ private:
 	int32 PendingPlateCount = 40;
 	int32 PendingSeed = 42;
 	double PendingStepRate = 2.0;
+	bool bPendingAutoResample = false;
 	ECarrierLabMultiHitPolicy PendingPolicy = ECarrierLabMultiHitPolicy::Centroid;
 	ECarrierLabVisualizationLayer PendingLayer = ECarrierLabVisualizationLayer::PlateId;
 	double LastLiveRefreshSeconds = -1000.0;

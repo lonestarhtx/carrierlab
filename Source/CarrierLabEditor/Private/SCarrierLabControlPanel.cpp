@@ -14,6 +14,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Input/SSlider.h"
@@ -262,6 +263,7 @@ void SCarrierLabControlPanel::ApplyPanelConfigToActor(ACarrierLabVisualizationAc
 	Actor.PlateCount = PendingPlateCount;
 	Actor.Seed = PendingSeed;
 	Actor.StepsPerSecond = PendingStepRate;
+	Actor.bEnableNaturalResamplingEvents = bPendingAutoResample;
 	Actor.SetMultiHitPolicy(PendingPolicy);
 	Actor.SetVisualizationLayer(PendingLayer);
 }
@@ -277,6 +279,7 @@ void SCarrierLabControlPanel::RefreshTargetActor()
 	PendingPlateCount = Actor->PlateCount;
 	PendingSeed = Actor->Seed;
 	PendingStepRate = Actor->StepsPerSecond;
+	bPendingAutoResample = Actor->bEnableNaturalResamplingEvents;
 	PendingPolicy = Actor->MultiHitPolicy;
 	PendingLayer = Actor->VisualizationLayer;
 }
@@ -664,6 +667,26 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
 			.AutoWrapText(true)
 		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)
+		[
+			SNew(SCheckBox)
+			.IsChecked_Lambda([this]()
+			{
+				return bPendingAutoResample ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			})
+			.OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState)
+			{
+				bPendingAutoResample = NewState == ECheckBoxState::Checked;
+				if (ACarrierLabVisualizationActor* Actor = GetCarrierActor(false))
+				{
+					Actor->bEnableNaturalResamplingEvents = bPendingAutoResample;
+				}
+			})
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("AutoResample", "Auto resample at observed-speed cadence"))
+			]
+		]
 		+ SVerticalBox::Slot().AutoHeight()
 		[
 			BuildControls()
@@ -1040,6 +1063,7 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 	return FText::FromString(FString::Printf(
 		TEXT("Source: Live Actor snapshot @ %s\n")
 		TEXT("actor: %s | initialized: %s | playing: %s | step: %d | next resample: %d | events: %d\n")
+		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | auto resample: %s\n")
 		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | boundary hits: %d | NaN/Inf: %d\n")
 		TEXT("Auth CAF: %.6f | Projected CAF: %.6f | drift mean: %.9f km | drift p95: %.9f km\n")
 		TEXT("projection hash: %s | state hash: %s"),
@@ -1050,6 +1074,10 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		Metrics.Step,
 		Metrics.NextResampleStep,
 		Metrics.EventCount,
+		Metrics.CadenceSteps,
+		Metrics.CadenceDeltaTMa,
+		Metrics.ObservedMaxPlateSpeedMmPerYear,
+		bPendingAutoResample ? TEXT("on") : TEXT("off"),
 		Metrics.SampleCount,
 		Metrics.PlateCount,
 		*PercentString(Metrics.RawMissCount, Metrics.SampleCount),

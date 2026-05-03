@@ -51,6 +51,8 @@ namespace
 		bool bSeedMixedElevation = false;
 		bool bEnableIIICProcessLayer = false;
 		bool bEnableIIICSlabPull = false;
+		bool bEnableNaturalResamplingEvents = false;
+		bool bExpectNaturalResamplingEvent = false;
 	};
 
 	FString JsonString(const FString& Value)
@@ -198,7 +200,7 @@ namespace
 
 			FObservabilityScenario DefaultProcess;
 			DefaultProcess.Name = TEXT("default_40_plate_process");
-			DefaultProcess.Description = TEXT("Default 40-plate spatial sanity run with the consolidated IIIC process layer enabled and slab pull off. This is a human-inspection map, not a hard morphology gate.");
+			DefaultProcess.Description = TEXT("Default 40-plate rigid-window spatial sanity run with the consolidated IIIC process layer enabled, natural resampling disabled, and slab pull off. This preserves the pre-cadence map baseline.");
 			DefaultProcess.SampleCount = 60000;
 			DefaultProcess.PlateCount = 40;
 			DefaultProcess.StepCount = 40;
@@ -209,6 +211,13 @@ namespace
 			DefaultProcess.bEnableIIICProcessLayer = true;
 			DefaultProcess.bEnableIIICSlabPull = false;
 			Scenarios.Add(DefaultProcess);
+
+			FObservabilityScenario DefaultCadence = DefaultProcess;
+			DefaultCadence.Name = TEXT("default_40_plate_process_cadence");
+			DefaultCadence.Description = TEXT("Default 40-plate spatial sanity run with the consolidated IIIC process layer enabled, slab pull off, and observed-speed natural resampling enabled. This exercises cadence firing through the actor path; with IIIC marks enabled, natural events use the filtered resampling path.");
+			DefaultCadence.bEnableNaturalResamplingEvents = true;
+			DefaultCadence.bExpectNaturalResamplingEvent = true;
+			Scenarios.Add(DefaultCadence);
 			return Scenarios;
 		}
 
@@ -1020,6 +1029,12 @@ namespace
 		FString CrustStateHashAfter;
 		FString ConvergenceTrackingHashBefore;
 		FString ConvergenceTrackingHashAfter;
+		int32 Step = 0;
+		int32 EventCount = 0;
+		int32 NextResampleStep = 0;
+		int32 CadenceSteps = 0;
+		double CadenceDeltaTMa = 0.0;
+		double ObservedMaxPlateSpeedMmPerYear = 0.0;
 		FCarrierLabPhaseIIIB1TrackingAudit TrackingAudit;
 		FCarrierLabPhaseIIIB2DistanceAudit DistanceAudit;
 		FCarrierLabPhaseIIIB3SubductionMatrixAudit MatrixAudit;
@@ -1045,6 +1060,7 @@ namespace
 		bool bRanB = false;
 		bool bLayerHashesStable = false;
 		bool bExpectedSignalsPass = false;
+		bool bCadencePass = false;
 		bool bOverallPass = false;
 	};
 
@@ -1066,6 +1082,27 @@ namespace
 		default:
 			return true;
 		}
+	}
+
+	bool ReplayMatchesCadenceExpectation(const FObservabilityScenario& Scenario, const FObservabilityReplay& Replay)
+	{
+		if (!Scenario.bEnableNaturalResamplingEvents)
+		{
+			return Replay.EventCount == 0;
+		}
+		if (!Scenario.bExpectNaturalResamplingEvent)
+		{
+			return true;
+		}
+		if (Replay.CadenceSteps <= 0 || Replay.ObservedMaxPlateSpeedMmPerYear <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			return false;
+		}
+		const int32 ExpectedEvents = Scenario.StepCount / Replay.CadenceSteps;
+		return ExpectedEvents > 0 &&
+			Replay.EventCount == ExpectedEvents &&
+			Replay.ClosureAudit.ResetSerial >= ExpectedEvents &&
+			Replay.NextResampleStep > Replay.Step;
 	}
 
 	FString LayerExportJson(const FLayerExport& Export)
@@ -1249,7 +1286,12 @@ namespace
 				ContactHeight,
 				PanelX + 10,
 				24,
-				FString::Printf(TEXT("STEP %d / %.0f MYR"), Actor.CurrentMetrics.Step, static_cast<double>(Actor.CurrentMetrics.Step) * 2.0),
+				FString::Printf(
+					TEXT("STEP %d / %.0f MYR / E%d / C%d"),
+					Actor.CurrentMetrics.Step,
+					static_cast<double>(Actor.CurrentMetrics.Step) * 2.0,
+					Actor.CurrentMetrics.EventCount,
+					Actor.CurrentMetrics.CadenceSteps),
 				FColor(166, 184, 196, 255),
 				1);
 			BlitThumbnail(
@@ -1308,6 +1350,7 @@ namespace
 			Actor->Destroy();
 			return false;
 		}
+		Actor->bEnableNaturalResamplingEvents = Scenario.bEnableNaturalResamplingEvents;
 		Actor->ConfigurePhaseIIMotionFixture(Scenario.MotionFixture);
 		for (int32 Step = 0; Step < Scenario.StepCount; ++Step)
 		{
@@ -1330,6 +1373,12 @@ namespace
 		OutResult.StateHashBefore = Actor->CurrentMetrics.StateHash;
 		OutResult.CrustStateHashBefore = Actor->CurrentMetrics.CrustStateHash;
 		OutResult.ConvergenceTrackingHashBefore = Actor->CurrentMetrics.ConvergenceTrackingHash;
+		OutResult.Step = Actor->CurrentMetrics.Step;
+		OutResult.EventCount = Actor->CurrentMetrics.EventCount;
+		OutResult.NextResampleStep = Actor->CurrentMetrics.NextResampleStep;
+		OutResult.CadenceSteps = Actor->CurrentMetrics.CadenceSteps;
+		OutResult.CadenceDeltaTMa = Actor->CurrentMetrics.CadenceDeltaTMa;
+		OutResult.ObservedMaxPlateSpeedMmPerYear = Actor->CurrentMetrics.ObservedMaxPlateSpeedMmPerYear;
 
 		const FString ReplayDir = FPaths::Combine(OutputRoot, Scenario.Name, FString::Printf(TEXT("replay_%d"), Replay));
 		if (!WriteMaps(ReplayDir, *Actor, OutResult.IIICUpliftAudit, OutResult.LayerExports, OutResult.ContactSheetPath))
@@ -1382,7 +1431,9 @@ namespace
 
 		return FString::Printf(
 			TEXT("{\"scenario\":%s,\"expected_state\":%s,\"replay\":%d,\"completed\":%s,\"total_seconds\":%.6f,")
-			TEXT("\"step\":%d,\"projection_hash_before\":%s,\"projection_hash_after\":%s,")
+			TEXT("\"step\":%d,\"event_count\":%d,\"next_resample_step\":%d,")
+			TEXT("\"cadence_steps\":%d,\"cadence_delta_t_ma\":%.12f,\"observed_max_plate_speed_mm_per_year\":%.12f,")
+			TEXT("\"projection_hash_before\":%s,\"projection_hash_after\":%s,")
 			TEXT("\"state_hash_before\":%s,\"state_hash_after\":%s,")
 			TEXT("\"crust_state_hash_before\":%s,\"crust_state_hash_after\":%s,")
 			TEXT("\"convergence_tracking_hash_before\":%s,\"convergence_tracking_hash_after\":%s,")
@@ -1398,7 +1449,12 @@ namespace
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
 			Result.TotalSeconds,
-			Result.ClosureAudit.Step,
+			Result.Step,
+			Result.EventCount,
+			Result.NextResampleStep,
+			Result.CadenceSteps,
+			Result.CadenceDeltaTMa,
+			Result.ObservedMaxPlateSpeedMmPerYear,
 			*JsonString(Result.ProjectionHashBefore),
 			*JsonString(Result.ProjectionHashAfter),
 			*JsonString(Result.StateHashBefore),
@@ -1442,13 +1498,13 @@ namespace
 			: TEXT("Status: read-only observability patch before IIIC entry reconciliation.\n\n");
 		Report += TEXT("## Scope\n\n");
 		Report += bIIICMode
-			? TEXT("This checkpoint exports filled Mollweide-style PNG artifacts after the consolidated IIIC process layer has run with slab pull off. The export path is read-only: it must not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n")
+			? TEXT("This checkpoint exports filled Mollweide-style PNG artifacts after the consolidated IIIC process layer has run with slab pull off. The export path itself is read-only. Some fixtures explicitly enable observed-speed natural resampling before export; those events are reported as cadence evidence, not hidden visualization cleanup. When IIIC subducting marks are enabled, natural cadence events call the existing filtered resampling path so marked subducting triangles are excluded rather than silently ignored. The export path must not add unreported process mutation, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n")
 			: TEXT("This checkpoint exports the Phase III actor-only spatial sanity layers to filled Mollweide-style PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n");
 		Report += TEXT("Fixtures:\n\n");
 		for (const FObservabilityScenarioResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d rigid steps / %s motion / %s material / IIIC process %s / slab pull %s / expected %s / centroid policy`).\n"),
+				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d steps / %s motion / %s material / natural resampling %s / IIIC process %s / slab pull %s / expected %s / centroid policy`).\n"),
 				*Result.Scenario.Name,
 				*Result.Scenario.Description,
 				Result.Scenario.SampleCount / 1000,
@@ -1457,6 +1513,7 @@ namespace
 				Result.Scenario.StepCount,
 				*MotionFixtureName(Result.Scenario.MotionFixture),
 				*MaterialFixtureName(Result.Scenario.MaterialFixture),
+				Result.Scenario.bEnableNaturalResamplingEvents ? TEXT("on") : TEXT("off"),
 				Result.Scenario.bEnableIIICProcessLayer ? TEXT("on") : TEXT("off"),
 				Result.Scenario.bEnableIIICSlabPull ? TEXT("on") : TEXT("off"),
 				*ExpectedStateName(Result.Scenario.ExpectedState));
@@ -1486,6 +1543,38 @@ namespace
 				*Result.Scenario.Name,
 				*PassFail(Result.bExpectedSignalsPass),
 				*ExpectedStateName(Result.Scenario.ExpectedState));
+			Report += FString::Printf(
+				TEXT("| `%s` cadence behavior | %s | natural resampling `%s`, events %d/%d, cadence %d steps / %.3f Ma, observed vmax %.6f mm/yr |\n"),
+				*Result.Scenario.Name,
+				*PassFail(Result.bCadencePass),
+				Result.Scenario.bEnableNaturalResamplingEvents ? TEXT("on") : TEXT("off"),
+				Result.A.EventCount,
+				Result.B.EventCount,
+				Result.A.CadenceSteps,
+				Result.A.CadenceDeltaTMa,
+				Result.A.ObservedMaxPlateSpeedMmPerYear);
+		}
+		Report += TEXT("\n");
+
+		Report += TEXT("## Cadence State\n\n");
+		Report += TEXT("| Scenario | Replay | Step | Events | Next resample | Cadence steps | DeltaT Ma | Observed max speed mm/yr | Reset serial |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FObservabilityScenarioResult& ScenarioResult : Results)
+		{
+			for (const FObservabilityReplay* Result : { &ScenarioResult.A, &ScenarioResult.B })
+			{
+				Report += FString::Printf(
+					TEXT("| `%s` | %d | %d | %d | %d | %d | %.6f | %.9f | %d |\n"),
+					*ScenarioResult.Scenario.Name,
+					Result->Replay,
+					Result->Step,
+					Result->EventCount,
+					Result->NextResampleStep,
+					Result->CadenceSteps,
+					Result->CadenceDeltaTMa,
+					Result->ObservedMaxPlateSpeedMmPerYear,
+					Result->ClosureAudit.ResetSerial);
+			}
 		}
 		Report += TEXT("\n");
 
@@ -1576,6 +1665,11 @@ namespace
 		Report += TEXT("- `DistanceToFront` is also rasterized from current plate-local active-boundary triangles. It is diagnostic context, not a source of authority.\n");
 		Report += TEXT("- Contact sheet headers include the simulation step and approximate `Myr` timestamp using the CarrierLab `2 Ma` timestep.\n");
 		Report += TEXT("- `ElevationProfile` plots uplift delta against distance-to-front and includes the expected thesis distance-transfer curve as a visual shape reference. It is paired with the IIIC.3 numeric oracle; the plot alone is not a gate.\n\n");
+		Report += TEXT("## Cadence Interpretation\n\n");
+		Report += TEXT("- The paper describes oceanic crust generation / plate resampling as periodic every `10-60` time steps depending on observed maximum plate speed; the thesis extraction refines this as `DeltaT = (1-alpha)M + alpha m`, with `alpha = min(1, vm/v0)`, `M=128 Ma`, and `m=32 Ma`.\n");
+		Report += TEXT("- With CarrierLab's `2 Ma` timestep, the thesis formula maps to `16-64` steps; the paper's `10-60` statement is treated as the paper-level cadence range, while the actor reports the exact thesis-derived cadence it used for each fixture.\n");
+		Report += TEXT("- The actor now reports and, when explicitly enabled, fires cadence from observed plate motion (`vm`) rather than only the configured scalar speed. This matters once slab pull or later process state changes plate motion.\n");
+		Report += TEXT("- `default_40_plate_process` intentionally keeps natural resampling off as the rigid-window visual baseline. `default_40_plate_process_cadence` enables natural resampling and must show at least one event by step 40 under the default 40-plate speed. Because IIIC marks are enabled in that fixture, the event uses filtered remeshing rather than the older unfiltered manual-resample shortcut.\n\n");
 		Report += TEXT("## Recommendation\n\n");
 		if (bIIICMode)
 		{
@@ -1621,7 +1715,10 @@ int32 UCarrierLabPhaseIIIObservabilityCommandlet::Main(const FString& Params)
 		Result.bExpectedSignalsPass = Result.bRanA && Result.bRanB &&
 			ReplayMatchesExpectedSignals(Scenario, Result.A) &&
 			ReplayMatchesExpectedSignals(Scenario, Result.B);
-		Result.bOverallPass = Result.bRanA && Result.bRanB && Result.A.bExportReadOnly && Result.B.bExportReadOnly && Result.bLayerHashesStable && Result.bExpectedSignalsPass;
+		Result.bCadencePass = Result.bRanA && Result.bRanB &&
+			ReplayMatchesCadenceExpectation(Scenario, Result.A) &&
+			ReplayMatchesCadenceExpectation(Scenario, Result.B);
+		Result.bOverallPass = Result.bRanA && Result.bRanB && Result.A.bExportReadOnly && Result.B.bExportReadOnly && Result.bLayerHashesStable && Result.bExpectedSignalsPass && Result.bCadencePass;
 		bOverallPass = bOverallPass && Result.bOverallPass;
 		Results.Add(MoveTemp(Result));
 	}

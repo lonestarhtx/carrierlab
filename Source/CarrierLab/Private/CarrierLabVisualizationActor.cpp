@@ -26,6 +26,9 @@ namespace
 	constexpr double EarthRadiusKm = 6371.0;
 	constexpr double DeltaTimeMa = 2.0;
 	constexpr double BoundaryBarycentricEpsilon = 1.0e-7;
+	constexpr double ResamplingMMaxMa = 128.0;
+	constexpr double ResamplingMMinMa = 32.0;
+	constexpr double ResamplingReferenceVelocityMmPerYear = 100.0;
 	constexpr double PhaseIIContactVelocityMargin = 1.0e-6;
 	constexpr double PhaseIIIBDistanceToFrontLimitKm = 1800.0;
 	constexpr int32 PhaseIIIObservabilityMapWidth = 2048;
@@ -1726,13 +1729,15 @@ void ACarrierLabVisualizationActor::Tick(const float DeltaSeconds)
 	{
 		StepAccumulator += FMath::Max(0.0, DeltaSeconds) * StepsPerSecond;
 		int32 StepsThisFrame = 0;
+		bool bNeedsProjection = false;
 		while (StepAccumulator >= 1.0 && StepsThisFrame < 8)
 		{
-			AdvanceOneStep();
+			const bool bProjectedThisStep = AdvanceOneStepWithNaturalResampling();
+			bNeedsProjection = !bProjectedThisStep;
 			StepAccumulator -= 1.0;
 			++StepsThisFrame;
 		}
-		if (StepsThisFrame > 0)
+		if (StepsThisFrame > 0 && bNeedsProjection)
 		{
 			ProjectCurrentCarrier();
 		}
@@ -1783,7 +1788,10 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	CachedRenderMeshSampleCount = 0;
 	CachedRenderMeshTriangleCount = 0;
 	StepAccumulator = 0.0;
-	CurrentMetrics.NextResampleStep = GetNaturalCadenceSteps();
+	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
+	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
+	CurrentMetrics.CadenceSteps = GetNaturalCadenceSteps();
+	CurrentMetrics.NextResampleStep = CurrentMetrics.CadenceSteps;
 	CaptureDriftReference();
 	ProjectCurrentCarrier();
 	return true;
@@ -1823,6 +1831,10 @@ void ACarrierLabVisualizationActor::ConfigurePhaseIIMotionFixture(const ECarrier
 	}
 
 	CaptureDriftReference();
+	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
+	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
+	CurrentMetrics.CadenceSteps = GetNaturalCadenceSteps();
+	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / CurrentMetrics.CadenceSteps) + 1) * CurrentMetrics.CadenceSteps;
 }
 
 void ACarrierLabVisualizationActor::ConfigurePhaseIIICProcessLayer(const bool bEnabled, const bool bInEnableSlabPull)
@@ -4597,12 +4609,25 @@ void ACarrierLabVisualizationActor::SetPlaying(const bool bNewPlaying)
 
 int32 ACarrierLabVisualizationActor::GetNaturalCadenceSteps() const
 {
-	constexpr double ResamplingMMaxMa = 128.0;
-	constexpr double ResamplingMMinMa = 32.0;
-	constexpr double V0MmPerYear = 100.0;
-	const double Alpha = FMath::Min(1.0, VelocityMmPerYear / V0MmPerYear);
-	const double CadenceMa = (1.0 - Alpha) * ResamplingMMaxMa + Alpha * ResamplingMMinMa;
+	const double CadenceMa = GetNaturalCadenceDeltaTMa();
 	return FMath::Max(1, FMath::RoundToInt(CadenceMa / DeltaTimeMa));
+}
+
+double ACarrierLabVisualizationActor::GetNaturalCadenceDeltaTMa() const
+{
+	const double ObservedSpeed = GetObservedMaxPlateSpeedMmPerYear();
+	const double Alpha = FMath::Min(1.0, ObservedSpeed / ResamplingReferenceVelocityMmPerYear);
+	return (1.0 - Alpha) * ResamplingMMaxMa + Alpha * ResamplingMMinMa;
+}
+
+double ACarrierLabVisualizationActor::GetObservedMaxPlateSpeedMmPerYear() const
+{
+	double MaxSpeed = 0.0;
+	for (const FCarrierLabVisualizationMotion& Motion : Motions)
+	{
+		MaxSpeed = FMath::Max(MaxSpeed, VelocityMmPerYearFromAngularSpeed(Motion.AngularSpeedRadiansPerStep));
+	}
+	return Motions.Num() > 0 ? MaxSpeed : FMath::Max(0.0, VelocityMmPerYear);
 }
 
 void ACarrierLabVisualizationActor::StepOnce()
@@ -4611,8 +4636,49 @@ void ACarrierLabVisualizationActor::StepOnce()
 	{
 		return;
 	}
+	if (!AdvanceOneStepWithNaturalResampling())
+	{
+		ProjectCurrentCarrier();
+	}
+}
+
+bool ACarrierLabVisualizationActor::ShouldFireNaturalResamplingEvent(const int32 TargetStep) const
+{
+	return bEnableNaturalResamplingEvents &&
+		TargetStep > 0 &&
+		GetObservedMaxPlateSpeedMmPerYear() > UE_DOUBLE_SMALL_NUMBER &&
+		State.Plates.Num() > 1 &&
+		CurrentMetrics.Step >= TargetStep;
+}
+
+bool ACarrierLabVisualizationActor::AdvanceOneStepWithNaturalResampling()
+{
+	const int32 TargetStep = CurrentMetrics.NextResampleStep > 0
+		? CurrentMetrics.NextResampleStep
+		: GetNaturalCadenceSteps();
 	AdvanceOneStep();
-	ProjectCurrentCarrier();
+	if (ShouldFireNaturalResamplingEvent(TargetStep))
+	{
+		return ApplyNaturalResampleEvent();
+	}
+	return false;
+}
+
+bool ACarrierLabVisualizationActor::ApplyNaturalResampleEvent()
+{
+	if (bEnablePhaseIIICSubductingMarks)
+	{
+		TArray<FCarrierLabPhaseIITriangleLabelRecord> Labels;
+		TArray<FCarrierLabPhaseIIFilterDecisionRecord> Decisions;
+		FCarrierLabPhaseIIResamplingFilterMetrics FilterMetrics;
+		TArray<FCarrierLabPhaseIIMaterialRecord> MaterialRecords;
+		FCarrierLabPhaseIIMaterialLedgerMetrics MaterialMetrics;
+		return ApplyPhaseIIResamplingFilterEvent(Labels, Decisions, FilterMetrics, &MaterialRecords, &MaterialMetrics);
+	}
+
+	const int32 EventCountBefore = CurrentMetrics.EventCount;
+	ApplyResampleEvent();
+	return CurrentMetrics.EventCount > EventCountBefore;
 }
 
 void ACarrierLabVisualizationActor::ApplyResampleEvent()
@@ -5881,7 +5947,10 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	ApplyPhaseIIIC4SlabPull();
 	FinalizePhaseIIIC5ElevationLedger();
 	++CurrentMetrics.Step;
+	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
+	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
 	const int32 Cadence = GetNaturalCadenceSteps();
+	CurrentMetrics.CadenceSteps = Cadence;
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
 }
 
@@ -6261,7 +6330,10 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	CurrentMetrics.HashSeconds = 0.0;
 	CurrentMetrics.ResampleEventSeconds = 0.0;
 	CurrentMetrics.MeshUpdateSeconds = 0.0;
+	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
+	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
 	const int32 Cadence = GetNaturalCadenceSteps();
+	CurrentMetrics.CadenceSteps = Cadence;
 	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
 
 	RenderPlateIds.Init(INDEX_NONE, State.Samples.Num());
@@ -6830,12 +6902,16 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d samples=%d plates=%d\nmiss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-8 layers"),
+		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-8 layers"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
 		CurrentMetrics.NextResampleStep,
 		CurrentMetrics.EventCount,
+		bEnableNaturalResamplingEvents ? TEXT("on") : TEXT("off"),
+		CurrentMetrics.CadenceSteps,
+		CurrentMetrics.CadenceDeltaTMa,
+		CurrentMetrics.ObservedMaxPlateSpeedMmPerYear,
 		CurrentMetrics.SampleCount,
 		CurrentMetrics.PlateCount,
 		CurrentMetrics.RawMissCount,

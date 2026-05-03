@@ -49,6 +49,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 NextResampleStep = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	int32 CadenceSteps = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 SampleCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
@@ -107,6 +110,12 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double ResampleEventSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double ObservedMaxPlateSpeedMmPerYear = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double CadenceDeltaTMa = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double MeshUpdateSeconds = 0.0;
@@ -946,6 +955,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Motion", meta = (ClampMin = "0.0"))
 	double VelocityMmPerYear = 66.6666666667;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Motion")
+	bool bEnableNaturalResamplingEvents = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Motion", meta = (ClampMin = "0.1", ClampMax = "120.0"))
 	double StepsPerSecond = 2.0;
 
@@ -1023,6 +1035,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "CarrierLab|Metrics")
 	int32 GetNaturalCadenceSteps() const;
+
+	UFUNCTION(BlueprintPure, Category = "CarrierLab|Metrics")
+	double GetNaturalCadenceDeltaTMa() const;
+
+	UFUNCTION(BlueprintPure, Category = "CarrierLab|Metrics")
+	double GetObservedMaxPlateSpeedMmPerYear() const;
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void StepOnce();
@@ -1152,6 +1170,9 @@ public:
 
 private:
 	void BindInputControls();
+	bool AdvanceOneStepWithNaturalResampling();
+	bool ShouldFireNaturalResamplingEvent(int32 TargetStep) const;
+	bool ApplyNaturalResampleEvent();
 	void AdvanceOneStep();
 	void UpdateConvergenceTrackingDistances();
 	void UpdateConvergenceSubductionMatrix();
