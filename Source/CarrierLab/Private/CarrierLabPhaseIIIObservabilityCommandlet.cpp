@@ -665,6 +665,184 @@ namespace
 		}
 	}
 
+	void DimPixels(TArray<FColor>& Pixels, const double Factor)
+	{
+		for (FColor& Pixel : Pixels)
+		{
+			Pixel.R = static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(static_cast<double>(Pixel.R) * Factor, 0.0, 255.0)));
+			Pixel.G = static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(static_cast<double>(Pixel.G) * Factor, 0.0, 255.0)));
+			Pixel.B = static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(static_cast<double>(Pixel.B) * Factor, 0.0, 255.0)));
+			Pixel.A = 255;
+		}
+	}
+
+	FColor SubductionRoleOverlayColor(const uint8 Role)
+	{
+		switch (Role)
+		{
+		case 1:
+			return FColor(31, 64, 242, 255);
+		case 2:
+			return FColor(255, 209, 26, 255);
+		case 3:
+			return FColor(217, 87, 13, 255);
+		case 4:
+			return FColor(107, 107, 117, 255);
+		default:
+			return FColor(5, 13, 23, 255);
+		}
+	}
+
+	FColor DistanceToFrontOverlayColor(const double DistanceKm)
+	{
+		if (DistanceKm < 0.0 || !FMath::IsFinite(DistanceKm))
+		{
+			return FColor(5, 13, 23, 255);
+		}
+		const double Alpha = FMath::Clamp(DistanceKm / 1800.0, 0.0, 1.0);
+		return FColor(
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(15.0, 245.0, Alpha))),
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(189.0, 46.0, Alpha))),
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(235.0, 10.0, Alpha))),
+			255);
+	}
+
+	double EdgeFunction(const FVector2D& A, const FVector2D& B, const FVector2D& P)
+	{
+		return (P.X - A.X) * (B.Y - A.Y) - (P.Y - A.Y) * (B.X - A.X);
+	}
+
+	void FillProjectedTriangle(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const FVector2D& A,
+		const FVector2D& B,
+		const FVector2D& C,
+		const FColor& Color,
+		const double Alpha)
+	{
+		const double MinXd = FMath::Min3(A.X, B.X, C.X);
+		const double MaxXd = FMath::Max3(A.X, B.X, C.X);
+		const double MinYd = FMath::Min3(A.Y, B.Y, C.Y);
+		const double MaxYd = FMath::Max3(A.Y, B.Y, C.Y);
+		const int32 MinX = FMath::Clamp(FMath::FloorToInt(MinXd) - 1, 0, Width - 1);
+		const int32 MaxX = FMath::Clamp(FMath::CeilToInt(MaxXd) + 1, 0, Width - 1);
+		const int32 MinY = FMath::Clamp(FMath::FloorToInt(MinYd) - 1, 0, Height - 1);
+		const int32 MaxY = FMath::Clamp(FMath::CeilToInt(MaxYd) + 1, 0, Height - 1);
+		const double Area = EdgeFunction(A, B, C);
+		if (FMath::Abs(Area) <= 1.0e-6)
+		{
+			DrawLine(Pixels, Width, Height, FMath::RoundToInt(A.X), FMath::RoundToInt(A.Y), FMath::RoundToInt(B.X), FMath::RoundToInt(B.Y), Color);
+			DrawLine(Pixels, Width, Height, FMath::RoundToInt(B.X), FMath::RoundToInt(B.Y), FMath::RoundToInt(C.X), FMath::RoundToInt(C.Y), Color);
+			DrawLine(Pixels, Width, Height, FMath::RoundToInt(C.X), FMath::RoundToInt(C.Y), FMath::RoundToInt(A.X), FMath::RoundToInt(A.Y), Color);
+			return;
+		}
+
+		for (int32 Y = MinY; Y <= MaxY; ++Y)
+		{
+			for (int32 X = MinX; X <= MaxX; ++X)
+			{
+				const FVector2D P(static_cast<double>(X) + 0.5, static_cast<double>(Y) + 0.5);
+				const double W0 = EdgeFunction(B, C, P);
+				const double W1 = EdgeFunction(C, A, P);
+				const double W2 = EdgeFunction(A, B, P);
+				const bool bInside = Area > 0.0
+					? (W0 >= 0.0 && W1 >= 0.0 && W2 >= 0.0)
+					: (W0 <= 0.0 && W1 <= 0.0 && W2 <= 0.0);
+				if (bInside)
+				{
+					const int32 PixelIndex = Y * Width + X;
+					Pixels[PixelIndex] = BlendPixel(Pixels[PixelIndex], Color, Alpha);
+				}
+			}
+		}
+	}
+
+	void DrawProjectedOverlayTriangle(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const FCarrierLabPhaseIIIProcessOverlayTriangle& Triangle,
+		const FColor& Color,
+		const double Alpha)
+	{
+		int32 X0 = 0;
+		int32 Y0 = 0;
+		int32 X1 = 0;
+		int32 Y1 = 0;
+		int32 X2 = 0;
+		int32 Y2 = 0;
+		if (!ForwardMollweidePixel(Triangle.A, Width, Height, X0, Y0) ||
+			!ForwardMollweidePixel(Triangle.B, Width, Height, X1, Y1) ||
+			!ForwardMollweidePixel(Triangle.C, Width, Height, X2, Y2))
+		{
+			return;
+		}
+
+		const int32 MinX = FMath::Min3(X0, X1, X2);
+		const int32 MaxX = FMath::Max3(X0, X1, X2);
+		if (MaxX - MinX > Width / 2)
+		{
+			DrawDisk(Pixels, Width, Height, X0, Y0, 2, Color);
+			DrawDisk(Pixels, Width, Height, X1, Y1, 2, Color);
+			DrawDisk(Pixels, Width, Height, X2, Y2, 2, Color);
+			return;
+		}
+
+		FillProjectedTriangle(
+			Pixels,
+			Width,
+			Height,
+			FVector2D(static_cast<double>(X0), static_cast<double>(Y0)),
+			FVector2D(static_cast<double>(X1), static_cast<double>(Y1)),
+			FVector2D(static_cast<double>(X2), static_cast<double>(Y2)),
+			Color,
+			Alpha);
+	}
+
+	void DrawRoleTriangleOverlays(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& Triangles,
+		const double Alpha)
+	{
+		for (const FCarrierLabPhaseIIIProcessOverlayTriangle& Triangle : Triangles)
+		{
+			if (Triangle.Role == 0)
+			{
+				continue;
+			}
+			DrawProjectedOverlayTriangle(
+				Pixels,
+				Width,
+				Height,
+				Triangle,
+				SubductionRoleOverlayColor(Triangle.Role),
+				Alpha);
+		}
+	}
+
+	void DrawDistanceTriangleOverlays(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& Triangles,
+		const double Alpha)
+	{
+		for (const FCarrierLabPhaseIIIProcessOverlayTriangle& Triangle : Triangles)
+		{
+			DrawProjectedOverlayTriangle(
+				Pixels,
+				Width,
+				Height,
+				Triangle,
+				DistanceToFrontOverlayColor(Triangle.DistanceKm),
+				Alpha);
+		}
+	}
+
 	bool BuildElevationProfile(
 		const FCarrierLabPhaseIIIC3UpliftAudit& Audit,
 		TArray<FColor>& OutPixels,
@@ -842,13 +1020,16 @@ namespace
 		FLayerPixels CrustType;
 		FLayerPixels BoundaryMaskImage;
 		FLayerPixels ElevationImage;
-		FLayerPixels SubductionRoles;
-		FLayerPixels DistanceToFront;
 		if (!CaptureLayer(ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("CrustType"), TEXT("CRUST TYPE"), CrustType) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::BoundaryMask, TEXT("_BoundarySource"), TEXT("BOUNDARY SOURCE"), BoundaryMaskImage) ||
-			!CaptureLayer(ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Elevation"), TEXT("ELEVATION"), ElevationImage) ||
-			!CaptureLayer(ECarrierLabVisualizationLayer::SubductionMask, TEXT("SubductionRoles"), TEXT("SUBDUCTION ROLES"), SubductionRoles) ||
-			!CaptureLayer(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap, TEXT("DistanceToFront"), TEXT("DISTANCE TO FRONT"), DistanceToFront))
+			!CaptureLayer(ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Elevation"), TEXT("ELEVATION"), ElevationImage))
+		{
+			return false;
+		}
+
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle> RoleTriangles;
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle> DistanceTriangles;
+		if (!Actor.GetPhaseIIIProcessOverlayTriangles(RoleTriangles, DistanceTriangles))
 		{
 			return false;
 		}
@@ -883,6 +1064,12 @@ namespace
 		}
 		Images.Add(VelocityField);
 
+		FLayerPixels SubductionRoles = CrustType;
+		SubductionRoles.Export.Layer = ECarrierLabVisualizationLayer::SubductionMask;
+		SubductionRoles.Export.Name = TEXT("SubductionRoles");
+		SubductionRoles.Label = TEXT("SUBDUCTION ROLES");
+		DimPixels(SubductionRoles.Pixels, 0.62);
+		DrawRoleTriangleOverlays(SubductionRoles.Pixels, SubductionRoles.Width, SubductionRoles.Height, RoleTriangles, 0.86);
 		if (!SaveImage(SubductionRoles))
 		{
 			return false;
@@ -899,7 +1086,7 @@ namespace
 		Combined.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
 		Combined.Export.Name = TEXT("CombinedTectonicSummary");
 		Combined.Label = TEXT("COMBINED SUMMARY");
-		OverlaySubductionRoles(Combined.Pixels, SubductionRoles.Pixels, 0.58);
+		DrawRoleTriangleOverlays(Combined.Pixels, Combined.Width, Combined.Height, RoleTriangles, 0.58);
 		OverlayBoundary(Combined.Pixels, BoundaryMaskImage.Pixels);
 		DrawMotionArrows(Actor, Combined.Pixels, Combined.Width, Combined.Height);
 		if (!SaveImage(Combined))
@@ -908,6 +1095,12 @@ namespace
 		}
 		Images.Add(Combined);
 
+		FLayerPixels DistanceToFront = CrustType;
+		DistanceToFront.Export.Layer = ECarrierLabVisualizationLayer::DistanceToFrontHeatmap;
+		DistanceToFront.Export.Name = TEXT("DistanceToFront");
+		DistanceToFront.Label = TEXT("DISTANCE TO FRONT");
+		DimPixels(DistanceToFront.Pixels, 0.62);
+		DrawDistanceTriangleOverlays(DistanceToFront.Pixels, DistanceToFront.Width, DistanceToFront.Height, DistanceTriangles, 0.76);
 		if (!SaveImage(DistanceToFront))
 		{
 			return false;
@@ -944,6 +1137,15 @@ namespace
 				}
 			}
 			DrawTextSmall(ContactPixels, ContactWidth, ContactHeight, PanelX + 10, 9, Images[Index].Label, FColor(232, 238, 242, 255), 2);
+			DrawTextSmall(
+				ContactPixels,
+				ContactWidth,
+				ContactHeight,
+				PanelX + 10,
+				24,
+				FString::Printf(TEXT("STEP %d / %.0f MYR"), Actor.CurrentMetrics.Step, static_cast<double>(Actor.CurrentMetrics.Step) * 2.0),
+				FColor(166, 184, 196, 255),
+				1);
 			BlitThumbnail(
 				Images[Index].Pixels,
 				Images[Index].Width,
@@ -1261,10 +1463,11 @@ namespace
 		Report += TEXT("- `CrustType` is the calm base map: blue ocean, green land, no process overlay.\n");
 		Report += TEXT("- `PlateBoundaries` adds only thin light boundary evidence over the same base. This is the first map to check when the summary feels noisy.\n");
 		Report += TEXT("- `VelocityField` adds sparse red plate-motion arrows over the base map.\n");
-		Report += TEXT("- `SubductionRoles` shows the consolidated IIIC subducting/overriding roles produced from plate-local marks and role masks.\n");
+		Report += TEXT("- `SubductionRoles` is now rasterized directly from current plate-local triangle geometry. It no longer round-trips through `GlobalSampleId`, so the moving role marks should line up with the current moving plate geometry.\n");
 		Report += TEXT("- `Elevation` shows the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color on the filled continental/oceanic base map.\n");
 		Report += TEXT("- `CombinedTectonicSummary` is deliberately restrained: crust + boundaries + velocity + subduction roles. Elevation remains separate so uplift heat does not swamp the overview.\n");
-		Report += TEXT("- `DistanceToFront` remains the front-distance spatial context for the same fixture; it is diagnostic context, not a source of authority.\n");
+		Report += TEXT("- `DistanceToFront` is also rasterized from current plate-local active-boundary triangles. It is diagnostic context, not a source of authority.\n");
+		Report += TEXT("- Contact sheet headers include the simulation step and approximate `Myr` timestamp using the CarrierLab `2 Ma` timestep.\n");
 		Report += TEXT("- `ElevationProfile` plots uplift delta against distance-to-front and includes the expected thesis distance-transfer curve as a visual shape reference. It is paired with the IIIC.3 numeric oracle; the plot alone is not a gate.\n\n");
 		Report += TEXT("## Recommendation\n\n");
 		if (bIIICMode)

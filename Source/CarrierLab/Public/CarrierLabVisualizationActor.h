@@ -902,6 +902,15 @@ struct FCarrierLabPhaseIIIC5ElevationLedgerAudit
 	TArray<FCarrierLabPhaseIIIC5ElevationLedgerRecord> Records;
 };
 
+struct FCarrierLabPhaseIIIProcessOverlayTriangle
+{
+	FVector3d A = FVector3d::ZeroVector;
+	FVector3d B = FVector3d::ZeroVector;
+	FVector3d C = FVector3d::ZeroVector;
+	uint8 Role = 0;
+	double DistanceKm = -1.0;
+};
+
 UCLASS(Blueprintable)
 class CARRIERLAB_API ACarrierLabVisualizationActor : public AActor
 {
@@ -1127,6 +1136,9 @@ public:
 	bool GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const;
 	bool GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
 	bool GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const;
+	bool GetPhaseIIIProcessOverlayTriangles(
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);

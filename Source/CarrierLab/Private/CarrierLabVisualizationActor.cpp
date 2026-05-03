@@ -6104,6 +6104,103 @@ void ACarrierLabVisualizationActor::ComputePhaseIIIObservabilityMasks()
 	}
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIIProcessOverlayTriangles(
+	TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
+	TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles) const
+{
+	OutRoleTriangles.Reset();
+	OutDistanceTriangles.Reset();
+
+	auto AddTriangle = [this](
+		const int32 PlateId,
+		const int32 LocalTriangleId,
+		const uint8 OverlayRole,
+		const double DistanceKm,
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutTriangles)
+	{
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			return;
+		}
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return;
+		}
+
+		FCarrierLabPhaseIIIProcessOverlayTriangle& Overlay = OutTriangles.AddDefaulted_GetRef();
+		Overlay.A = Plate.Vertices[Triangle.A].UnitPosition;
+		Overlay.B = Plate.Vertices[Triangle.B].UnitPosition;
+		Overlay.C = Plate.Vertices[Triangle.C].UnitPosition;
+		Overlay.Role = OverlayRole;
+		Overlay.DistanceKm = DistanceKm;
+	};
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		for (int32 Index = 0; Index < Plate.ActiveBoundaryTriangles.Num(); ++Index)
+		{
+			const double DistanceKm = Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(Index)
+				? Plate.ActiveBoundaryTriangleDistancesKm[Index]
+				: 0.0;
+			AddTriangle(Plate.PlateId, Plate.ActiveBoundaryTriangles[Index], 0, DistanceKm, OutDistanceTriangles);
+		}
+	}
+
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : State.ConvergenceSubductionTriangleHits)
+	{
+		uint8 OverlayRole = 0;
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision != nullptr)
+		{
+			if (IsSubductionPolarityDecision(*Decision))
+			{
+				OverlayRole = Hit.PlateId == Decision->UnderPlate ? 1 : (Hit.PlateId == Decision->OverPlate ? 2 : 0);
+			}
+			else if (Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate)
+			{
+				OverlayRole = 3;
+			}
+			else if (Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::OceanOceanDeferred)
+			{
+				OverlayRole = 4;
+			}
+		}
+
+		if (OverlayRole != 0)
+		{
+			AddTriangle(Hit.PlateId, Hit.LocalTriangleId, OverlayRole, -1.0, OutRoleTriangles);
+		}
+	}
+
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		AddTriangle(Mark.PlateId, Mark.LocalTriangleId, 1, -1.0, OutRoleTriangles);
+	}
+
+	OutRoleTriangles.Sort([](
+		const FCarrierLabPhaseIIIProcessOverlayTriangle& A,
+		const FCarrierLabPhaseIIIProcessOverlayTriangle& B)
+	{
+		return A.Role < B.Role;
+	});
+	return true;
+}
+
 void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 {
 	if (!bInitialized)
