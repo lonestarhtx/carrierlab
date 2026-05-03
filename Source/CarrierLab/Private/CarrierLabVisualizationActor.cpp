@@ -4676,6 +4676,222 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::DetectPhaseIIID2CollisionGroups(
+	FCarrierLabPhaseIIID2CollisionGroupingAudit& OutAudit,
+	const double InterpenetrationThresholdKm) const
+{
+	OutAudit = FCarrierLabPhaseIIID2CollisionGroupingAudit();
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
+	{
+		return false;
+	}
+
+	OutAudit.Step = TerraneAudit.Step;
+	OutAudit.EventCount = TerraneAudit.EventCount;
+	OutAudit.PlateCount = TerraneAudit.PlateCount;
+	OutAudit.ResetSerial = TerraneAudit.ResetSerial;
+	OutAudit.ThresholdKm = InterpenetrationThresholdKm;
+	OutAudit.TerraneRecordCount = TerraneAudit.TerraneRecordCount;
+	OutAudit.SourceTerraneDetectionHash = TerraneAudit.TerraneDetectionHash;
+
+	TMap<uint64, TArray<int32>> RecordIndicesByPair;
+	for (int32 RecordIndex = 0; RecordIndex < TerraneAudit.Records.Num(); ++RecordIndex)
+	{
+		const FCarrierLabPhaseIIID1TerraneRecord& Record = TerraneAudit.Records[RecordIndex];
+		if (Record.PairKey == 0)
+		{
+			continue;
+		}
+		RecordIndicesByPair.FindOrAdd(Record.PairKey).Add(RecordIndex);
+	}
+
+	TMap<uint64, double> ActiveDistanceByPlateTriangle;
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		for (int32 ActiveIndex = 0; ActiveIndex < Plate.ActiveBoundaryTriangles.Num(); ++ActiveIndex)
+		{
+			if (!Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(ActiveIndex))
+			{
+				continue;
+			}
+			const int32 LocalTriangleId = Plate.ActiveBoundaryTriangles[ActiveIndex];
+			const double DistanceKm = Plate.ActiveBoundaryTriangleDistancesKm[ActiveIndex];
+			ActiveDistanceByPlateTriangle.Add(MakePlateTriangleKey(Plate.PlateId, LocalTriangleId), DistanceKm);
+		}
+	}
+
+	TArray<uint64> PairKeys;
+	RecordIndicesByPair.GetKeys(PairKeys);
+	PairKeys.Sort();
+
+	uint64 AuditHash = 1469598103934665603ull;
+	HashMixString(AuditHash, TEXT("CarrierLab-IIID2-collision-groups-v1"));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.EventCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.PlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ResetSerial + 1));
+	HashMixDouble(AuditHash, OutAudit.ThresholdKm);
+	HashMixString(AuditHash, OutAudit.SourceTerraneDetectionHash);
+
+	for (const uint64 PairKey : PairKeys)
+	{
+		TArray<int32>& RecordIndices = RecordIndicesByPair.FindChecked(PairKey);
+		RecordIndices.Sort([&TerraneAudit](const int32 A, const int32 B)
+		{
+			const FCarrierLabPhaseIIID1TerraneRecord& RecordA = TerraneAudit.Records[A];
+			const FCarrierLabPhaseIIID1TerraneRecord& RecordB = TerraneAudit.Records[B];
+			if (RecordA.RecordId != RecordB.RecordId)
+			{
+				return RecordA.RecordId < RecordB.RecordId;
+			}
+			if (RecordA.SourcePlateId != RecordB.SourcePlateId)
+			{
+				return RecordA.SourcePlateId < RecordB.SourcePlateId;
+			}
+			if (RecordA.SeedLocalTriangleId != RecordB.SeedLocalTriangleId)
+			{
+				return RecordA.SeedLocalTriangleId < RecordB.SeedLocalTriangleId;
+			}
+			return RecordA.EvidenceId < RecordB.EvidenceId;
+		});
+
+		FCarrierLabPhaseIIID2CollisionGroupRecord Group;
+		Group.GroupId = OutAudit.Groups.Num();
+		Group.PairKey = PairKey;
+		Group.ThresholdKm = OutAudit.ThresholdKm;
+		Group.CandidateRecordCount = RecordIndices.Num();
+
+		TArray<FString> TerraneHashes;
+		double SumDistanceKm = 0.0;
+		double SumSignedVelocity = 0.0;
+		uint64 GroupHash = 1469598103934665603ull;
+		HashMixString(GroupHash, TEXT("CarrierLab-IIID2-group-v1"));
+		HashMix(GroupHash, PairKey + 1ull);
+		HashMixDouble(GroupHash, Group.ThresholdKm);
+		HashMix(GroupHash, static_cast<uint64>(Group.CandidateRecordCount + 1));
+
+		for (const int32 RecordIndex : RecordIndices)
+		{
+			const FCarrierLabPhaseIIID1TerraneRecord& Record = TerraneAudit.Records[RecordIndex];
+			if (Group.PlateA == INDEX_NONE || Record.SourcePlateId < Group.PlateA)
+			{
+				Group.PlateA = Record.SourcePlateId;
+			}
+			if (Group.PlateA == Record.SourcePlateId)
+			{
+				Group.PlateB = Record.OtherPlateId;
+			}
+			if (Record.OtherPlateId != INDEX_NONE && (Group.PlateA == INDEX_NONE || Record.OtherPlateId < Group.PlateA))
+			{
+				Group.PlateB = Group.PlateA;
+				Group.PlateA = Record.OtherPlateId;
+			}
+			else if (Record.OtherPlateId != INDEX_NONE && (Group.PlateB == INDEX_NONE || Record.OtherPlateId > Group.PlateB))
+			{
+				Group.PlateB = Record.OtherPlateId;
+			}
+
+			TerraneHashes.AddUnique(Record.TerraneHash);
+			SumSignedVelocity += Record.SignedConvergenceVelocity;
+			Group.MaxSignedConvergenceVelocity = Group.ValidDistanceCount == 0
+				? Record.SignedConvergenceVelocity
+				: FMath::Max(Group.MaxSignedConvergenceVelocity, Record.SignedConvergenceVelocity);
+			Group.TotalAreaWeight += Record.AreaWeight;
+
+			int32 RecordValidDistanceCount = 0;
+			for (const int32 LocalTriangleId : Record.LocalTriangleIds)
+			{
+				const double* DistanceKmPtr = ActiveDistanceByPlateTriangle.Find(
+					MakePlateTriangleKey(Record.SourcePlateId, LocalTriangleId));
+				if (DistanceKmPtr == nullptr || !FMath::IsFinite(*DistanceKmPtr) || *DistanceKmPtr < 0.0)
+				{
+					continue;
+				}
+
+				++RecordValidDistanceCount;
+				++Group.ValidDistanceCount;
+				SumDistanceKm += *DistanceKmPtr;
+				if (*DistanceKmPtr > Group.MaxInterpenetrationKm)
+				{
+					Group.MaxInterpenetrationKm = *DistanceKmPtr;
+					Group.MaxDistanceRecordId = Record.RecordId;
+					Group.MaxDistanceEvidenceId = Record.EvidenceId;
+					Group.MaxDistanceSourcePlateId = Record.SourcePlateId;
+					Group.MaxDistanceOtherPlateId = Record.OtherPlateId;
+					Group.MaxDistanceLocalTriangleId = LocalTriangleId;
+				}
+			}
+			if (RecordValidDistanceCount == 0)
+			{
+				++Group.InvalidDistanceCount;
+			}
+
+			HashMix(GroupHash, static_cast<uint64>(Record.RecordId + 1));
+			HashMix(GroupHash, static_cast<uint64>(Record.SourcePlateId + 1));
+			HashMix(GroupHash, static_cast<uint64>(Record.OtherPlateId + 1));
+			HashMix(GroupHash, static_cast<uint64>(Record.SeedLocalTriangleId + 1));
+			HashMix(GroupHash, static_cast<uint64>(Record.EvidenceId + 1));
+			HashMixDouble(GroupHash, Record.SignedConvergenceVelocity);
+			HashMix(GroupHash, static_cast<uint64>(RecordValidDistanceCount + 1));
+			HashMixString(GroupHash, Record.TerraneHash);
+		}
+
+		TerraneHashes.Sort();
+		Group.UniqueTerraneHashCount = TerraneHashes.Num();
+		for (const FString& TerraneHash : TerraneHashes)
+		{
+			HashMixString(GroupHash, TerraneHash);
+		}
+
+		Group.MeanInterpenetrationKm = Group.ValidDistanceCount > 0
+			? SumDistanceKm / static_cast<double>(Group.ValidDistanceCount)
+			: 0.0;
+		Group.MeanSignedConvergenceVelocity = Group.CandidateRecordCount > 0
+			? SumSignedVelocity / static_cast<double>(Group.CandidateRecordCount)
+			: 0.0;
+		Group.bAccepted = Group.ValidDistanceCount > 0 && Group.MaxInterpenetrationKm >= OutAudit.ThresholdKm;
+		HashMix(GroupHash, static_cast<uint64>(Group.ValidDistanceCount + 1));
+		HashMix(GroupHash, static_cast<uint64>(Group.InvalidDistanceCount + 1));
+		HashMixDouble(GroupHash, Group.MaxInterpenetrationKm);
+		HashMixDouble(GroupHash, Group.MeanInterpenetrationKm);
+		HashMixDouble(GroupHash, Group.MeanSignedConvergenceVelocity);
+		HashMixDouble(GroupHash, Group.MaxSignedConvergenceVelocity);
+		HashMixDouble(GroupHash, Group.TotalAreaWeight);
+		HashMix(GroupHash, Group.bAccepted ? 1ull : 0ull);
+		Group.GroupHash = HashToString(GroupHash);
+
+		++OutAudit.GroupCount;
+		if (Group.bAccepted)
+		{
+			++OutAudit.AcceptedGroupCount;
+		}
+		else
+		{
+			++OutAudit.RejectedGroupCount;
+			if (Group.MaxInterpenetrationKm < OutAudit.ThresholdKm)
+			{
+				++OutAudit.SubThresholdGroupCount;
+			}
+		}
+		OutAudit.InvalidDistanceCount += Group.InvalidDistanceCount;
+		OutAudit.MaxInterpenetrationKm = FMath::Max(OutAudit.MaxInterpenetrationKm, Group.MaxInterpenetrationKm);
+		OutAudit.Groups.Add(Group);
+
+		HashMix(AuditHash, PairKey + 1ull);
+		HashMixString(AuditHash, Group.GroupHash);
+	}
+
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.GroupCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.AcceptedGroupCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.RejectedGroupCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.SubThresholdGroupCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.InvalidDistanceCount + 1));
+	HashMixDouble(AuditHash, OutAudit.MaxInterpenetrationKm);
+	OutAudit.GroupingHash = HashToString(AuditHash);
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())

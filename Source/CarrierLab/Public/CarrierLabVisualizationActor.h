@@ -954,6 +954,50 @@ struct FCarrierLabPhaseIIID1TerraneAudit
 	FString TerraneDetectionHash;
 };
 
+struct FCarrierLabPhaseIIID2CollisionGroupRecord
+{
+	int32 GroupId = INDEX_NONE;
+	uint64 PairKey = 0;
+	int32 PlateA = INDEX_NONE;
+	int32 PlateB = INDEX_NONE;
+	int32 CandidateRecordCount = 0;
+	int32 UniqueTerraneHashCount = 0;
+	int32 ValidDistanceCount = 0;
+	int32 InvalidDistanceCount = 0;
+	int32 MaxDistanceRecordId = INDEX_NONE;
+	int32 MaxDistanceEvidenceId = INDEX_NONE;
+	int32 MaxDistanceSourcePlateId = INDEX_NONE;
+	int32 MaxDistanceOtherPlateId = INDEX_NONE;
+	int32 MaxDistanceLocalTriangleId = INDEX_NONE;
+	double MaxInterpenetrationKm = 0.0;
+	double MeanInterpenetrationKm = 0.0;
+	double MeanSignedConvergenceVelocity = 0.0;
+	double MaxSignedConvergenceVelocity = 0.0;
+	double ThresholdKm = 300.0;
+	double TotalAreaWeight = 0.0;
+	bool bAccepted = false;
+	FString GroupHash;
+};
+
+struct FCarrierLabPhaseIIID2CollisionGroupingAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	double ThresholdKm = 300.0;
+	int32 TerraneRecordCount = 0;
+	int32 GroupCount = 0;
+	int32 AcceptedGroupCount = 0;
+	int32 RejectedGroupCount = 0;
+	int32 SubThresholdGroupCount = 0;
+	int32 InvalidDistanceCount = 0;
+	double MaxInterpenetrationKm = 0.0;
+	FString SourceTerraneDetectionHash;
+	TArray<FCarrierLabPhaseIIID2CollisionGroupRecord> Groups;
+	FString GroupingHash;
+};
+
 struct FCarrierLabPhaseIIIProcessOverlayTriangle
 {
 	FVector3d A = FVector3d::ZeroVector;
@@ -1200,6 +1244,9 @@ public:
 	bool GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
 	bool GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const;
 	bool DetectPhaseIIID1ConnectedTerranes(FCarrierLabPhaseIIID1TerraneAudit& OutAudit) const;
+	bool DetectPhaseIIID2CollisionGroups(
+		FCarrierLabPhaseIIID2CollisionGroupingAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0) const;
 	bool GetPhaseIIIProcessOverlayTriangles(
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles,
