@@ -1004,6 +1004,58 @@ struct FCarrierLabPhaseIIID2CollisionGroupingAudit
 	FString GroupingHash;
 };
 
+struct FCarrierLabPhaseIIID3DestinationMassRecord
+{
+	int32 RecordId = INDEX_NONE;
+	int32 GroupId = INDEX_NONE;
+	uint64 PairKey = 0;
+	int32 SourceRecordId = INDEX_NONE;
+	int32 SourcePlateId = INDEX_NONE;
+	int32 DestinationPlateId = INDEX_NONE;
+	int32 SourceSeedLocalTriangleId = INDEX_NONE;
+	int32 DestinationSeedLocalTriangleId = INDEX_NONE;
+	int32 EvidenceId = INDEX_NONE;
+	double SourceTerraneAreaWeight = 0.0;
+	double RequiredDestinationAreaWeight = 0.0;
+	double DestinationContinentalAreaWeight = 0.0;
+	double DestinationMassRatio = 0.0;
+	double ThresholdRatio = 0.5;
+	int32 SourceTerraneTriangleCount = 0;
+	int32 DestinationTriangleCount = 0;
+	int32 DestinationContinentalTriangleCount = 0;
+	int32 DestinationInnerSeaTriangleCount = 0;
+	bool bInterpenetrationAccepted = false;
+	bool bDestinationSeedValid = false;
+	bool bMassAccepted = false;
+	FString SourceTerraneHash;
+	FString DestinationMassHash;
+};
+
+struct FCarrierLabPhaseIIID3DestinationMassAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	double InterpenetrationThresholdKm = 300.0;
+	double DestinationMassThresholdRatio = 0.5;
+	int32 SourceTerraneRecordCount = 0;
+	int32 SourceGroupCount = 0;
+	int32 InterpenetrationAcceptedGroupCount = 0;
+	int32 TestedMassRecordCount = 0;
+	int32 AcceptedMassRecordCount = 0;
+	int32 RejectedMassRecordCount = 0;
+	int32 InsufficientDestinationMassCount = 0;
+	int32 MissingDestinationSeedCount = 0;
+	int32 NonAcceptedGroupCount = 0;
+	double MaxDestinationMassRatio = 0.0;
+	double MinAcceptedDestinationMassRatio = 0.0;
+	double MinRejectedDestinationMassRatio = 0.0;
+	FString SourceGroupingHash;
+	TArray<FCarrierLabPhaseIIID3DestinationMassRecord> Records;
+	FString DestinationMassHash;
+};
+
 struct FCarrierLabPhaseIIIProcessOverlayTriangle
 {
 	FVector3d A = FVector3d::ZeroVector;
@@ -1254,11 +1306,21 @@ public:
 	bool DetectPhaseIIID2CollisionGroups(
 		FCarrierLabPhaseIIID2CollisionGroupingAudit& OutAudit,
 		double InterpenetrationThresholdKm = 300.0) const;
+	bool DetectPhaseIIID3DestinationMass(
+		FCarrierLabPhaseIIID3DestinationMassAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0,
+		double DestinationMassThresholdRatio = 0.5) const;
 	bool GetPhaseIIIProcessOverlayTriangles(
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles,
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutPlateBoundaryTriangles) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
+	bool SetPhaseIIID3DestinationPatchForTest(
+		int32 SourcePlateId,
+		int32 DestinationPlateId,
+		int32 NeighborDepth,
+		int32& OutSeedLocalTriangleId,
+		int32& OutPatchTriangleCount);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
 	bool SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit);

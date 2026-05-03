@@ -854,6 +854,18 @@ namespace
 		return OutComponent.LocalTriangleIds.Num() > 0;
 	}
 
+	double ComputePhaseIIIDComponentAreaWeight(
+		const CarrierLab::FCarrierPlate& Plate,
+		const FPhaseIIID1TerraneComponent& Component)
+	{
+		double AreaWeight = 0.0;
+		for (const int32 LocalTriangleId : Component.LocalTriangleIds)
+		{
+			AreaWeight += ComputePlateLocalTriangleAreaWeight(Plate, LocalTriangleId);
+		}
+		return AreaWeight;
+	}
+
 	bool IntersectRayWithTriangle(
 		const FVector3d& RayDirection,
 		const FVector3d& A,
@@ -4894,6 +4906,240 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID2CollisionGroups(
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::DetectPhaseIIID3DestinationMass(
+	FCarrierLabPhaseIIID3DestinationMassAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID3DestinationMassAudit();
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
+	{
+		return false;
+	}
+
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	if (!DetectPhaseIIID2CollisionGroups(GroupingAudit, InterpenetrationThresholdKm))
+	{
+		return false;
+	}
+
+	OutAudit.Step = TerraneAudit.Step;
+	OutAudit.EventCount = TerraneAudit.EventCount;
+	OutAudit.PlateCount = TerraneAudit.PlateCount;
+	OutAudit.ResetSerial = TerraneAudit.ResetSerial;
+	OutAudit.InterpenetrationThresholdKm = InterpenetrationThresholdKm;
+	OutAudit.DestinationMassThresholdRatio = DestinationMassThresholdRatio;
+	OutAudit.SourceTerraneRecordCount = TerraneAudit.TerraneRecordCount;
+	OutAudit.SourceGroupCount = GroupingAudit.GroupCount;
+	OutAudit.InterpenetrationAcceptedGroupCount = GroupingAudit.AcceptedGroupCount;
+	OutAudit.SourceGroupingHash = GroupingAudit.GroupingHash;
+
+	TMap<int32, const CarrierLab::FConvergenceSubductionMatrixEvidence*> EvidenceById;
+	for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : State.ConvergenceSubductionMatrixEvidence)
+	{
+		EvidenceById.Add(Evidence.EvidenceId, &Evidence);
+	}
+
+	TMap<uint64, TArray<int32>> TerraneRecordIndicesByPair;
+	for (int32 RecordIndex = 0; RecordIndex < TerraneAudit.Records.Num(); ++RecordIndex)
+	{
+		const FCarrierLabPhaseIIID1TerraneRecord& Record = TerraneAudit.Records[RecordIndex];
+		TerraneRecordIndicesByPair.FindOrAdd(Record.PairKey).Add(RecordIndex);
+	}
+
+	TArray<FCarrierLabPhaseIIID2CollisionGroupRecord> SortedGroups = GroupingAudit.Groups;
+	SortedGroups.Sort([](
+		const FCarrierLabPhaseIIID2CollisionGroupRecord& A,
+		const FCarrierLabPhaseIIID2CollisionGroupRecord& B)
+	{
+		if (A.PairKey != B.PairKey)
+		{
+			return A.PairKey < B.PairKey;
+		}
+		return A.GroupId < B.GroupId;
+	});
+
+	uint64 AuditHash = 1469598103934665603ull;
+	HashMixString(AuditHash, TEXT("CarrierLab-IIID3-destination-mass-v1"));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.EventCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.PlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ResetSerial + 1));
+	HashMixDouble(AuditHash, OutAudit.InterpenetrationThresholdKm);
+	HashMixDouble(AuditHash, OutAudit.DestinationMassThresholdRatio);
+	HashMixString(AuditHash, OutAudit.SourceGroupingHash);
+
+	double MinAcceptedRatio = TNumericLimits<double>::Max();
+	double MinRejectedRatio = TNumericLimits<double>::Max();
+	for (const FCarrierLabPhaseIIID2CollisionGroupRecord& Group : SortedGroups)
+	{
+		HashMix(AuditHash, Group.PairKey + 1ull);
+		HashMix(AuditHash, static_cast<uint64>(Group.GroupId + 1));
+		HashMix(AuditHash, Group.bAccepted ? 1ull : 0ull);
+		HashMixString(AuditHash, Group.GroupHash);
+		if (!Group.bAccepted)
+		{
+			++OutAudit.NonAcceptedGroupCount;
+			continue;
+		}
+
+		TArray<int32>* RecordIndices = TerraneRecordIndicesByPair.Find(Group.PairKey);
+		if (RecordIndices == nullptr)
+		{
+			continue;
+		}
+		RecordIndices->Sort([&TerraneAudit](const int32 A, const int32 B)
+		{
+			const FCarrierLabPhaseIIID1TerraneRecord& RecordA = TerraneAudit.Records[A];
+			const FCarrierLabPhaseIIID1TerraneRecord& RecordB = TerraneAudit.Records[B];
+			if (RecordA.SourcePlateId != RecordB.SourcePlateId)
+			{
+				return RecordA.SourcePlateId < RecordB.SourcePlateId;
+			}
+			if (RecordA.OtherPlateId != RecordB.OtherPlateId)
+			{
+				return RecordA.OtherPlateId < RecordB.OtherPlateId;
+			}
+			if (RecordA.RecordId != RecordB.RecordId)
+			{
+				return RecordA.RecordId < RecordB.RecordId;
+			}
+			return RecordA.EvidenceId < RecordB.EvidenceId;
+		});
+
+		for (const int32 RecordIndex : *RecordIndices)
+		{
+			if (!TerraneAudit.Records.IsValidIndex(RecordIndex))
+			{
+				continue;
+			}
+			const FCarrierLabPhaseIIID1TerraneRecord& SourceRecord = TerraneAudit.Records[RecordIndex];
+
+			FCarrierLabPhaseIIID3DestinationMassRecord& MassRecord = OutAudit.Records.AddDefaulted_GetRef();
+			MassRecord.RecordId = OutAudit.Records.Num() - 1;
+			MassRecord.GroupId = Group.GroupId;
+			MassRecord.PairKey = Group.PairKey;
+			MassRecord.SourceRecordId = SourceRecord.RecordId;
+			MassRecord.SourcePlateId = SourceRecord.SourcePlateId;
+			MassRecord.DestinationPlateId = SourceRecord.OtherPlateId;
+			MassRecord.SourceSeedLocalTriangleId = SourceRecord.SeedLocalTriangleId;
+			MassRecord.EvidenceId = SourceRecord.EvidenceId;
+			MassRecord.SourceTerraneAreaWeight = SourceRecord.AreaWeight;
+			MassRecord.SourceTerraneTriangleCount = SourceRecord.TriangleCount;
+			MassRecord.RequiredDestinationAreaWeight = SourceRecord.AreaWeight * DestinationMassThresholdRatio;
+			MassRecord.ThresholdRatio = DestinationMassThresholdRatio;
+			MassRecord.bInterpenetrationAccepted = true;
+			MassRecord.SourceTerraneHash = SourceRecord.TerraneHash;
+
+			const CarrierLab::FConvergenceSubductionMatrixEvidence* Evidence = EvidenceById.FindRef(SourceRecord.EvidenceId);
+			const bool bEvidenceMatches =
+				Evidence != nullptr &&
+				Evidence->PlateId == SourceRecord.SourcePlateId &&
+				Evidence->OtherPlateId == SourceRecord.OtherPlateId &&
+				Evidence->LocalTriangleId == SourceRecord.SeedLocalTriangleId;
+			if (bEvidenceMatches)
+			{
+				MassRecord.DestinationSeedLocalTriangleId = Evidence->OtherLocalTriangleId;
+			}
+
+			FPhaseIIID1TerraneComponent DestinationComponent;
+			if (bEvidenceMatches &&
+				State.Plates.IsValidIndex(MassRecord.DestinationPlateId) &&
+				BuildPhaseIIID1TerraneComponent(
+					State.Plates[MassRecord.DestinationPlateId],
+					MassRecord.DestinationSeedLocalTriangleId,
+					DestinationComponent))
+			{
+				const CarrierLab::FCarrierPlate& DestinationPlate = State.Plates[MassRecord.DestinationPlateId];
+				MassRecord.bDestinationSeedValid = true;
+				MassRecord.DestinationTriangleCount = DestinationComponent.LocalTriangleIds.Num();
+				MassRecord.DestinationContinentalTriangleCount = DestinationComponent.ContinentalTriangleCount;
+				MassRecord.DestinationInnerSeaTriangleCount = DestinationComponent.InnerSeaTriangleCount;
+				MassRecord.DestinationContinentalAreaWeight = ComputePhaseIIIDComponentAreaWeight(DestinationPlate, DestinationComponent);
+			}
+			else
+			{
+				++OutAudit.MissingDestinationSeedCount;
+			}
+
+			MassRecord.DestinationMassRatio = MassRecord.SourceTerraneAreaWeight > UE_DOUBLE_SMALL_NUMBER
+				? MassRecord.DestinationContinentalAreaWeight / MassRecord.SourceTerraneAreaWeight
+				: 0.0;
+			MassRecord.bMassAccepted =
+				MassRecord.bDestinationSeedValid &&
+				MassRecord.SourceTerraneAreaWeight > UE_DOUBLE_SMALL_NUMBER &&
+				MassRecord.DestinationContinentalAreaWeight + 1.0e-12 >= MassRecord.RequiredDestinationAreaWeight;
+			if (MassRecord.bMassAccepted)
+			{
+				++OutAudit.AcceptedMassRecordCount;
+				MinAcceptedRatio = FMath::Min(MinAcceptedRatio, MassRecord.DestinationMassRatio);
+			}
+			else
+			{
+				++OutAudit.RejectedMassRecordCount;
+				MinRejectedRatio = FMath::Min(MinRejectedRatio, MassRecord.DestinationMassRatio);
+				if (MassRecord.bDestinationSeedValid)
+				{
+					++OutAudit.InsufficientDestinationMassCount;
+				}
+			}
+
+			++OutAudit.TestedMassRecordCount;
+			OutAudit.MaxDestinationMassRatio = FMath::Max(OutAudit.MaxDestinationMassRatio, MassRecord.DestinationMassRatio);
+
+			uint64 RecordHash = 1469598103934665603ull;
+			HashMixString(RecordHash, TEXT("CarrierLab-IIID3-destination-mass-record-v1"));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.RecordId + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.GroupId + 1));
+			HashMix(RecordHash, MassRecord.PairKey + 1ull);
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.SourceRecordId + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.SourcePlateId + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.DestinationPlateId + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.SourceSeedLocalTriangleId + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.DestinationSeedLocalTriangleId + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.EvidenceId + 1));
+			HashMixDouble(RecordHash, MassRecord.SourceTerraneAreaWeight);
+			HashMixDouble(RecordHash, MassRecord.RequiredDestinationAreaWeight);
+			HashMixDouble(RecordHash, MassRecord.DestinationContinentalAreaWeight);
+			HashMixDouble(RecordHash, MassRecord.DestinationMassRatio);
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.SourceTerraneTriangleCount + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.DestinationTriangleCount + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.DestinationContinentalTriangleCount + 1));
+			HashMix(RecordHash, static_cast<uint64>(MassRecord.DestinationInnerSeaTriangleCount + 1));
+			HashMix(RecordHash, MassRecord.bDestinationSeedValid ? 1ull : 0ull);
+			HashMix(RecordHash, MassRecord.bMassAccepted ? 1ull : 0ull);
+			HashMixString(RecordHash, MassRecord.SourceTerraneHash);
+			MassRecord.DestinationMassHash = HashToString(RecordHash);
+
+			HashMixString(AuditHash, MassRecord.DestinationMassHash);
+		}
+	}
+
+	OutAudit.MinAcceptedDestinationMassRatio =
+		OutAudit.AcceptedMassRecordCount > 0 && MinAcceptedRatio < TNumericLimits<double>::Max()
+			? MinAcceptedRatio
+			: 0.0;
+	OutAudit.MinRejectedDestinationMassRatio =
+		OutAudit.RejectedMassRecordCount > 0 && MinRejectedRatio < TNumericLimits<double>::Max()
+			? MinRejectedRatio
+			: 0.0;
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.SourceTerraneRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.SourceGroupCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.InterpenetrationAcceptedGroupCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TestedMassRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.AcceptedMassRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.RejectedMassRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.InsufficientDestinationMassCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.MissingDestinationSeedCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.NonAcceptedGroupCount + 1));
+	HashMixDouble(AuditHash, OutAudit.MaxDestinationMassRatio);
+	HashMixDouble(AuditHash, OutAudit.MinAcceptedDestinationMassRatio);
+	HashMixDouble(AuditHash, OutAudit.MinRejectedDestinationMassRatio);
+	OutAudit.DestinationMassHash = HashToString(AuditHash);
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 PlateId, const bool bContinental)
 {
 	if (!bInitialized && !InitializeCarrier())
@@ -4923,6 +5169,121 @@ bool ACarrierLabVisualizationActor::SetPlateContinentalForTest(const int32 Plate
 	}
 	ProjectCurrentCarrier();
 	return true;
+}
+
+bool ACarrierLabVisualizationActor::SetPhaseIIID3DestinationPatchForTest(
+	const int32 SourcePlateId,
+	const int32 DestinationPlateId,
+	const int32 NeighborDepth,
+	int32& OutSeedLocalTriangleId,
+	int32& OutPatchTriangleCount)
+{
+	OutSeedLocalTriangleId = INDEX_NONE;
+	OutPatchTriangleCount = 0;
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+	if (!State.Plates.IsValidIndex(SourcePlateId) ||
+		!State.Plates.IsValidIndex(DestinationPlateId) ||
+		SourcePlateId == DestinationPlateId)
+	{
+		return false;
+	}
+
+	TArray<CarrierLab::FConvergenceSubductionMatrixEvidence> EvidenceRecords = State.ConvergenceSubductionMatrixEvidence;
+	EvidenceRecords.Sort([](
+		const CarrierLab::FConvergenceSubductionMatrixEvidence& A,
+		const CarrierLab::FConvergenceSubductionMatrixEvidence& B)
+	{
+		if (A.EvidenceId != B.EvidenceId)
+		{
+			return A.EvidenceId < B.EvidenceId;
+		}
+		if (A.PlateId != B.PlateId)
+		{
+			return A.PlateId < B.PlateId;
+		}
+		return A.LocalTriangleId < B.LocalTriangleId;
+	});
+
+	for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : EvidenceRecords)
+	{
+		if (Evidence.bAccepted &&
+			Evidence.PlateId == SourcePlateId &&
+			Evidence.OtherPlateId == DestinationPlateId &&
+			State.Plates[DestinationPlateId].LocalTriangles.IsValidIndex(Evidence.OtherLocalTriangleId))
+		{
+			OutSeedLocalTriangleId = Evidence.OtherLocalTriangleId;
+			break;
+		}
+	}
+	if (OutSeedLocalTriangleId == INDEX_NONE)
+	{
+		return false;
+	}
+
+	CarrierLab::FCarrierPlate& Plate = State.Plates[DestinationPlateId];
+	TSet<int32> PatchTriangles;
+	TArray<int32> Frontier;
+	PatchTriangles.Add(OutSeedLocalTriangleId);
+	Frontier.Add(OutSeedLocalTriangleId);
+
+	const int32 ClampedDepth = FMath::Clamp(NeighborDepth, 0, 64);
+	for (int32 Depth = 0; Depth < ClampedDepth; ++Depth)
+	{
+		TArray<int32> NextFrontier;
+		for (const int32 LocalTriangleId : Frontier)
+		{
+			TArray<int32> Neighbors;
+			GetPlateLocalTriangleNeighbors(Plate, LocalTriangleId, Neighbors);
+			for (const int32 NeighborId : Neighbors)
+			{
+				if (!PatchTriangles.Contains(NeighborId))
+				{
+					PatchTriangles.Add(NeighborId);
+					NextFrontier.Add(NeighborId);
+				}
+			}
+		}
+		Frontier = MoveTemp(NextFrontier);
+		if (Frontier.IsEmpty())
+		{
+			break;
+		}
+	}
+
+	TSet<int32> ContinentalVertexIds;
+	for (const int32 LocalTriangleId : PatchTriangles)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			continue;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		ContinentalVertexIds.Add(Triangle.A);
+		ContinentalVertexIds.Add(Triangle.B);
+		ContinentalVertexIds.Add(Triangle.C);
+	}
+
+	Plate.bContinental = true;
+	for (int32 LocalVertexId = 0; LocalVertexId < Plate.Vertices.Num(); ++LocalVertexId)
+	{
+		CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[LocalVertexId];
+		const bool bPatchVertex = ContinentalVertexIds.Contains(LocalVertexId);
+		Vertex.ContinentalFraction = bPatchVertex ? 1.0 : 0.0;
+		Vertex.bContinental = bPatchVertex;
+		if (State.Samples.IsValidIndex(Vertex.GlobalSampleId) &&
+			State.Samples[Vertex.GlobalSampleId].PlateId == DestinationPlateId)
+		{
+			State.Samples[Vertex.GlobalSampleId].ContinentalFraction = Vertex.ContinentalFraction;
+			State.Samples[Vertex.GlobalSampleId].bContinental = bPatchVertex;
+		}
+	}
+
+	OutPatchTriangleCount = PatchTriangles.Num();
+	ProjectCurrentCarrier();
+	return OutPatchTriangleCount > 0;
 }
 
 bool ACarrierLabVisualizationActor::SetPlateElevationForTest(const int32 PlateId, const double ElevationKm)
