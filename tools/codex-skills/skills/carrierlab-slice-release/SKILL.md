@@ -22,14 +22,17 @@ The helper only prints commands and evidence slots. It does not build, stage, co
 3. Run `git diff --check`.
 4. Run forbidden-token scan on touched carrier/process source:
    `Recover|Repair|Heal|Backfill|Resync|Promote|Reclassify|hysteresis|retention|anchoring`
-5. Build with `$carrierlab-build` if C++ changed.
-6. Run the targeted commandlet/test required by the slice.
-7. For IIIC+ convergence-dependent slices, confirm the report includes an explicit IIIB independent-signature regression row (`bf8818a26ed7b1dc` unless a consolidation checkpoint updates it), and inspect the commandlet gate to verify it compares a recomputed independent signature against that expected token.
-8. Read the generated checkpoint report and metrics before claiming pass.
-9. Stage only intended paths. Never use `git add .` in a dirty worktree.
-10. Run `git diff --cached --check`.
-11. Commit with a narrow message.
-12. Push and verify with `$git-push-verify`.
+5. For remesh/resampling/IIIE changes, run `$carrierlab-remesh-guard`.
+6. For docs/reports, run `$carrierlab-claim-audit -ChangedOnly` or perform the same stale-claim review manually.
+7. For commandlet gate changes, run `$carrierlab-commandlet-gate-review` and manually verify final pass/fail includes every claimed gate.
+8. Build with `$carrierlab-build` if C++ changed.
+9. Run the targeted commandlet/test required by the slice.
+10. For IIIC+ convergence-dependent slices, confirm the report includes an explicit IIIB independent-signature regression row (`bf8818a26ed7b1dc` unless a consolidation checkpoint updates it), and inspect the commandlet gate to verify it compares a recomputed independent signature against that expected token.
+11. Read the generated checkpoint report and metrics before claiming pass.
+12. Stage only intended paths. Never use `git add .` in a dirty worktree.
+13. Run `git diff --cached --check`.
+14. Commit with a narrow message.
+15. Push and verify with `$git-push-verify`.
 
 ## Windows Git Staging
 
