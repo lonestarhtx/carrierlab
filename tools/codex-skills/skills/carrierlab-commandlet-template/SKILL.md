@@ -21,7 +21,8 @@ Every new slice commandlet should have:
 - one `Main` that returns `0` only when all gates pass.
 - replay A/B for same-seed determinism when behavior is deterministic.
 - a bypass/off gate for opt-in mutation slices.
-- for IIIC+ slices touching convergence tracking, an explicit IIIB independent-signature regression gate. Current expected token: `4df40569f5e51e1a`.
+- for IIIC+ slices touching convergence tracking, an explicit IIIB independent-signature regression gate. Current expected token: `bf8818a26ed7b1dc`.
+- the independent-signature gate must compare a recomputed independent signature against the expected token; a report row that only mentions the token or checks closure-hash self-consistency is not sufficient.
 - negative controls relevant to the slice.
 - independent oracle logic for formulas and expected state.
 - JSONL metrics under `Saved/CarrierLab/.../metrics.jsonl`.
@@ -33,7 +34,7 @@ Every new slice commandlet should have:
 - Do not compare implementation output only against itself.
 - Do not make a diagnostic hash from one aggregate reused everywhere.
 - Do not hide a failed fixture by deleting it; keep it as a diagnostic if it reveals real geometry.
-- Do not omit the IIIB independent-signature regression from IIIC+ reports just because the slice also has local hash gates.
+- Do not omit the IIIB independent-signature regression from IIIC+ reports just because the slice also has local hash gates, and do not count the row as passing unless code performs the computed-vs-expected comparison.
 - Do not add resampling/material mutation paths unless the slice contract says so.
 - Do not stage generated `Saved/` artifacts unless the user explicitly asks.
 

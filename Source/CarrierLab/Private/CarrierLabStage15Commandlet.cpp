@@ -158,6 +158,7 @@ namespace
 		int32 TieBreakSeed = 0;
 		int32 GapFillCount = 0;
 		int32 NonSeparatingGapFillCount = 0;
+		int32 NoBoundaryPairFallbackCount = 0;
 		int32 PolicyMultiHitCount = 0;
 		int32 RawMissBefore = 0;
 		int32 RawMultiBefore = 0;
@@ -1148,6 +1149,7 @@ namespace
 				}
 				else
 				{
+					++OutEvent.NoBoundaryPairFallbackCount;
 					NewPlateIds[Sample.Id] = Sample.PlateId;
 					NewFractions[Sample.Id] = Sample.ContinentalFraction;
 				}
@@ -1218,6 +1220,8 @@ namespace
 			HashMix(Hash, static_cast<uint64>(Ch));
 		}
 		HashMix(Hash, static_cast<uint64>(OutEvent.GapFillCount));
+		HashMix(Hash, static_cast<uint64>(OutEvent.NonSeparatingGapFillCount));
+		HashMix(Hash, static_cast<uint64>(OutEvent.NoBoundaryPairFallbackCount));
 		HashMix(Hash, static_cast<uint64>(OutEvent.PolicyMultiHitCount));
 		HashMixDouble(Hash, OutEvent.AuthoritativeCAFBefore);
 		HashMixDouble(Hash, OutEvent.AuthoritativeCAFAfter);
@@ -1348,6 +1352,8 @@ namespace
 			HashMix(Hash, static_cast<uint64>(Event.EventId));
 			HashMix(Hash, static_cast<uint64>(Event.Step));
 			HashMix(Hash, static_cast<uint64>(Event.GapFillCount));
+			HashMix(Hash, static_cast<uint64>(Event.NonSeparatingGapFillCount));
+			HashMix(Hash, static_cast<uint64>(Event.NoBoundaryPairFallbackCount));
 			HashMix(Hash, static_cast<uint64>(Event.PolicyMultiHitCount));
 			HashMixDouble(Hash, Event.AuthoritativeCAFAfter);
 			HashMixDouble(Hash, Event.ProjectedCAFAfter);
@@ -1507,7 +1513,7 @@ namespace
 	FString EventJson(const FStage15EventRecord& Event)
 	{
 		return FString::Printf(
-			TEXT("{\"scenario\":%s,\"multi_hit_policy\":%s,\"tie_break_seed\":%d,\"resolution\":%d,\"event_id\":%d,\"step\":%d,\"gap_fill_count\":%d,\"non_separating_gap_fill_count\":%d,\"policy_multi_hit_count\":%d,\"raw_miss_before\":%d,\"raw_multi_before\":%d,\"raw_miss_after\":%d,\"raw_multi_after\":%d,\"non_boundary_multi_after\":%d,\"authoritative_caf_before\":%.12f,\"authoritative_caf_after\":%.12f,\"projected_caf_before\":%.12f,\"projected_caf_after\":%.12f,\"max_plate_area_delta_percent\":%.6f,\"max_plate_area_delta_plate_id\":%d,\"plate_area_delta_percent\":%s,\"event_hash\":%s}"),
+			TEXT("{\"scenario\":%s,\"multi_hit_policy\":%s,\"tie_break_seed\":%d,\"resolution\":%d,\"event_id\":%d,\"step\":%d,\"gap_fill_count\":%d,\"non_separating_gap_fill_count\":%d,\"no_boundary_pair_fallback_count\":%d,\"policy_multi_hit_count\":%d,\"raw_miss_before\":%d,\"raw_multi_before\":%d,\"raw_miss_after\":%d,\"raw_multi_after\":%d,\"non_boundary_multi_after\":%d,\"authoritative_caf_before\":%.12f,\"authoritative_caf_after\":%.12f,\"projected_caf_before\":%.12f,\"projected_caf_after\":%.12f,\"max_plate_area_delta_percent\":%.6f,\"max_plate_area_delta_plate_id\":%d,\"plate_area_delta_percent\":%s,\"event_hash\":%s}"),
 			*JsonString(Event.Scenario),
 			*JsonString(Event.MultiHitPolicy),
 			Event.TieBreakSeed,
@@ -1516,6 +1522,7 @@ namespace
 			Event.Step,
 			Event.GapFillCount,
 			Event.NonSeparatingGapFillCount,
+			Event.NoBoundaryPairFallbackCount,
 			Event.PolicyMultiHitCount,
 			Event.RawMissBefore,
 			Event.RawMultiBefore,
@@ -1624,6 +1631,7 @@ namespace
 			FMath::Abs(Event.ProjectedCAFAfter - Event.AuthoritativeCAFAfter) <= 0.05 * FMath::Max(Event.AuthoritativeCAFAfter, UE_DOUBLE_SMALL_NUMBER) &&
 			MissRateAfter < 0.02 &&
 			NonBoundaryMultiRateAfter < 0.02 &&
+			Event.NoBoundaryPairFallbackCount == 0 &&
 			Event.MaxPlateAreaDeltaPercent < 5.0;
 	}
 
@@ -1724,7 +1732,7 @@ namespace
 		}
 
 		Report += TEXT("\n## Resampling Events\n\n");
-		Report += TEXT("| Scenario | Policy | Seed | Resolution | Event | Step | Gap fills | Non-separating gaps | Policy multi | Miss before/after | Raw multi before/after | Non-boundary multi after | Auth CAF before/after | Proj CAF before/after | Max plate delta % | Gate |\n");
+		Report += TEXT("| Scenario | Policy | Seed | Resolution | Event | Step | Gap fills | Non-separating gaps | No-boundary fallback | Policy multi | Miss before/after | Raw multi before/after | Non-boundary multi after | Auth CAF before/after | Proj CAF before/after | Max plate delta % | Gate |\n");
 		Report += TEXT("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		bool bEventsPass = true;
 		for (const FStage15RunResult& Result : Results)
@@ -1734,7 +1742,7 @@ namespace
 				const bool bGate = GateEvent(Result.Config, Event);
 				bEventsPass = bEventsPass && bGate;
 				Report += FString::Printf(
-					TEXT("| %s | %s | %d | %d | %d | %d | %d | %d | %d | %d/%d | %d/%d | %d | %.6f/%.6f | %.6f/%.6f | %.3f (plate %d) | %s |\n"),
+					TEXT("| %s | %s | %d | %d | %d | %d | %d | %d | %d | %d | %d/%d | %d/%d | %d | %.6f/%.6f | %.6f/%.6f | %.3f (plate %d) | %s |\n"),
 					*Event.Scenario,
 					*Event.MultiHitPolicy,
 					Event.TieBreakSeed,
@@ -1743,6 +1751,7 @@ namespace
 					Event.Step,
 					Event.GapFillCount,
 					Event.NonSeparatingGapFillCount,
+					Event.NoBoundaryPairFallbackCount,
 					Event.PolicyMultiHitCount,
 					Event.RawMissBefore,
 					Event.RawMissAfter,
@@ -1814,6 +1823,9 @@ namespace
 
 		Report += TEXT("## Replay Artifacts\n\n");
 		Report += TEXT("`events.jsonl` includes per-event policy, seed, pre/post CAF, miss/multi counts, and per-plate area-delta arrays. `gap_fills.jsonl` has one row per gap-fill sample with q1 plate id, q2 plate id, q1/q2/fill continental fractions, signed relative velocity, and separating flag. Event hashes include policy, seed, per-plate area deltas, and gap-fill rows in append order.\n\n");
+
+		Report += TEXT("## Post-Audit Hardening Note\n\n");
+		Report += TEXT("The Stage 1.5 resampling path now counts `no_boundary_pair_fallback_count` whenever a zero-hit sample cannot find two distinct q1/q2 boundary plates. Event hashes include this count, and event gates require it to remain zero. A nonzero value is a stop-condition finding because the fixed global sample would otherwise be retaining carrier authority by inertia.\n\n");
 
 		Report += TEXT("## Negative Controls\n\n");
 		Report += TEXT("Controls included in this run: zero-motion with resampling enabled, single-plate with resampling enabled, forced divergence, forced convergence, all-continental, and ocean-only. The step loop has one guarded enable+cadence call site; `ApplyResamplingEventForTest` is reserved for direct seeded event calls and uses the same internal helper as the production path.\n\n");

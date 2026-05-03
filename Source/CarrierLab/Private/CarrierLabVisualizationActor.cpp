@@ -2496,6 +2496,28 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 					INDEX_NONE,
 					INDEX_NONE);
 			}
+			else
+			{
+				++OutMetrics.NoBoundaryPairMissCount;
+				FCarrierLabPhaseIIFilterDecisionRecord& Decision = OutDecisions.AddDefaulted_GetRef();
+				Decision.DecisionId = OutDecisions.Num() - 1;
+				Decision.EventId = OutMetrics.EventId;
+				Decision.Step = OutMetrics.Step;
+				Decision.SampleId = Sample.Id;
+				Decision.RawCandidateCount = Candidates.Num();
+				Decision.RawPlateCount = RawPlateCount;
+				Decision.DecisionClass = ECarrierLabPhaseIIFilterDecisionClass::FilterExhausted;
+				SetMaterialClass(
+					Sample.Id,
+					ECarrierLabPhaseIIMaterialEventClass::FilterExhaustedUnknown,
+					ECarrierLabPhaseIIFilterDecisionClass::FilterExhausted,
+					RawPlateCount,
+					0,
+					false,
+					false,
+					INDEX_NONE,
+					INDEX_NONE);
+			}
 			continue;
 		}
 
@@ -2686,6 +2708,11 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	}
 	OutMetrics.FilteredSampleCount = SamplesWithFilteredCandidates.Num();
 	OutMetrics.FilterSeconds = FPlatformTime::Seconds() - FilterStartSeconds;
+
+	ensureMsgf(
+		OutMetrics.NoBoundaryPairMissCount == 0,
+		TEXT("CarrierLab filtered resampling hit %d no-boundary-pair misses; this path is a retention hazard and must remain gated."),
+		OutMetrics.NoBoundaryPairMissCount);
 
 	if (OutMaterialRecords != nullptr || OutMaterialMetrics != nullptr)
 	{
@@ -3001,6 +3028,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	CurrentMetrics.EventCount = EventCount;
 	CurrentMetrics.LastGapFillCount = OutMetrics.GapFillCount;
 	CurrentMetrics.LastNonSeparatingGapFillCount = OutMetrics.NonSeparatingGapFillCount;
+	CurrentMetrics.LastNoBoundaryPairMissCount = OutMetrics.NoBoundaryPairMissCount;
 	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - EventStartSeconds;
 	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
 
@@ -3017,6 +3045,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIResamplingFilterEvent(
 	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.FilteredCandidateCount + 1));
 	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.UnresolvedMultiHitSampleCount + 1));
 	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.FilterExhaustedSampleCount + 1));
+	HashMix(DecisionHash, static_cast<uint64>(OutMetrics.NoBoundaryPairMissCount + 1));
 	HashMixDouble(DecisionHash, OutMetrics.AuthoritativeCAFBefore);
 	HashMixDouble(DecisionHash, OutMetrics.AuthoritativeCAFAfter);
 	HashMixDouble(DecisionHash, OutMetrics.ProjectedCAFBefore);
@@ -4714,6 +4743,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 
 	int32 GapFillCount = 0;
 	int32 NonSeparatingGapFillCount = 0;
+	int32 NoBoundaryPairMissCount = 0;
 	TArray<FCarrierLabVizCandidate> Candidates;
 	for (const CarrierLab::FSphereSample& Sample : State.Samples)
 	{
@@ -4752,6 +4782,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 			}
 			else
 			{
+				++NoBoundaryPairMissCount;
 				NewPlateIds[Sample.Id] = Sample.PlateId;
 				NewFractions[Sample.Id] = Sample.ContinentalFraction;
 			}
@@ -4782,6 +4813,11 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 			}
 		}
 	}
+
+	ensureMsgf(
+		NoBoundaryPairMissCount == 0,
+		TEXT("CarrierLab unfiltered resampling hit %d no-boundary-pair misses; this path is a retention hazard and must remain gated."),
+		NoBoundaryPairMissCount);
 
 	for (CarrierLab::FSphereSample& Sample : State.Samples)
 	{
@@ -4829,6 +4865,7 @@ void ACarrierLabVisualizationActor::ApplyResampleEvent()
 	CurrentMetrics.EventCount = EventCount;
 	CurrentMetrics.LastGapFillCount = GapFillCount;
 	CurrentMetrics.LastNonSeparatingGapFillCount = NonSeparatingGapFillCount;
+	CurrentMetrics.LastNoBoundaryPairMissCount = NoBoundaryPairMissCount;
 	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
 	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
 }
@@ -6902,7 +6939,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-8 layers"),
+		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d nan=%d\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R resample | 1-8 layers"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -6920,6 +6957,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.BoundaryHitCount,
 		CurrentMetrics.LastGapFillCount,
 		CurrentMetrics.LastNonSeparatingGapFillCount,
+		CurrentMetrics.LastNoBoundaryPairMissCount,
 		CurrentMetrics.NaNOrInfCount,
 		CurrentMetrics.AuthoritativeCAF,
 		CurrentMetrics.ProjectedCAF,

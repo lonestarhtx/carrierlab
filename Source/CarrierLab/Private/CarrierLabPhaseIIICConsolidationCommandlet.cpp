@@ -30,7 +30,7 @@ namespace
 	constexpr double GateToleranceKm = 1.0e-8;
 	constexpr TCHAR ExpectedSlice55StateHash[] = TEXT("3b4a85366dab80db");
 	constexpr TCHAR ExpectedSlice55MaterialLedgerHash[] = TEXT("bc3077100ba291b4");
-	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("4df40569f5e51e1a");
+	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("bf8818a26ed7b1dc");
 
 	FString JsonString(const FString& Value)
 	{
@@ -815,6 +815,7 @@ namespace
 		return Result.bCompleted &&
 			Result.FilterMetrics.StateHashAfter == ExpectedSlice55StateHash &&
 			Result.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash &&
+			Result.FilterMetrics.NoBoundaryPairMissCount == 0 &&
 			Result.FilterMetrics.ProjectionHashAfter == Result.ClosureAudit.ProjectionHash &&
 			Result.FilterMetrics.StateHashAfter == Result.ClosureAudit.StateHash &&
 			Result.ClosureAudit.bMetricsHashMatchesComputed;
@@ -894,7 +895,7 @@ namespace
 	FString BypassJson(const FSlice55BypassResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"kind\":\"slice55_bypass\",\"replay\":%d,\"completed\":%s,\"contact_hash\":%s,\"label_hash\":%s,\"filter_decision_hash\":%s,\"projection_hash\":%s,\"state_hash\":%s,\"crust_hash\":%s,\"material_ledger_hash\":%s,\"convergence_metrics_hash\":%s,\"convergence_computed_hash\":%s,\"convergence_closure_matches\":%s,\"persistent_mark_inputs\":%d,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"slice55_bypass\",\"replay\":%d,\"completed\":%s,\"contact_hash\":%s,\"label_hash\":%s,\"filter_decision_hash\":%s,\"projection_hash\":%s,\"state_hash\":%s,\"crust_hash\":%s,\"material_ledger_hash\":%s,\"convergence_metrics_hash\":%s,\"convergence_computed_hash\":%s,\"convergence_closure_matches\":%s,\"persistent_mark_inputs\":%d,\"no_boundary_pair_miss_count\":%d,\"seconds\":%.6f}"),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
 			*JsonString(Result.ContactMetrics.ContactLogHash),
@@ -908,6 +909,7 @@ namespace
 			*JsonString(Result.ClosureAudit.ComputedConvergenceTrackingHash),
 			Result.ClosureAudit.bMetricsHashMatchesComputed ? TEXT("true") : TEXT("false"),
 			Result.FilterMetrics.PersistentSubductingMarkInputCount,
+			Result.FilterMetrics.NoBoundaryPairMissCount,
 			Result.Seconds);
 	}
 
@@ -1026,7 +1028,7 @@ namespace
 		Report += TEXT("| Gate | Result | Evidence |\n");
 		Report += TEXT("|---|---|---|\n");
 		Report += FString::Printf(
-			TEXT("| Slice 5.5 bypass | %s | projection `%s` / `%s`, state `%s` / `%s`, crust `%s` / `%s`, material `%s` / `%s`, convergence `%s` / `%s` |\n"),
+			TEXT("| Slice 5.5 bypass | %s | projection `%s` / `%s`, state `%s` / `%s`, crust `%s` / `%s`, material `%s` / `%s`, convergence `%s` / `%s`, no-boundary fallback %d/%d |\n"),
 			*PassFail(bBypassPass),
 			*BypassA.FilterMetrics.ProjectionHashAfter,
 			*BypassB.FilterMetrics.ProjectionHashAfter,
@@ -1037,7 +1039,9 @@ namespace
 			*BypassA.LedgerMetrics.MaterialLedgerHash,
 			*BypassB.LedgerMetrics.MaterialLedgerHash,
 			*BypassA.ClosureAudit.ComputedConvergenceTrackingHash,
-			*BypassB.ClosureAudit.ComputedConvergenceTrackingHash);
+			*BypassB.ClosureAudit.ComputedConvergenceTrackingHash,
+			BypassA.FilterMetrics.NoBoundaryPairMissCount,
+			BypassB.FilterMetrics.NoBoundaryPairMissCount);
 		Report += FString::Printf(
 			TEXT("| IIIB independent signature gate | %s | computed `%s` / `%s`, expected `%s`; closure `%s` / `%s` |\n"),
 			*PassFail(bIIIBSignatureGate),
@@ -1117,7 +1121,9 @@ namespace
 		AddReplayRow(ForcedDivergenceNoSubduction);
 
 		Report += TEXT("\n## IIIB Regression Signature\n\n");
-		Report += TEXT("This is a replay of the IIIB hardening discriminator fixture inside the IIIC consolidation commandlet. It compares the computed IIIB independent signature directly to the accepted `4df40569f5e51e1a` token; closure-hash self-recomputation alone is not sufficient for this gate.\n\n");
+		Report += FString::Printf(
+			TEXT("This is a replay of the IIIB hardening discriminator fixture inside the IIIC consolidation commandlet. It compares the computed IIIB independent signature directly to the accepted `%s` token; closure-hash self-recomputation alone is not sufficient for this gate. This token supersedes the original IIIB checkpoint token because the pre-IIID hardening added the zero no-boundary-pair fallback metric to the Slice 5.5 component of the independent signature.\n\n"),
+			ExpectedIIIBIndependentSignature);
 		Report += TEXT("| Replay | Step | Pair sign | Accepted local positives | Rejected local non-positives | Matrix pairs | Decisions | Propagation seeds | Propagation added | Computed signature | Expected signature | Slice 5.5 component | Closure component |\n");
 		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|\n");
 		auto AddIIIBRow = [&Report](const FIIIBSignatureResult& Result)

@@ -190,6 +190,14 @@ Stage 1.5: cross-window resampling
   Stage 1.5; qGamma provenance is still logged, but this carrier-foundation
   slice does not permit gap fill to destroy continental mass through a deferred
   oceanic-generation interpretation.
+- The current q1/q2 search is a discrete boundary approximation: endpoints and
+  spherical midpoints from plate-local boundary edges are indexed, then nearest
+  samples from two different plates are selected. This is not yet exact
+  continuous nearest-boundary provenance, and reports must name it as such.
+- A zero-hit sample with no q1/q2 boundary pair is not allowed to inherit prior
+  global sample authority silently. The implementation must count this as
+  `no_boundary_pair_fallback_count` and gate it to zero before any resampling
+  success claim.
 - Rebuild plate-local duplicated triangulations after assignment.
 - Report authoritative CAF, projected CAF, projected-authoritative delta, and
   per-plate area deltas before and after every resampling event.

@@ -11,7 +11,7 @@ Formula in code units: `omega' = clamp_v0(omega + angular(vs) * Sum(normalize(c_
 | Gate | Result | Evidence |
 |---|---|---|
 | Slice 5.5 bypass | pass | state `3b4a85366dab80db` / `3b4a85366dab80db`, ledger `bc3077100ba291b4` / `bc3077100ba291b4` |
-| IIIB independent signature gate | pass | expected regression token `4df40569f5e51e1a`; closure hash recomputation still matches `51f1c267444ff160` |
+| IIIB closure smoke (superseded) | pass | expected independent token `bf8818a26ed7b1dc` is listed for continuity only; this standalone slice checked closure recomputation `51f1c267444ff160`, while IIIC consolidation performs the computed-vs-expected comparison |
 | Slab pull opt-in on | pass | contributions 84 / 84, affected plates 1 / 1, motion `96d2f3bac07b3cda` -> `7b00b66aaa1c9e83` |
 | Independent slab-pull oracle | pass | axis residual 0.000000000000e+00 / 0.000000000000e+00, angular residual 0.000000000000e+00 / 0.000000000000e+00, contribution residual 0.000000000000e+00 / 0.000000000000e+00 |
 | Bounded omega | pass | max velocity 100.000000 / 100.000000 mm/yr, v0 100.000000 |

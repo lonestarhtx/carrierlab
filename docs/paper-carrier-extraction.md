@@ -72,6 +72,9 @@ specification so the lab remains reviewable without reproducing long passages.
    resampling time is a divergent gap filled through the q1/q2/ridge-midpoint
    oceanic-crust algorithm. CarrierLab still records numeric and topology
    miss classes so implementation bugs cannot hide inside this physical rule.
+   Current CarrierLab q1/q2 lookup uses a discrete boundary index built from
+   boundary-edge endpoints and spherical midpoints; this is a lab approximation
+   until exact nearest-boundary provenance is implemented or proven equivalent.
 
 6. Multi-hit handling is only fully specified when subduction/collision has
    already selected losing triangles. For no-subduction Stage 1 and Stage 1.5,

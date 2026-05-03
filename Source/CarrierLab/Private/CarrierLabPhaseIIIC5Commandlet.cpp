@@ -22,7 +22,7 @@ namespace
 	constexpr double GateToleranceKm = 1.0e-8;
 	constexpr TCHAR ExpectedSlice55StateHash[] = TEXT("3b4a85366dab80db");
 	constexpr TCHAR ExpectedSlice55MaterialLedgerHash[] = TEXT("bc3077100ba291b4");
-	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("4df40569f5e51e1a");
+	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("bf8818a26ed7b1dc");
 
 	FString JsonString(const FString& Value)
 	{
@@ -316,7 +316,8 @@ namespace
 	{
 		return Result.bCompleted &&
 			Result.FilterMetrics.StateHashAfter == ExpectedSlice55StateHash &&
-			Result.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash;
+			Result.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash &&
+			Result.FilterMetrics.NoBoundaryPairMissCount == 0;
 	}
 
 	bool LedgerReconciles(const FElevationLedgerReplayResult& Result)
@@ -361,12 +362,13 @@ namespace
 	FString BypassJson(const FSlice55BypassResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"kind\":\"bypass\",\"replay\":%d,\"completed\":%s,\"state_hash\":%s,\"material_ledger_hash\":%s,\"persistent_mark_inputs\":%d,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"bypass\",\"replay\":%d,\"completed\":%s,\"state_hash\":%s,\"material_ledger_hash\":%s,\"persistent_mark_inputs\":%d,\"no_boundary_pair_miss_count\":%d,\"seconds\":%.6f}"),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
 			*JsonString(Result.FilterMetrics.StateHashAfter),
 			*JsonString(Result.LedgerMetrics.MaterialLedgerHash),
 			Result.FilterMetrics.PersistentSubductingMarkInputCount,
+			Result.FilterMetrics.NoBoundaryPairMissCount,
 			Result.Seconds);
 	}
 
@@ -426,11 +428,11 @@ namespace
 			NoLedgerDeltaPasses(ZeroMotion) &&
 			NoLedgerDeltaPasses(SinglePlate) &&
 			NoLedgerDeltaPasses(ForcedDivergenceNoSubduction);
-		const bool bIIIBSignatureGate =
+		const bool bIIIBClosureSmokeGate =
 			FullA.ClosureAudit.bMetricsHashMatchesComputed &&
 			Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
 			FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
-		const bool bAllPass = bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass && bIIIBSignatureGate;
+		const bool bAllPass = bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass && bIIIBClosureSmokeGate;
 
 		FString Report;
 		Report += TEXT("# Phase III Slice IIIC.5 Checkpoint\n\n");
@@ -449,8 +451,8 @@ namespace
 			*BypassA.LedgerMetrics.MaterialLedgerHash,
 			*BypassB.LedgerMetrics.MaterialLedgerHash);
 		Report += FString::Printf(
-			TEXT("| IIIB independent signature gate | %s | expected regression token `%s`; closure hash recomputation still matches `%s` |\n"),
-			*PassFail(bIIIBSignatureGate),
+			TEXT("| IIIB closure smoke (superseded) | %s | expected independent token `%s` is listed for continuity only; this standalone slice checks closure recomputation `%s`, while IIIC consolidation performs computed-vs-expected comparison |\n"),
+			*PassFail(bIIIBClosureSmokeGate),
 			ExpectedIIIBIndependentSignature,
 			*FullA.ClosureAudit.ComputedConvergenceTrackingHash);
 		Report += FString::Printf(
@@ -747,12 +749,12 @@ int32 UCarrierLabPhaseIIIC5Commandlet::Main(const FString& Params)
 		NoLedgerDeltaPasses(ZeroMotion) &&
 		NoLedgerDeltaPasses(SinglePlate) &&
 		NoLedgerDeltaPasses(ForcedDivergence);
-	const bool bIIIBSignatureGate =
+	const bool bIIIBClosureSmokeGate =
 		FullA.ClosureAudit.bMetricsHashMatchesComputed &&
 		Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
 		FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
 
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.5 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.5 metrics: %s"), *MetricsPath);
-	return (bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass && bIIIBSignatureGate) ? 0 : 1;
+	return (bBypassPass && bFullPass && bTrenchOnlyPass && bDisabledPass && bSlabPullOnlyPass && bNegativePass && bIIIBClosureSmokeGate) ? 0 : 1;
 }

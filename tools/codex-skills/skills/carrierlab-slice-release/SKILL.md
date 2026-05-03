@@ -24,7 +24,7 @@ The helper only prints commands and evidence slots. It does not build, stage, co
    `Recover|Repair|Heal|Backfill|Resync|Promote|Reclassify|hysteresis|retention|anchoring`
 5. Build with `$carrierlab-build` if C++ changed.
 6. Run the targeted commandlet/test required by the slice.
-7. For IIIC+ convergence-dependent slices, confirm the report includes an explicit IIIB independent-signature regression row (`4df40569f5e51e1a` unless a consolidation checkpoint updates it).
+7. For IIIC+ convergence-dependent slices, confirm the report includes an explicit IIIB independent-signature regression row (`bf8818a26ed7b1dc` unless a consolidation checkpoint updates it), and inspect the commandlet gate to verify it compares a recomputed independent signature against that expected token.
 8. Read the generated checkpoint report and metrics before claiming pass.
 9. Stage only intended paths. Never use `git add .` in a dirty worktree.
 10. Run `git diff --cached --check`.

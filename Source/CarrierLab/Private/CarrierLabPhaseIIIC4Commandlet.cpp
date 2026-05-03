@@ -25,7 +25,7 @@ namespace
 	constexpr double GateTolerance = 1.0e-10;
 	constexpr TCHAR ExpectedSlice55StateHash[] = TEXT("3b4a85366dab80db");
 	constexpr TCHAR ExpectedSlice55MaterialLedgerHash[] = TEXT("bc3077100ba291b4");
-	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("4df40569f5e51e1a");
+	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("bf8818a26ed7b1dc");
 
 	FString JsonString(const FString& Value)
 	{
@@ -429,12 +429,12 @@ namespace
 			NegativePasses(ZeroMotion) &&
 			NegativePasses(SinglePlate) &&
 			NegativePasses(ForcedDivergenceNoSubduction);
-		const bool bIIIBSignatureGate =
+		const bool bIIIBClosureSmokeGate =
 			PullA.ClosureAudit.bMetricsHashMatchesComputed &&
 			Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
 			ZeroMotion.ClosureAudit.bMetricsHashMatchesComputed &&
 			FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
-		const bool bAllPass = bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass && bIIIBSignatureGate;
+		const bool bAllPass = bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass && bIIIBClosureSmokeGate;
 
 		FString Report;
 		Report += TEXT("# Phase III Slice IIIC.4 Checkpoint\n\n");
@@ -453,8 +453,8 @@ namespace
 			*BypassA.LedgerMetrics.MaterialLedgerHash,
 			*BypassB.LedgerMetrics.MaterialLedgerHash);
 		Report += FString::Printf(
-			TEXT("| IIIB independent signature gate | %s | expected regression token `%s`; closure hash recomputation still matches `%s` |\n"),
-			*PassFail(bIIIBSignatureGate),
+			TEXT("| IIIB closure smoke (superseded) | %s | expected independent token `%s` is listed for continuity only; this standalone slice checks closure recomputation `%s`, while IIIC consolidation performs computed-vs-expected comparison |\n"),
+			*PassFail(bIIIBClosureSmokeGate),
 			ExpectedIIIBIndependentSignature,
 			*PullA.ClosureAudit.ComputedConvergenceTrackingHash);
 		Report += FString::Printf(
@@ -743,12 +743,12 @@ int32 UCarrierLabPhaseIIIC4Commandlet::Main(const FString& Params)
 		NegativePasses(ZeroMotion) &&
 		NegativePasses(SinglePlate) &&
 		NegativePasses(ForcedDivergence);
-	const bool bIIIBSignatureGate =
+	const bool bIIIBClosureSmokeGate =
 		PullA.ClosureAudit.bMetricsHashMatchesComputed &&
 		Disabled.ClosureAudit.bMetricsHashMatchesComputed &&
 		FCString::Strlen(ExpectedIIIBIndependentSignature) > 0;
 
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.4 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab IIIC.4 metrics: %s"), *MetricsPath);
-	return (bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass && bIIIBSignatureGate) ? 0 : 1;
+	return (bBypassPass && bPrimaryPass && bDisabledPass && bOffOnDifferential && bNegativePass && bIIIBClosureSmokeGate) ? 0 : 1;
 }

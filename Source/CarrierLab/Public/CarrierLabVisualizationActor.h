@@ -79,6 +79,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 LastNonSeparatingGapFillCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	int32 LastNoBoundaryPairMissCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double AuthoritativeCAF = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
@@ -454,6 +457,7 @@ struct FCarrierLabPhaseIIResamplingFilterMetrics
 	int32 FilterExhaustedSampleCount = 0;
 	int32 GapFillCount = 0;
 	int32 NonSeparatingGapFillCount = 0;
+	int32 NoBoundaryPairMissCount = 0;
 	int32 UnexpectedFilteredPlateCount = 0;
 	int32 DecisionsFromThirdPlateLabelCount = 0;
 	double AuthoritativeCAFBefore = 0.0;

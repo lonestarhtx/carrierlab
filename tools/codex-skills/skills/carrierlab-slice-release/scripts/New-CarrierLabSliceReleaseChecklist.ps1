@@ -26,7 +26,7 @@ $lines = @(
     "3. Validation",
     "   - if C++ changed: run carrierlab-build",
     $commandletLine,
-    "   - for IIIC+ convergence-dependent slices: checkpoint includes IIIB independent signature 4df40569f5e51e1a",
+    "   - for IIIC+ convergence-dependent slices: checkpoint includes IIIB independent signature bf8818a26ed7b1dc",
     "   - read docs/checkpoints/<slice-report>.md before claiming pass",
     "",
     "4. Stage and commit",
