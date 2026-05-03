@@ -20,6 +20,7 @@ enum class ECarrierLabVisualizationLayer : uint8
 	OverlapMask UMETA(DisplayName = "Overlap Mask"),
 	BoundaryMask UMETA(DisplayName = "Boundary Mask"),
 	DriftError UMETA(DisplayName = "Drift Error"),
+	PhaseIIISummary UMETA(DisplayName = "Phase III Summary"),
 	ElevationHeatmap UMETA(DisplayName = "Elevation Heatmap"),
 	SubductionMask UMETA(DisplayName = "Subduction Mask"),
 	DistanceToFrontHeatmap UMETA(DisplayName = "Distance To Front Heatmap")
@@ -1038,6 +1039,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowBoundaryMaskLayer();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowPhaseIIISummaryLayer();
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowElevationHeatmapLayer();

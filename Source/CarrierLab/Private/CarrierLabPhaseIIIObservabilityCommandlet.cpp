@@ -21,11 +21,20 @@ namespace
 	constexpr double ObservabilityReferenceVelocityMmPerYear = 100.0;
 	constexpr int32 ContactThumbWidth = 512;
 	constexpr int32 ContactThumbHeight = 256;
+	constexpr int32 ProfileWidth = 1024;
+	constexpr int32 ProfileHeight = 512;
 
 	enum class EObservabilityMaterialFixture : uint8
 	{
 		Default,
 		MixedPlate0Continental
+	};
+
+	enum class EObservabilityExpectedState : uint8
+	{
+		Informational,
+		NoProcessSignals,
+		ProcessSignalsRequired
 	};
 
 	struct FObservabilityScenario
@@ -38,6 +47,7 @@ namespace
 		double ContinentalPlateFraction = 0.30;
 		ECarrierLabPhaseIIMotionFixture MotionFixture = ECarrierLabPhaseIIMotionFixture::Default;
 		EObservabilityMaterialFixture MaterialFixture = EObservabilityMaterialFixture::Default;
+		EObservabilityExpectedState ExpectedState = EObservabilityExpectedState::Informational;
 		bool bSeedMixedElevation = false;
 		bool bEnableIIICProcessLayer = false;
 		bool bEnableIIICSlabPull = false;
@@ -77,6 +87,8 @@ namespace
 	{
 		switch (Layer)
 		{
+		case ECarrierLabVisualizationLayer::PhaseIIISummary:
+			return TEXT("PhaseIIISummary");
 		case ECarrierLabVisualizationLayer::ElevationHeatmap:
 			return TEXT("ElevationHeatmap");
 		case ECarrierLabVisualizationLayer::SubductionMask:
@@ -85,6 +97,20 @@ namespace
 			return TEXT("DistanceToFrontHeatmap");
 		default:
 			return TEXT("UnknownLayer");
+		}
+	}
+
+	FString ExpectedStateName(const EObservabilityExpectedState ExpectedState)
+	{
+		switch (ExpectedState)
+		{
+		case EObservabilityExpectedState::NoProcessSignals:
+			return TEXT("no_process_signals");
+		case EObservabilityExpectedState::ProcessSignalsRequired:
+			return TEXT("process_signals_required");
+		case EObservabilityExpectedState::Informational:
+		default:
+			return TEXT("informational");
 		}
 	}
 
@@ -126,6 +152,35 @@ namespace
 		TArray<FObservabilityScenario> Scenarios;
 		if (bIIICMode)
 		{
+			FObservabilityScenario ZeroMotion;
+			ZeroMotion.Name = TEXT("zero_motion_control");
+			ZeroMotion.Description = TEXT("Zero-motion control with IIIC process layer enabled. It should remain spatially blank for subduction, trench, and uplift signals.");
+			ZeroMotion.SampleCount = 10000;
+			ZeroMotion.PlateCount = 2;
+			ZeroMotion.StepCount = 1;
+			ZeroMotion.ContinentalPlateFraction = 0.50;
+			ZeroMotion.MotionFixture = ECarrierLabPhaseIIMotionFixture::Zero;
+			ZeroMotion.MaterialFixture = EObservabilityMaterialFixture::MixedPlate0Continental;
+			ZeroMotion.bSeedMixedElevation = true;
+			ZeroMotion.ExpectedState = EObservabilityExpectedState::NoProcessSignals;
+			ZeroMotion.bEnableIIICProcessLayer = true;
+			ZeroMotion.bEnableIIICSlabPull = false;
+			Scenarios.Add(ZeroMotion);
+
+			FObservabilityScenario SinglePlate;
+			SinglePlate.Name = TEXT("single_plate_control");
+			SinglePlate.Description = TEXT("Single-plate control with IIIC process layer enabled. No plate-pair contacts exist, so process overlays should stay blank.");
+			SinglePlate.SampleCount = 10000;
+			SinglePlate.PlateCount = 1;
+			SinglePlate.StepCount = 1;
+			SinglePlate.ContinentalPlateFraction = 1.0;
+			SinglePlate.MotionFixture = ECarrierLabPhaseIIMotionFixture::Zero;
+			SinglePlate.MaterialFixture = EObservabilityMaterialFixture::Default;
+			SinglePlate.ExpectedState = EObservabilityExpectedState::NoProcessSignals;
+			SinglePlate.bEnableIIICProcessLayer = true;
+			SinglePlate.bEnableIIICSlabPull = false;
+			Scenarios.Add(SinglePlate);
+
 			FObservabilityScenario ProcessLayer;
 			ProcessLayer.Name = TEXT("process_layer_default");
 			ProcessLayer.Description = TEXT("Consolidated IIIC process-layer fixture: marks, trench elevation split, and overriding uplift enabled; slab pull remains off.");
@@ -136,9 +191,24 @@ namespace
 			ProcessLayer.MotionFixture = ECarrierLabPhaseIIMotionFixture::ForcedConvergence;
 			ProcessLayer.MaterialFixture = EObservabilityMaterialFixture::MixedPlate0Continental;
 			ProcessLayer.bSeedMixedElevation = true;
+			ProcessLayer.ExpectedState = EObservabilityExpectedState::ProcessSignalsRequired;
 			ProcessLayer.bEnableIIICProcessLayer = true;
 			ProcessLayer.bEnableIIICSlabPull = false;
 			Scenarios.Add(ProcessLayer);
+
+			FObservabilityScenario DefaultProcess;
+			DefaultProcess.Name = TEXT("default_40_plate_process");
+			DefaultProcess.Description = TEXT("Default 40-plate spatial sanity run with the consolidated IIIC process layer enabled and slab pull off. This is a human-inspection map, not a hard morphology gate.");
+			DefaultProcess.SampleCount = 60000;
+			DefaultProcess.PlateCount = 40;
+			DefaultProcess.StepCount = 40;
+			DefaultProcess.ContinentalPlateFraction = 0.30;
+			DefaultProcess.MotionFixture = ECarrierLabPhaseIIMotionFixture::Default;
+			DefaultProcess.MaterialFixture = EObservabilityMaterialFixture::Default;
+			DefaultProcess.ExpectedState = EObservabilityExpectedState::Informational;
+			DefaultProcess.bEnableIIICProcessLayer = true;
+			DefaultProcess.bEnableIIICSlabPull = false;
+			Scenarios.Add(DefaultProcess);
 			return Scenarios;
 		}
 
@@ -332,6 +402,194 @@ namespace
 		}
 	}
 
+	void SetPixelSafe(TArray<FColor>& Pixels, const int32 Width, const int32 Height, const int32 X, const int32 Y, const FColor& Color)
+	{
+		if (X >= 0 && X < Width && Y >= 0 && Y < Height)
+		{
+			Pixels[Y * Width + X] = Color;
+		}
+	}
+
+	void DrawDisk(TArray<FColor>& Pixels, const int32 Width, const int32 Height, const int32 CenterX, const int32 CenterY, const int32 Radius, const FColor& Color)
+	{
+		for (int32 Y = -Radius; Y <= Radius; ++Y)
+		{
+			for (int32 X = -Radius; X <= Radius; ++X)
+			{
+				if (X * X + Y * Y <= Radius * Radius)
+				{
+					SetPixelSafe(Pixels, Width, Height, CenterX + X, CenterY + Y, Color);
+				}
+			}
+		}
+	}
+
+	void DrawLine(TArray<FColor>& Pixels, const int32 Width, const int32 Height, int32 X0, int32 Y0, const int32 X1, const int32 Y1, const FColor& Color)
+	{
+		const int32 Dx = FMath::Abs(X1 - X0);
+		const int32 Sx = X0 < X1 ? 1 : -1;
+		const int32 Dy = -FMath::Abs(Y1 - Y0);
+		const int32 Sy = Y0 < Y1 ? 1 : -1;
+		int32 Error = Dx + Dy;
+
+		for (;;)
+		{
+			SetPixelSafe(Pixels, Width, Height, X0, Y0, Color);
+			if (X0 == X1 && Y0 == Y1)
+			{
+				break;
+			}
+			const int32 E2 = 2 * Error;
+			if (E2 >= Dy)
+			{
+				Error += Dy;
+				X0 += Sx;
+			}
+			if (E2 <= Dx)
+			{
+				Error += Dx;
+				Y0 += Sy;
+			}
+		}
+	}
+
+	bool ForwardMollweidePixel(const FVector3d& UnitPosition, const int32 Width, const int32 Height, int32& OutX, int32& OutY)
+	{
+		if (!FMath::IsFinite(UnitPosition.X) || !FMath::IsFinite(UnitPosition.Y) || !FMath::IsFinite(UnitPosition.Z))
+		{
+			return false;
+		}
+
+		const FVector3d P = UnitPosition.GetSafeNormal();
+		const double Lon = FMath::Atan2(P.Y, P.X);
+		const double Lat = FMath::Asin(FMath::Clamp(P.Z, -1.0, 1.0));
+		double Theta = Lat;
+		for (int32 Iteration = 0; Iteration < 10; ++Iteration)
+		{
+			const double Sin2Theta = FMath::Sin(2.0 * Theta);
+			const double Cos2Theta = FMath::Cos(2.0 * Theta);
+			const double F = 2.0 * Theta + Sin2Theta - UE_DOUBLE_PI * FMath::Sin(Lat);
+			const double Df = 2.0 + 2.0 * Cos2Theta;
+			if (FMath::Abs(Df) <= 1.0e-12)
+			{
+				break;
+			}
+			Theta -= F / Df;
+		}
+
+		const double Sqrt2 = FMath::Sqrt(2.0);
+		const double ProjectedX = 2.0 * Sqrt2 / UE_DOUBLE_PI * Lon * FMath::Cos(Theta);
+		const double ProjectedY = Sqrt2 * FMath::Sin(Theta);
+		const double U = (ProjectedX + 2.0 * Sqrt2) / (4.0 * Sqrt2);
+		const double V = (Sqrt2 - ProjectedY) / (2.0 * Sqrt2);
+		OutX = FMath::RoundToInt(FMath::Clamp(U, 0.0, 1.0) * static_cast<double>(Width - 1));
+		OutY = FMath::RoundToInt(FMath::Clamp(V, 0.0, 1.0) * static_cast<double>(Height - 1));
+		return true;
+	}
+
+	void DrawArrow(TArray<FColor>& Pixels, const int32 Width, const int32 Height, const FVector3d& Start, const FVector3d& End, const FColor& Color)
+	{
+		int32 X0 = 0;
+		int32 Y0 = 0;
+		int32 X1 = 0;
+		int32 Y1 = 0;
+		if (!ForwardMollweidePixel(Start, Width, Height, X0, Y0) || !ForwardMollweidePixel(End, Width, Height, X1, Y1))
+		{
+			return;
+		}
+
+		DrawLine(Pixels, Width, Height, X0, Y0, X1, Y1, Color);
+		DrawDisk(Pixels, Width, Height, X0, Y0, 2, Color);
+		const FVector2D Direction(static_cast<double>(X1 - X0), static_cast<double>(Y1 - Y0));
+		if (Direction.SizeSquared() <= 1.0)
+		{
+			return;
+		}
+		const FVector2D Unit = Direction.GetSafeNormal();
+		const FVector2D Perp(-Unit.Y, Unit.X);
+		const FVector2D Tip(static_cast<double>(X1), static_cast<double>(Y1));
+		const FVector2D Left = Tip - Unit * 10.0 + Perp * 5.0;
+		const FVector2D Right = Tip - Unit * 10.0 - Perp * 5.0;
+		DrawLine(Pixels, Width, Height, X1, Y1, FMath::RoundToInt(Left.X), FMath::RoundToInt(Left.Y), Color);
+		DrawLine(Pixels, Width, Height, X1, Y1, FMath::RoundToInt(Right.X), FMath::RoundToInt(Right.Y), Color);
+	}
+
+	void DrawMotionArrows(const ACarrierLabVisualizationActor& Actor, TArray<FColor>& Pixels, const int32 Width, const int32 Height)
+	{
+		constexpr double ArrowAngularLength = 0.13;
+		const FColor ArrowColor(255, 36, 36, 255);
+		for (int32 PlateId = 0; PlateId < Actor.CurrentMetrics.PlateCount; ++PlateId)
+		{
+			FCarrierLabVisualizationMotion Motion;
+			if (!Actor.GetPhaseIIMotion(PlateId, Motion) ||
+				FMath::Abs(Motion.AngularSpeedRadiansPerStep) <= UE_DOUBLE_SMALL_NUMBER)
+			{
+				continue;
+			}
+			const FVector3d Tangent = FVector3d::CrossProduct(Motion.Axis, Motion.CurrentCenter);
+			if (Tangent.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+			{
+				continue;
+			}
+			const FVector3d End = (Motion.CurrentCenter + Tangent.GetSafeNormal() * ArrowAngularLength).GetSafeNormal();
+			DrawArrow(Pixels, Width, Height, Motion.CurrentCenter, End, ArrowColor);
+		}
+	}
+
+	bool BuildElevationProfile(
+		const FCarrierLabPhaseIIIC3UpliftAudit& Audit,
+		TArray<FColor>& OutPixels,
+		int32& OutWidth,
+		int32& OutHeight)
+	{
+		OutWidth = ProfileWidth;
+		OutHeight = ProfileHeight;
+		OutPixels.Init(FColor(5, 8, 12, 255), OutWidth * OutHeight);
+
+		const int32 Left = 72;
+		const int32 Right = OutWidth - 32;
+		const int32 Top = 32;
+		const int32 Bottom = OutHeight - 56;
+		const FColor AxisColor(190, 205, 220, 255);
+		DrawLine(OutPixels, OutWidth, OutHeight, Left, Bottom, Right, Bottom, AxisColor);
+		DrawLine(OutPixels, OutWidth, OutHeight, Left, Bottom, Left, Top, AxisColor);
+
+		const double MaxDistanceKm = FMath::Max(1.0, Audit.EffectRadiusKm);
+		double MaxDeltaKm = 0.0;
+		for (const FCarrierLabPhaseIIIC3UpliftAuditRecord& Record : Audit.Records)
+		{
+			MaxDeltaKm = FMath::Max(MaxDeltaKm, FMath::Abs(Record.AppliedDeltaKm));
+		}
+		MaxDeltaKm = FMath::Max(MaxDeltaKm, 1.0e-9);
+
+		const FColor CurveColor(110, 190, 255, 255);
+		int32 PreviousX = INDEX_NONE;
+		int32 PreviousY = INDEX_NONE;
+		for (int32 Index = 0; Index <= 240; ++Index)
+		{
+			const double DistanceKm = MaxDistanceKm * static_cast<double>(Index) / 240.0;
+			const double RadiusAlpha = DistanceKm / MaxDistanceKm;
+			const double Transfer = FMath::Exp(3.0 * RadiusAlpha) * FMath::Exp(-9.0 * RadiusAlpha * RadiusAlpha);
+			const int32 X = Left + FMath::RoundToInt((Right - Left) * DistanceKm / MaxDistanceKm);
+			const int32 Y = Bottom - FMath::RoundToInt((Bottom - Top) * FMath::Clamp(Transfer / 1.3, 0.0, 1.0));
+			if (PreviousX != INDEX_NONE)
+			{
+				DrawLine(OutPixels, OutWidth, OutHeight, PreviousX, PreviousY, X, Y, CurveColor);
+			}
+			PreviousX = X;
+			PreviousY = Y;
+		}
+
+		const FColor PointColor(255, 190, 65, 255);
+		for (const FCarrierLabPhaseIIIC3UpliftAuditRecord& Record : Audit.Records)
+		{
+			const int32 X = Left + FMath::RoundToInt((Right - Left) * FMath::Clamp(Record.DistanceKm / MaxDistanceKm, 0.0, 1.0));
+			const int32 Y = Bottom - FMath::RoundToInt((Bottom - Top) * FMath::Clamp(FMath::Abs(Record.AppliedDeltaKm) / MaxDeltaKm, 0.0, 1.0));
+			DrawDisk(OutPixels, OutWidth, OutHeight, X, Y, 2, PointColor);
+		}
+		return true;
+	}
+
 	struct FLayerExport
 	{
 		ECarrierLabVisualizationLayer Layer = ECarrierLabVisualizationLayer::PlateId;
@@ -344,6 +602,7 @@ namespace
 	struct FObservabilityReplay
 	{
 		FString ScenarioName;
+		FString ExpectedState;
 		int32 Replay = 0;
 		bool bCompleted = false;
 		double TotalSeconds = 0.0;
@@ -379,8 +638,29 @@ namespace
 		bool bRanA = false;
 		bool bRanB = false;
 		bool bLayerHashesStable = false;
+		bool bExpectedSignalsPass = false;
 		bool bOverallPass = false;
 	};
+
+	bool ReplayMatchesExpectedSignals(const FObservabilityScenario& Scenario, const FObservabilityReplay& Replay)
+	{
+		switch (Scenario.ExpectedState)
+		{
+		case EObservabilityExpectedState::NoProcessSignals:
+			return Replay.IIICMarkAudit.MarkCount == 0 &&
+				Replay.IIICLedgerAudit.RecordCount == 0 &&
+				Replay.IIICLedgerAudit.TrenchRecordCount == 0 &&
+				Replay.IIICLedgerAudit.UpliftRecordCount == 0;
+		case EObservabilityExpectedState::ProcessSignalsRequired:
+			return Replay.IIICMarkAudit.MarkCount > 0 &&
+				Replay.IIICLedgerAudit.TrenchRecordCount > 0 &&
+				Replay.IIICLedgerAudit.UpliftRecordCount > 0 &&
+				FMath::Abs(Replay.IIICLedgerAudit.VisibleElevationResidualKm) <= 1.0e-8;
+		case EObservabilityExpectedState::Informational:
+		default:
+			return true;
+		}
+	}
 
 	FString LayerExportJson(const FLayerExport& Export)
 	{
@@ -395,12 +675,14 @@ namespace
 	bool WriteMaps(
 		const FString& ReplayDir,
 		const ACarrierLabVisualizationActor& Actor,
+		const FCarrierLabPhaseIIIC3UpliftAudit& UpliftAudit,
 		TArray<FLayerExport>& OutLayerExports,
 		FString& OutContactSheetPath)
 	{
 		IFileManager::Get().MakeDirectory(*ReplayDir, true);
 		const ECarrierLabVisualizationLayer Layers[] =
 		{
+			ECarrierLabVisualizationLayer::PhaseIIISummary,
 			ECarrierLabVisualizationLayer::ElevationHeatmap,
 			ECarrierLabVisualizationLayer::SubductionMask,
 			ECarrierLabVisualizationLayer::DistanceToFrontHeatmap
@@ -424,6 +706,10 @@ namespace
 			{
 				return false;
 			}
+			if (Layer == ECarrierLabVisualizationLayer::PhaseIIISummary)
+			{
+				DrawMotionArrows(Actor, Image.Pixels, Image.Width, Image.Height);
+			}
 			Image.Export.Path = FPaths::Combine(ReplayDir, Image.Export.Name + TEXT(".png"));
 			Image.Export.Hash = HashToString(HashPixels(Image.Pixels));
 			Image.Export.NonBackgroundPixelCount = CountNonBackgroundPixels(Image.Pixels);
@@ -433,6 +719,22 @@ namespace
 			}
 			Images.Add(MoveTemp(Image));
 		}
+
+		FLayerPixels ProfileImage;
+		ProfileImage.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
+		ProfileImage.Export.Name = TEXT("ElevationProfile");
+		if (!BuildElevationProfile(UpliftAudit, ProfileImage.Pixels, ProfileImage.Width, ProfileImage.Height))
+		{
+			return false;
+		}
+		ProfileImage.Export.Path = FPaths::Combine(ReplayDir, ProfileImage.Export.Name + TEXT(".png"));
+		ProfileImage.Export.Hash = HashToString(HashPixels(ProfileImage.Pixels));
+		ProfileImage.Export.NonBackgroundPixelCount = CountNonBackgroundPixels(ProfileImage.Pixels);
+		if (!SavePng(ProfileImage.Export.Path, ProfileImage.Pixels, ProfileImage.Width, ProfileImage.Height))
+		{
+			return false;
+		}
+		Images.Add(MoveTemp(ProfileImage));
 
 		const int32 ContactWidth = ContactThumbWidth * Images.Num();
 		const int32 ContactHeight = ContactThumbHeight;
@@ -472,6 +774,7 @@ namespace
 	{
 		OutResult = FObservabilityReplay();
 		OutResult.ScenarioName = Scenario.Name;
+		OutResult.ExpectedState = ExpectedStateName(Scenario.ExpectedState);
 		OutResult.Replay = Replay;
 		UWorld* World = GetCommandletWorld();
 		if (World == nullptr)
@@ -519,7 +822,7 @@ namespace
 		OutResult.ConvergenceTrackingHashBefore = Actor->CurrentMetrics.ConvergenceTrackingHash;
 
 		const FString ReplayDir = FPaths::Combine(OutputRoot, Scenario.Name, FString::Printf(TEXT("replay_%d"), Replay));
-		if (!WriteMaps(ReplayDir, *Actor, OutResult.LayerExports, OutResult.ContactSheetPath))
+		if (!WriteMaps(ReplayDir, *Actor, OutResult.IIICUpliftAudit, OutResult.LayerExports, OutResult.ContactSheetPath))
 		{
 			Actor->Destroy();
 			return false;
@@ -568,7 +871,7 @@ namespace
 		}
 
 		return FString::Printf(
-			TEXT("{\"scenario\":%s,\"replay\":%d,\"completed\":%s,\"total_seconds\":%.6f,")
+			TEXT("{\"scenario\":%s,\"expected_state\":%s,\"replay\":%d,\"completed\":%s,\"total_seconds\":%.6f,")
 			TEXT("\"step\":%d,\"projection_hash_before\":%s,\"projection_hash_after\":%s,")
 			TEXT("\"state_hash_before\":%s,\"state_hash_after\":%s,")
 			TEXT("\"crust_state_hash_before\":%s,\"crust_state_hash_after\":%s,")
@@ -581,6 +884,7 @@ namespace
 			TEXT("\"iiic_actual_delta_km\":%.15f,\"iiic_ledger_residual_km\":%.15e,")
 			TEXT("\"map_exports\":[%s],\"contact_sheet\":%s}"),
 			*JsonString(Result.ScenarioName),
+			*JsonString(Result.ExpectedState),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
 			Result.TotalSeconds,
@@ -634,7 +938,7 @@ namespace
 		for (const FObservabilityScenarioResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d rigid steps / %s motion / %s material / IIIC process %s / slab pull %s / centroid policy`).\n"),
+				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d rigid steps / %s motion / %s material / IIIC process %s / slab pull %s / expected %s / centroid policy`).\n"),
 				*Result.Scenario.Name,
 				*Result.Scenario.Description,
 				Result.Scenario.SampleCount / 1000,
@@ -644,7 +948,8 @@ namespace
 				*MotionFixtureName(Result.Scenario.MotionFixture),
 				*MaterialFixtureName(Result.Scenario.MaterialFixture),
 				Result.Scenario.bEnableIIICProcessLayer ? TEXT("on") : TEXT("off"),
-				Result.Scenario.bEnableIIICSlabPull ? TEXT("on") : TEXT("off"));
+				Result.Scenario.bEnableIIICSlabPull ? TEXT("on") : TEXT("off"),
+				*ExpectedStateName(Result.Scenario.ExpectedState));
 		}
 		Report += TEXT("\n");
 		Report += TEXT("## Gate Summary\n\n");
@@ -666,6 +971,11 @@ namespace
 				TEXT("| `%s` same-seed map hashes | %s | replay hashes byte-identical per layer |\n"),
 				*Result.Scenario.Name,
 				*PassFail(Result.bLayerHashesStable));
+			Report += FString::Printf(
+				TEXT("| `%s` expected spatial signal | %s | expected `%s` |\n"),
+				*Result.Scenario.Name,
+				*PassFail(Result.bExpectedSignalsPass),
+				*ExpectedStateName(Result.Scenario.ExpectedState));
 		}
 		Report += TEXT("\n");
 
@@ -745,6 +1055,7 @@ namespace
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
+		Report += TEXT("- `PhaseIIISummary` is the human-inspection layer: filled crust type, plate-boundary emphasis, velocity arrows in PNG exports, IIIB distance context, IIIC subduction roles, and IIIC elevation overlays in one map. It is still a color diagnostic on a unit sphere, not terrain displacement.\n");
 		Report += bIIICMode
 			? TEXT("- `ElevationHeatmap` should show the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color overlays on the filled continental/oceanic base map.\n")
 			: TEXT("- `ElevationHeatmap` uses the filled continental/oceanic base map when elevation is still zero, then overlays positive/negative elevation once IIIC.2/IIIC.3 mutate the scalar field.\n");
@@ -754,6 +1065,7 @@ namespace
 		Report += bIIICMode
 			? TEXT("- `DistanceToFrontHeatmap` remains the front-distance spatial context for the same fixture; it is diagnostic context, not a source of authority.\n\n")
 			: TEXT("- `DistanceToFrontHeatmap` uses the filled base map plus active boundary distance overlays; the default baseline may be sparse, while the forced fixture intentionally exercises propagated front state.\n\n");
+		Report += TEXT("- `ElevationProfile` plots uplift delta against distance-to-front and includes the expected thesis distance-transfer curve as a visual shape reference. It is paired with the IIIC.3 numeric oracle; the plot alone is not a gate.\n\n");
 		Report += TEXT("## Recommendation\n\n");
 		if (bIIICMode)
 		{
@@ -796,7 +1108,10 @@ int32 UCarrierLabPhaseIIIObservabilityCommandlet::Main(const FString& Params)
 		Result.bRanA = RunReplay(Scenario, 0, OutputRoot, Result.A);
 		Result.bRanB = RunReplay(Scenario, 1, OutputRoot, Result.B);
 		Result.bLayerHashesStable = Result.bRanA && Result.bRanB && LayerHashesMatch(Result.A, Result.B);
-		Result.bOverallPass = Result.bRanA && Result.bRanB && Result.A.bExportReadOnly && Result.B.bExportReadOnly && Result.bLayerHashesStable;
+		Result.bExpectedSignalsPass = Result.bRanA && Result.bRanB &&
+			ReplayMatchesExpectedSignals(Scenario, Result.A) &&
+			ReplayMatchesExpectedSignals(Scenario, Result.B);
+		Result.bOverallPass = Result.bRanA && Result.bRanB && Result.A.bExportReadOnly && Result.B.bExportReadOnly && Result.bLayerHashesStable && Result.bExpectedSignalsPass;
 		bOverallPass = bOverallPass && Result.bOverallPass;
 		Results.Add(MoveTemp(Result));
 	}

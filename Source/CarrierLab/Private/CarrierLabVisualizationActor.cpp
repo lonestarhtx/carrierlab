@@ -4810,6 +4810,11 @@ void ACarrierLabVisualizationActor::ShowBoundaryMaskLayer()
 	SetVisualizationLayer(ECarrierLabVisualizationLayer::BoundaryMask);
 }
 
+void ACarrierLabVisualizationActor::ShowPhaseIIISummaryLayer()
+{
+	SetVisualizationLayer(ECarrierLabVisualizationLayer::PhaseIIISummary);
+}
+
 void ACarrierLabVisualizationActor::ShowElevationHeatmapLayer()
 {
 	SetVisualizationLayer(ECarrierLabVisualizationLayer::ElevationHeatmap);
@@ -4846,9 +4851,10 @@ void ACarrierLabVisualizationActor::BindInputControls()
 	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowMissMaskLayer);
 	InputComponent->BindKey(EKeys::Four, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowOverlapMaskLayer);
 	InputComponent->BindKey(EKeys::Five, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowBoundaryMaskLayer);
-	InputComponent->BindKey(EKeys::Six, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowElevationHeatmapLayer);
-	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowSubductionMaskLayer);
-	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowDistanceToFrontHeatmapLayer);
+	InputComponent->BindKey(EKeys::Six, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowPhaseIIISummaryLayer);
+	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowElevationHeatmapLayer);
+	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowSubductionMaskLayer);
+	InputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowDistanceToFrontHeatmapLayer);
 }
 
 void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
@@ -6087,6 +6093,15 @@ void ACarrierLabVisualizationActor::ComputePhaseIIIObservabilityMasks()
 			MarkTriangleVertices(State.Plates[Hit.PlateId], Hit.LocalTriangleId, MaskValue);
 		}
 	}
+
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		if (!State.Plates.IsValidIndex(Mark.PlateId))
+		{
+			continue;
+		}
+		MarkTriangleVertices(State.Plates[Mark.PlateId], Mark.LocalTriangleId, 1);
+	}
 }
 
 void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
@@ -6485,6 +6500,41 @@ FLinearColor ACarrierLabVisualizationActor::ColorForSampleLayer(
 			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
 	case ECarrierLabVisualizationLayer::DriftError:
 		return DriftColor(DriftErrorKmBySample.IsValidIndex(SampleId) ? DriftErrorKmBySample[SampleId] : -1.0);
+	case ECarrierLabVisualizationLayer::PhaseIIISummary:
+	{
+		const double ContinentalFraction = RenderContinentalFractions.IsValidIndex(SampleId) ? RenderContinentalFractions[SampleId] : 0.0;
+		const double ElevationKm = RenderElevations.IsValidIndex(SampleId)
+			? RenderElevations[SampleId]
+			: (State.Samples.IsValidIndex(SampleId) ? State.Samples[SampleId].Elevation : 0.0);
+		const double DistanceKm = DistanceToFrontKmBySample.IsValidIndex(SampleId) ? DistanceToFrontKmBySample[SampleId] : -1.0;
+		const uint8 RoleMask = SubductionRoleMask.IsValidIndex(SampleId) ? SubductionRoleMask[SampleId] : 0;
+		FLinearColor Color = ContinentalColor(ContinentalFraction);
+		if (PlateBoundaryMask.IsValidIndex(SampleId) && PlateBoundaryMask[SampleId] != 0)
+		{
+			Color = BlendMapOverlay(DimMapBase(Color), FLinearColor(0.72f, 0.82f, 0.96f, 1.0f), 0.55f);
+		}
+		if (DistanceKm >= 0.0 && FMath::IsFinite(DistanceKm))
+		{
+			Color = BlendMapOverlay(DimMapBase(Color), DistanceToFrontColor(DistanceKm), 0.34f);
+		}
+		if (RoleMask != 0)
+		{
+			Color = BlendMapOverlay(DimMapBase(Color), SubductionRoleColor(RoleMask), 0.72f);
+		}
+		if (FMath::Abs(ElevationKm) > 1.0e-9)
+		{
+			Color = BlendMapOverlay(Color, ElevationColor(ElevationKm), 0.58f);
+		}
+		if (MissMask.IsValidIndex(SampleId) && MissMask[SampleId] != 0)
+		{
+			Color = BlendMapOverlay(Color, FLinearColor(0.95f, 0.05f, 0.04f, 1.0f), 0.82f);
+		}
+		else if (OverlapMask.IsValidIndex(SampleId) && OverlapMask[SampleId] != 0)
+		{
+			Color = BlendMapOverlay(Color, FLinearColor(1.0f, 0.46f, 0.05f, 1.0f), 0.70f);
+		}
+		return Color;
+	}
 	case ECarrierLabVisualizationLayer::ElevationHeatmap:
 		return ElevationColor(RenderElevations.IsValidIndex(SampleId)
 			? RenderElevations[SampleId]
@@ -6626,6 +6676,9 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		break;
 	case ECarrierLabVisualizationLayer::DriftError:
 		LayerName = TEXT("drift error");
+		break;
+	case ECarrierLabVisualizationLayer::PhaseIIISummary:
+		LayerName = TEXT("phase iii summary");
 		break;
 	case ECarrierLabVisualizationLayer::ElevationHeatmap:
 		LayerName = TEXT("elevation heatmap");

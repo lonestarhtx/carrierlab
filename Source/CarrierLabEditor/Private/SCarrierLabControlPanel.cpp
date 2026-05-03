@@ -109,6 +109,7 @@ void SCarrierLabControlPanel::Construct(const FArguments& InArgs)
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::OverlapMask),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::BoundaryMask),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::DriftError),
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::PhaseIIISummary),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::ElevationHeatmap),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::SubductionMask),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap)
@@ -1248,6 +1249,8 @@ FString SCarrierLabControlPanel::LayerToString(const ECarrierLabVisualizationLay
 		return TEXT("Boundary");
 	case ECarrierLabVisualizationLayer::DriftError:
 		return TEXT("DriftError");
+	case ECarrierLabVisualizationLayer::PhaseIIISummary:
+		return TEXT("PhaseIIISummary");
 	case ECarrierLabVisualizationLayer::ElevationHeatmap:
 		return TEXT("ElevationHeatmap");
 	case ECarrierLabVisualizationLayer::SubductionMask:
