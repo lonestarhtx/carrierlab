@@ -1,0 +1,1154 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "CarrierLabPhaseIIID8Commandlet.h"
+
+#include "CarrierLabVisualizationActor.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+
+namespace
+{
+	constexpr int32 BaselineSamples = 60000;
+	constexpr int32 BaselinePlates = 40;
+	constexpr int32 BaselineSeed = 42;
+	constexpr int32 BaselineSteps = 32;
+	constexpr int32 MixedSignalSamples = 60000;
+	constexpr int32 MixedSignalPlates = 2;
+	constexpr int32 MaxSearchSteps = 80;
+	constexpr double DefaultVelocityMmPerYear = 66.6666666667;
+	constexpr double SlabPullSpeedMmPerYear = 8.0;
+	constexpr double ReferenceVelocityMmPerYear = 100.0;
+	constexpr double CollisionThresholdKm = 300.0;
+	constexpr double DestinationMassThresholdRatio = 0.5;
+	constexpr double RequiredReductionFraction = 0.80;
+	constexpr double RequiredCollisionAttributionFraction = 0.50;
+	constexpr TCHAR ExpectedSlice55StateHash[] = TEXT("3b4a85366dab80db");
+	constexpr TCHAR ExpectedSlice55MaterialLedgerHash[] = TEXT("bc3077100ba291b4");
+	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("bf8818a26ed7b1dc");
+
+	void HashMix(uint64& Hash, const uint64 Value)
+	{
+		Hash ^= Value;
+		Hash *= 1099511628211ull;
+	}
+
+	void HashMixDouble(uint64& Hash, const double Value)
+	{
+		HashMix(Hash, static_cast<uint64>(FMath::RoundToInt64(Value * 1000000000.0)));
+	}
+
+	void HashMixString(uint64& Hash, const FString& Value)
+	{
+		HashMix(Hash, static_cast<uint64>(Value.Len() + 1));
+		for (const TCHAR Ch : Value)
+		{
+			HashMix(Hash, static_cast<uint64>(Ch) + 1ull);
+		}
+	}
+
+	void HashMixEvidence(uint64& Hash, const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence)
+	{
+		HashMix(Hash, static_cast<uint64>(Evidence.EvidenceId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.ContactId + 1));
+		HashMix(Hash, Evidence.PairKey + 1ull);
+		HashMix(Hash, static_cast<uint64>(Evidence.PlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.OtherPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.LocalTriangleId + 1));
+		HashMix(Hash, static_cast<uint64>(Evidence.OtherLocalTriangleId + 1));
+		HashMixDouble(Hash, Evidence.SignedConvergenceVelocity);
+		HashMix(Hash, Evidence.bAccepted ? 1ull : 0ull);
+	}
+
+	FString HashToString(const uint64 Hash)
+	{
+		return FString::Printf(TEXT("%016llx"), static_cast<unsigned long long>(Hash));
+	}
+
+	FString JsonString(const FString& Value)
+	{
+		FString Escaped;
+		Escaped.Reserve(Value.Len() + 2);
+		for (const TCHAR Ch : Value)
+		{
+			switch (Ch)
+			{
+			case TEXT('\\'): Escaped += TEXT("\\\\"); break;
+			case TEXT('"'): Escaped += TEXT("\\\""); break;
+			case TEXT('\n'): Escaped += TEXT("\\n"); break;
+			case TEXT('\r'): Escaped += TEXT("\\r"); break;
+			case TEXT('\t'): Escaped += TEXT("\\t"); break;
+			default: Escaped.AppendChar(Ch); break;
+			}
+		}
+		return FString::Printf(TEXT("\"%s\""), *Escaped);
+	}
+
+	FString PassFail(const bool bPass)
+	{
+		return bPass ? TEXT("pass") : TEXT("fail");
+	}
+
+	double NetDelta(const double Gain, const double Loss)
+	{
+		return Gain - Loss;
+	}
+
+	double NetLossMagnitude(const double Net)
+	{
+		return FMath::Max(0.0, -Net);
+	}
+
+	double SafeRatio(const double Numerator, const double Denominator)
+	{
+		return FMath::Abs(Denominator) > UE_SMALL_NUMBER ? Numerator / Denominator : 0.0;
+	}
+
+	FString GetOutputRoot(const FString& Params)
+	{
+		FString OutputRoot;
+		if (!FParse::Value(*Params, TEXT("Out="), OutputRoot))
+		{
+			const FString Stamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+			OutputRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("IIID8"), Stamp);
+		}
+		return FPaths::ConvertRelativePathToFull(OutputRoot);
+	}
+
+	FString ResolveReportPath(const FString& Params)
+	{
+		FString ReportPath;
+		if (!FParse::Value(*Params, TEXT("Report="), ReportPath))
+		{
+			ReportPath = FPaths::Combine(
+				FPaths::ProjectDir(),
+				TEXT("docs"),
+				TEXT("checkpoints"),
+				TEXT("phase-iii-slice-iiid8-report.md"));
+		}
+		else if (FPaths::IsRelative(ReportPath))
+		{
+			ReportPath = FPaths::Combine(FPaths::ProjectDir(), ReportPath);
+		}
+		return FPaths::ConvertRelativePathToFull(ReportPath);
+	}
+
+	UWorld* GetCommandletWorld()
+	{
+		if (GEngine != nullptr)
+		{
+			for (const FWorldContext& Context : GEngine->GetWorldContexts())
+			{
+				if (Context.World() != nullptr)
+				{
+					return Context.World();
+				}
+			}
+		}
+		return GWorld;
+	}
+
+	ACarrierLabVisualizationActor* SpawnActor(
+		UWorld& World,
+		const int32 SampleCount,
+		const int32 PlateCount,
+		const double ContinentalPlateFraction,
+		const double VelocityMmPerYear)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		SpawnParams.bDeferConstruction = true;
+		ACarrierLabVisualizationActor* Actor = World.SpawnActor<ACarrierLabVisualizationActor>(
+			ACarrierLabVisualizationActor::StaticClass(),
+			FTransform::Identity,
+			SpawnParams);
+		if (Actor == nullptr)
+		{
+			return nullptr;
+		}
+
+		Actor->bAutoInitialize = false;
+		Actor->bPlayOnBegin = false;
+		Actor->bShowHud = false;
+		Actor->SampleCount = SampleCount;
+		Actor->PlateCount = PlateCount;
+		Actor->Seed = BaselineSeed;
+		Actor->ContinentalPlateFraction = ContinentalPlateFraction;
+		Actor->VelocityMmPerYear = VelocityMmPerYear;
+		Actor->MultiHitPolicy = ECarrierLabMultiHitPolicy::Centroid;
+		Actor->VisualizationLayer = ECarrierLabVisualizationLayer::PlateId;
+		Actor->PhaseIIICSlabPullSpeedMmPerYear = SlabPullSpeedMmPerYear;
+		Actor->PhaseIIICReferenceVelocityMmPerYear = ReferenceVelocityMmPerYear;
+		Actor->ConfigurePhaseIIICProcessLayer(false, false);
+		Actor->bEnableNaturalResamplingEvents = false;
+		Actor->FinishSpawning(FTransform::Identity);
+		return Actor;
+	}
+
+	struct FSlice55BypassResult
+	{
+		int32 Replay = 0;
+		bool bCompleted = false;
+		double Seconds = 0.0;
+		FCarrierLabPhaseIIContactMetrics ContactMetrics;
+		FCarrierLabPhaseIITriangleLabelMetrics LabelMetrics;
+		FCarrierLabPhaseIIResamplingFilterMetrics FilterMetrics;
+		FCarrierLabPhaseIIMaterialLedgerMetrics LedgerMetrics;
+		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+	};
+
+	struct FIIIBSignatureResult
+	{
+		int32 Replay = 0;
+		FString FixtureName;
+		int32 StepCount = 0;
+		bool bCompleted = false;
+		double Seconds = 0.0;
+		double PairSignedConvergenceVelocity = 0.0;
+		FCarrierLabPhaseIIIB1TrackingAudit TrackingAudit;
+		FCarrierLabPhaseIIIB2DistanceAudit DistanceAudit;
+		FCarrierLabPhaseIIIB3SubductionMatrixAudit MatrixAudit;
+		FCarrierLabPhaseIIIB4PolarityAudit PolarityAudit;
+		FCarrierLabPhaseIIIB6NeighborPropagationAudit PropagationAudit;
+		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+		FString ActiveListComponentHash;
+		FString DistanceComponentHash;
+		FString MatrixEvidenceComponentHash;
+		FString PolarityComponentHash;
+		FString PropagationComponentHash;
+		FString ClosureComponentHash;
+		FString Slice55ComponentHash;
+		FString IndependentSignatureHash;
+	};
+
+	struct FPrimaryReplayResult
+	{
+		FString FixtureName;
+		int32 Replay = 0;
+		bool bCompleted = false;
+		bool bIIIDActive = false;
+		double Seconds = 0.0;
+		int32 StepCount = 0;
+		int32 CollisionAttemptCount = 0;
+		int32 CollisionEventCount = 0;
+		int32 CollisionUpliftRecordCount = 0;
+		double CollisionTransferredContinentalArea = 0.0;
+		double CollisionUpliftDeltaKm = 0.0;
+		int32 PolicyResolvedMultiHitCount = 0;
+		FCarrierLabPhaseIIContactMetrics ContactMetrics;
+		FCarrierLabPhaseIITriangleLabelMetrics LabelMetrics;
+		FCarrierLabPhaseIIResamplingFilterMetrics FilterMetrics;
+		FCarrierLabPhaseIIMaterialLedgerMetrics LedgerMetrics;
+		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAudit;
+		FString CollisionMutationHash;
+		FString ReplayHash;
+	};
+
+	double SingleHitUniformOceanicNet(const FCarrierLabPhaseIIMaterialLedgerMetrics& Ledger)
+	{
+		return NetDelta(Ledger.SingleHitUniformOceanicGain, Ledger.SingleHitUniformOceanicLoss);
+	}
+
+	double SingleHitUniformContinentalNet(const FCarrierLabPhaseIIMaterialLedgerMetrics& Ledger)
+	{
+		return NetDelta(Ledger.SingleHitUniformContinentalGain, Ledger.SingleHitUniformContinentalLoss);
+	}
+
+	double SingleHitMixedNet(const FCarrierLabPhaseIIMaterialLedgerMetrics& Ledger)
+	{
+		return NetDelta(Ledger.SingleHitMixedTriangleGain, Ledger.SingleHitMixedTriangleLoss);
+	}
+
+	bool RunSlice55Bypass(const int32 Replay, FSlice55BypassResult& OutResult)
+	{
+		UE_LOG(LogTemp, Display, TEXT("IIID8 Slice 5.5 bypass replay %d: start (%d samples, %d plates, %d steps)"), Replay, BaselineSamples, BaselinePlates, BaselineSteps);
+		OutResult = FSlice55BypassResult();
+		OutResult.Replay = Replay;
+		UWorld* World = GetCommandletWorld();
+		if (World == nullptr)
+		{
+			return false;
+		}
+
+		const double StartSeconds = FPlatformTime::Seconds();
+		ACarrierLabVisualizationActor* Actor = SpawnActor(*World, BaselineSamples, BaselinePlates, 0.30, DefaultVelocityMmPerYear);
+		if (Actor == nullptr)
+		{
+			return false;
+		}
+		if (!Actor->InitializeCarrier())
+		{
+			Actor->Destroy();
+			return false;
+		}
+		Actor->ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture::Default);
+		for (int32 Step = 0; Step < BaselineSteps; ++Step)
+		{
+			Actor->StepOnce();
+			if (((Step + 1) % 4) == 0 || (Step + 1) == BaselineSteps)
+			{
+				UE_LOG(LogTemp, Display, TEXT("IIID8 Slice 5.5 bypass replay %d: step %d/%d"), Replay, Step + 1, BaselineSteps);
+			}
+		}
+
+		UE_LOG(LogTemp, Display, TEXT("IIID8 Slice 5.5 bypass replay %d: contacts/labels/filter"), Replay);
+		TArray<FCarrierLabPhaseIIContactRecord> Contacts;
+		TArray<FCarrierLabPhaseIITriangleLabelRecord> Labels;
+		TArray<FCarrierLabPhaseIIFilterDecisionRecord> Decisions;
+		FCarrierLabPhaseIITriangleLabelConfig LabelConfig;
+		const bool bOk =
+			Actor->DetectPhaseIIContacts(Contacts, OutResult.ContactMetrics) &&
+			Actor->BuildPhaseIITriangleLabels(Contacts, LabelConfig, Labels, OutResult.LabelMetrics) &&
+			Actor->ApplyPhaseIIResamplingFilterEvent(Labels, Decisions, OutResult.FilterMetrics, nullptr, &OutResult.LedgerMetrics) &&
+			Actor->GetPhaseIIIB7HashClosureAudit(OutResult.ClosureAudit);
+
+		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
+		OutResult.bCompleted = bOk;
+		UE_LOG(LogTemp, Display, TEXT("IIID8 Slice 5.5 bypass replay %d: %s in %.3fs"), Replay, bOk ? TEXT("complete") : TEXT("failed"), OutResult.Seconds);
+		Actor->Destroy();
+		CollectGarbage(RF_NoFlags);
+		return bOk;
+	}
+
+	bool BypassPasses(const FSlice55BypassResult& A, const FSlice55BypassResult& B)
+	{
+		return A.bCompleted && B.bCompleted &&
+			A.FilterMetrics.StateHashAfter == ExpectedSlice55StateHash &&
+			B.FilterMetrics.StateHashAfter == ExpectedSlice55StateHash &&
+			A.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash &&
+			B.LedgerMetrics.MaterialLedgerHash == ExpectedSlice55MaterialLedgerHash;
+	}
+
+	FString ComputeActiveListComponentHash(const FCarrierLabPhaseIIIB1TrackingAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-active-list-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SourceBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MissingBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonBoundaryActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DuplicateActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.InvalidActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EmptyActivePlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		return HashToString(Hash);
+	}
+
+	FString ComputeDistanceComponentHash(const FCarrierLabPhaseIIIB2DistanceAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-distance-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SourceBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MissingDistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonFiniteDistanceCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NegativeDistanceCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OverThresholdActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceCulledTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EmptyActivePlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMixDouble(Hash, Audit.DistanceThresholdKm);
+		HashMixDouble(Hash, Audit.MinDistanceKm);
+		HashMixDouble(Hash, Audit.MeanDistanceKm);
+		HashMixDouble(Hash, Audit.MaxDistanceKm);
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeLocalTriangleId + 1));
+		HashMixDouble(Hash, Audit.ProbeDistanceKm);
+		HashMixDouble(Hash, Audit.ProbeStepDistanceKm);
+		return HashToString(Hash);
+	}
+
+	FString ComputeMatrixEvidenceComponentHash(const FCarrierLabPhaseIIIB3SubductionMatrixAudit& Audit, const double PairSignedVelocity)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-matrix-evidence-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveBoundaryTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.InvalidMatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SelfMatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.RayTestCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.HitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.BoundaryHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonConvergentHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.AcceptedLocalPositiveHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.RejectedLocalNonPositiveHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateA + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateB + 1));
+		HashMixDouble(Hash, PairSignedVelocity);
+		HashMixDouble(Hash, Audit.ProbeSignedConvergenceVelocity);
+		HashMixString(Hash, Audit.MatrixEvidenceHash);
+		HashMix(Hash, static_cast<uint64>(Audit.AcceptedEvidence.Num() + 1));
+		for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : Audit.AcceptedEvidence)
+		{
+			HashMixEvidence(Hash, Evidence);
+		}
+		HashMix(Hash, static_cast<uint64>(Audit.RejectedEvidence.Num() + 1));
+		for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : Audit.RejectedEvidence)
+		{
+			HashMixEvidence(Hash, Evidence);
+		}
+		return HashToString(Hash);
+	}
+
+	FString ComputePolarityComponentHash(const FCarrierLabPhaseIIIB4PolarityAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-polarity-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OceanicUnderContinentalCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.CollisionCandidateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OceanOceanDeferredCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OlderOceanicUnderYoungerOceanicCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.InvalidDecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MissingDecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SubductionPolarityCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateA + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateB + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeUnderPlate + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeOverPlate + 1));
+		HashMixDouble(Hash, Audit.ProbePlateAContinentalFraction);
+		HashMixDouble(Hash, Audit.ProbePlateBContinentalFraction);
+		HashMixDouble(Hash, Audit.ProbePlateAOceanicAge);
+		HashMixDouble(Hash, Audit.ProbePlateBOceanicAge);
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeDecisionClass) + 1ull);
+		HashMix(Hash, static_cast<uint64>(Audit.Decisions.Num() + 1));
+		for (const FCarrierLabPhaseIIIB4PolarityDecisionAudit& Decision : Audit.Decisions)
+		{
+			HashMix(Hash, Decision.PairKey + 1ull);
+			HashMix(Hash, static_cast<uint64>(Decision.PlateA + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.PlateB + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.UnderPlate + 1));
+			HashMix(Hash, static_cast<uint64>(Decision.OverPlate + 1));
+			HashMixDouble(Hash, Decision.PlateAContinentalFraction);
+			HashMixDouble(Hash, Decision.PlateBContinentalFraction);
+			HashMixDouble(Hash, Decision.PlateAOceanicAge);
+			HashMixDouble(Hash, Decision.PlateBOceanicAge);
+			HashMix(Hash, static_cast<uint64>(Decision.DecisionClass) + 1ull);
+		}
+		return HashToString(Hash);
+	}
+
+	FString ComputePropagationComponentHash(const FCarrierLabPhaseIIIB6NeighborPropagationAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-propagation-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.TotalPlateLocalTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.NonBoundaryActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.OverThresholdActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationSeedHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationAddedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDuplicateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDistanceRejectedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationInvalidCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActivePlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MaxActiveTrianglesOnPlate + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbePlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ProbeLocalTriangleId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedEvidenceId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedOtherPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SeedLocalTriangleId + 1));
+		HashMixDouble(Hash, Audit.SeedSignedConvergenceVelocity);
+		HashMixDouble(Hash, Audit.ProbeDistanceKm);
+		HashMixDouble(Hash, Audit.DistanceThresholdKm);
+		HashMixDouble(Hash, Audit.MaxDistanceKm);
+		return HashToString(Hash);
+	}
+
+	FString ComputeClosureComponentHash(const FCarrierLabPhaseIIIB7HashClosureAudit& Audit)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-closure-component-v1"));
+		HashMix(Hash, static_cast<uint64>(Audit.Step + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.EventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.SampleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ResetSerial + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.ActiveTriangleCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.DistanceRecordCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixPairCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixRayTestCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixBoundaryHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.MatrixNonConvergentHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PolarityDecisionCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.TriangleHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationSeedHitCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationAddedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDuplicateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationDistanceRejectedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Audit.PropagationInvalidCount + 1));
+		HashMixString(Hash, Audit.ProjectionHash);
+		HashMixString(Hash, Audit.StateHash);
+		HashMixString(Hash, Audit.CrustStateHash);
+		HashMixString(Hash, Audit.MetricsConvergenceTrackingHash);
+		HashMixString(Hash, Audit.ComputedConvergenceTrackingHash);
+		HashMix(Hash, Audit.bMetricsHashMatchesComputed ? 1ull : 0ull);
+		return HashToString(Hash);
+	}
+
+	FString ComputeSlice55ComponentHash(const FSlice55BypassResult& A, const FSlice55BypassResult& B)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-slice55-regression-component-v1"));
+		const FSlice55BypassResult* Results[] = { &A, &B };
+		for (const FSlice55BypassResult* Result : Results)
+		{
+			HashMix(Hash, static_cast<uint64>(Result->Replay + 1));
+			HashMix(Hash, Result->bCompleted ? 1ull : 0ull);
+			HashMixString(Hash, Result->ContactMetrics.ContactLogHash);
+			HashMixString(Hash, Result->LabelMetrics.TriangleLabelHash);
+			HashMixString(Hash, Result->FilterMetrics.FilterDecisionHash);
+			HashMixString(Hash, Result->FilterMetrics.StateHashAfter);
+			HashMixString(Hash, Result->LedgerMetrics.MaterialLedgerHash);
+		}
+		HashMixString(Hash, ExpectedSlice55StateHash);
+		HashMixString(Hash, ExpectedSlice55MaterialLedgerHash);
+		return HashToString(Hash);
+	}
+
+	void FinalizeIIIBIndependentSignature(
+		const FSlice55BypassResult& BypassA,
+		const FSlice55BypassResult& BypassB,
+		FIIIBSignatureResult& Result)
+	{
+		Result.ActiveListComponentHash = ComputeActiveListComponentHash(Result.TrackingAudit);
+		Result.DistanceComponentHash = ComputeDistanceComponentHash(Result.DistanceAudit);
+		Result.MatrixEvidenceComponentHash = ComputeMatrixEvidenceComponentHash(Result.MatrixAudit, Result.PairSignedConvergenceVelocity);
+		Result.PolarityComponentHash = ComputePolarityComponentHash(Result.PolarityAudit);
+		Result.PropagationComponentHash = ComputePropagationComponentHash(Result.PropagationAudit);
+		Result.ClosureComponentHash = ComputeClosureComponentHash(Result.ClosureAudit);
+		Result.Slice55ComponentHash = ComputeSlice55ComponentHash(BypassA, BypassB);
+
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIB-independent-signature-v1"));
+		HashMixString(Hash, Result.FixtureName);
+		HashMix(Hash, static_cast<uint64>(Result.StepCount + 1));
+		HashMixString(Hash, Result.Slice55ComponentHash);
+		HashMixString(Hash, Result.ActiveListComponentHash);
+		HashMixString(Hash, Result.DistanceComponentHash);
+		HashMixString(Hash, Result.MatrixEvidenceComponentHash);
+		HashMixString(Hash, Result.PolarityComponentHash);
+		HashMixString(Hash, Result.PropagationComponentHash);
+		HashMixString(Hash, Result.ClosureComponentHash);
+		Result.IndependentSignatureHash = HashToString(Hash);
+	}
+
+	bool CaptureIIIBSignatureAudits(const ACarrierLabVisualizationActor& Actor, FIIIBSignatureResult& OutResult)
+	{
+		return Actor.GetPhaseIIIB1TrackingAudit(OutResult.TrackingAudit) &&
+			Actor.GetPhaseIIIB2DistanceAudit(OutResult.DistanceAudit) &&
+			Actor.GetPhaseIIIB3SubductionMatrixAudit(OutResult.MatrixAudit) &&
+			Actor.GetPhaseIIIB4PolarityAudit(OutResult.PolarityAudit) &&
+			Actor.GetPhaseIIIB6NeighborPropagationAudit(OutResult.PropagationAudit) &&
+			Actor.GetPhaseIIIB7HashClosureAudit(OutResult.ClosureAudit);
+	}
+
+	bool RunIIIBLocalVsPairSignatureReplay(
+		const int32 Replay,
+		const FSlice55BypassResult& BypassA,
+		const FSlice55BypassResult& BypassB,
+		FIIIBSignatureResult& OutResult)
+	{
+		UE_LOG(LogTemp, Display, TEXT("IIID8 IIIB signature replay %d: start"), Replay);
+		OutResult = FIIIBSignatureResult();
+		OutResult.Replay = Replay;
+		OutResult.FixtureName = TEXT("local_vs_pair_discriminator");
+		UWorld* World = GetCommandletWorld();
+		if (World == nullptr)
+		{
+			return false;
+		}
+
+		const double StartSeconds = FPlatformTime::Seconds();
+		ACarrierLabVisualizationActor* Actor = SpawnActor(*World, MixedSignalSamples, MixedSignalPlates, 0.50, DefaultVelocityMmPerYear);
+		if (Actor == nullptr)
+		{
+			return false;
+		}
+		if (!Actor->InitializeCarrier())
+		{
+			Actor->Destroy();
+			return false;
+		}
+		Actor->ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture::ForcedDivergence);
+		if (!Actor->SetPlateContinentalForTest(0, true) ||
+			!Actor->SetPlateContinentalForTest(1, false))
+		{
+			Actor->Destroy();
+			return false;
+		}
+
+		for (int32 Step = 0; Step <= MaxSearchSteps; ++Step)
+		{
+			if (Step > 0)
+			{
+				Actor->StepOnce();
+			}
+
+			FIIIBSignatureResult Candidate;
+			Candidate.Replay = Replay;
+			Candidate.FixtureName = OutResult.FixtureName;
+			Candidate.StepCount = Step;
+			Candidate.PairSignedConvergenceVelocity = Actor->ComputePhaseIIPairSignedConvergenceVelocity(0, 1);
+			if (!CaptureIIIBSignatureAudits(*Actor, Candidate))
+			{
+				Actor->Destroy();
+				return false;
+			}
+
+			const bool bDiscriminates =
+				Candidate.PairSignedConvergenceVelocity <= 0.0 &&
+				Candidate.MatrixAudit.AcceptedLocalPositiveHitCount > 0 &&
+				Candidate.MatrixAudit.RejectedLocalNonPositiveHitCount > 0 &&
+				Candidate.MatrixAudit.MatrixPairCount == 1 &&
+				Candidate.MatrixAudit.ProbePlateA == 0 &&
+				Candidate.MatrixAudit.ProbePlateB == 1 &&
+				Candidate.PolarityAudit.DecisionCount == 1 &&
+				Candidate.PropagationAudit.PropagationSeedHitCount > 0 &&
+				Candidate.PropagationAudit.PropagationAddedCount > 0 &&
+				Candidate.ClosureAudit.bMetricsHashMatchesComputed;
+			if (bDiscriminates)
+			{
+				FinalizeIIIBIndependentSignature(BypassA, BypassB, Candidate);
+				OutResult = Candidate;
+				OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
+				OutResult.bCompleted = true;
+				UE_LOG(LogTemp, Display, TEXT("IIID8 IIIB signature replay %d: matched at step %d signature=%s in %.3fs"), Replay, Step, *OutResult.IndependentSignatureHash, OutResult.Seconds);
+				break;
+			}
+			if ((Step % 10) == 0)
+			{
+				UE_LOG(LogTemp, Display, TEXT("IIID8 IIIB signature replay %d: searched step %d/%d"), Replay, Step, MaxSearchSteps);
+			}
+		}
+
+		if (!OutResult.bCompleted)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("IIID8 IIIB signature replay %d: no discriminator match after %d steps"), Replay, MaxSearchSteps);
+		}
+		Actor->Destroy();
+		CollectGarbage(RF_NoFlags);
+		return OutResult.bCompleted;
+	}
+
+	bool IIIBSignatureReplayStable(const FIIIBSignatureResult& A, const FIIIBSignatureResult& B)
+	{
+		return A.bCompleted && B.bCompleted &&
+			A.FixtureName == B.FixtureName &&
+			A.IndependentSignatureHash == B.IndependentSignatureHash &&
+			A.ActiveListComponentHash == B.ActiveListComponentHash &&
+			A.DistanceComponentHash == B.DistanceComponentHash &&
+			A.MatrixEvidenceComponentHash == B.MatrixEvidenceComponentHash &&
+			A.PolarityComponentHash == B.PolarityComponentHash &&
+			A.PropagationComponentHash == B.PropagationComponentHash &&
+			A.ClosureComponentHash == B.ClosureComponentHash &&
+			A.Slice55ComponentHash == B.Slice55ComponentHash &&
+			A.ClosureAudit.ComputedConvergenceTrackingHash == B.ClosureAudit.ComputedConvergenceTrackingHash;
+	}
+
+	bool IIIBIndependentSignaturePasses(const FIIIBSignatureResult& A, const FIIIBSignatureResult& B)
+	{
+		return IIIBSignatureReplayStable(A, B) &&
+			A.IndependentSignatureHash == ExpectedIIIBIndependentSignature &&
+			B.IndependentSignatureHash == ExpectedIIIBIndependentSignature &&
+			A.PairSignedConvergenceVelocity <= 0.0 &&
+			A.MatrixAudit.AcceptedLocalPositiveHitCount > 0 &&
+			A.MatrixAudit.RejectedLocalNonPositiveHitCount > 0 &&
+			A.MatrixAudit.MatrixPairCount == 1 &&
+			A.PolarityAudit.DecisionCount == 1 &&
+			A.PropagationAudit.PropagationSeedHitCount > 0 &&
+			A.PropagationAudit.PropagationAddedCount > 0 &&
+			A.ClosureAudit.bMetricsHashMatchesComputed &&
+			B.ClosureAudit.bMetricsHashMatchesComputed;
+	}
+
+	FString ComputePrimaryReplayHash(const FPrimaryReplayResult& Result)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIID8-primary-replay-v1"));
+		HashMixString(Hash, Result.FixtureName);
+		HashMix(Hash, Result.bCompleted ? 1ull : 0ull);
+		HashMix(Hash, Result.bIIIDActive ? 1ull : 0ull);
+		HashMix(Hash, static_cast<uint64>(Result.StepCount + 1));
+		HashMix(Hash, static_cast<uint64>(Result.CollisionEventCount + 1));
+		HashMix(Hash, static_cast<uint64>(Result.CollisionUpliftRecordCount + 1));
+		HashMixDouble(Hash, Result.CollisionTransferredContinentalArea);
+		HashMixDouble(Hash, Result.CollisionUpliftDeltaKm);
+		HashMix(Hash, static_cast<uint64>(Result.PolicyResolvedMultiHitCount + 1));
+		HashMixString(Hash, Result.ContactMetrics.ContactLogHash);
+		HashMixString(Hash, Result.LabelMetrics.TriangleLabelHash);
+		HashMixString(Hash, Result.FilterMetrics.FilterDecisionHash);
+		HashMixString(Hash, Result.FilterMetrics.StateHashAfter);
+		HashMixString(Hash, Result.LedgerMetrics.MaterialLedgerHash);
+		HashMixString(Hash, Result.ClosureAudit.ComputedConvergenceTrackingHash);
+		HashMixString(Hash, Result.CollisionMutationHash);
+		HashMixDouble(Hash, SingleHitUniformOceanicNet(Result.LedgerMetrics));
+		return HashToString(Hash);
+	}
+
+	FPrimaryReplayResult MakePrimaryReplayFromBypass(const FSlice55BypassResult& Bypass)
+	{
+		FPrimaryReplayResult Result;
+		Result.FixtureName = TEXT("phase_ii_slice55_baseline_60k");
+		Result.Replay = Bypass.Replay;
+		Result.bCompleted = Bypass.bCompleted;
+		Result.bIIIDActive = false;
+		Result.Seconds = Bypass.Seconds;
+		Result.StepCount = BaselineSteps;
+		Result.PolicyResolvedMultiHitCount = 0;
+		Result.ContactMetrics = Bypass.ContactMetrics;
+		Result.LabelMetrics = Bypass.LabelMetrics;
+		Result.FilterMetrics = Bypass.FilterMetrics;
+		Result.LedgerMetrics = Bypass.LedgerMetrics;
+		Result.ClosureAudit = Bypass.ClosureAudit;
+		Result.CollisionMutationHash = TEXT("0000000000000000");
+		Result.ReplayHash = ComputePrimaryReplayHash(Result);
+		return Result;
+	}
+
+	bool ApplyOneCollisionIfAvailable(ACarrierLabVisualizationActor& Actor, FPrimaryReplayResult& Result)
+	{
+		UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: start attempt %d"), Result.CollisionAttemptCount + 1);
+		const double StartSeconds = FPlatformTime::Seconds();
+		FCarrierLabPhaseIIID7CollisionUpliftAudit Audit;
+		if (!Actor.ApplyPhaseIIID7CollisionUplift(Audit, CollisionThresholdKm, DestinationMassThresholdRatio))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("IIID8 collision probe: failed in %.3fs"), FPlatformTime::Seconds() - StartSeconds);
+			return false;
+		}
+		++Result.CollisionAttemptCount;
+		if (!Audit.bTopologyMutationApplied)
+		{
+			UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: no mutation in %.3fs"), FPlatformTime::Seconds() - StartSeconds);
+			return true;
+		}
+
+		++Result.CollisionEventCount;
+		Result.CollisionUpliftRecordCount += Audit.UpliftRecordCount;
+		Result.CollisionUpliftDeltaKm += Audit.TotalAppliedDeltaKm;
+		for (const FCarrierLabPhaseIIID6TopologyMutationRecord& Record : Audit.TopologyAudit.Records)
+		{
+			if (Record.bApplied)
+			{
+				Result.CollisionTransferredContinentalArea += FMath::Max(0.0, Record.DestinationContinentalAreaDelta);
+			}
+		}
+
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, Result.CollisionMutationHash);
+		HashMixString(Hash, Audit.UpliftHash);
+		HashMixString(Hash, Audit.SourceTopologyMutationHash);
+		HashMix(Hash, static_cast<uint64>(Result.CollisionEventCount + 1));
+		HashMixDouble(Hash, Result.CollisionTransferredContinentalArea);
+		Result.CollisionMutationHash = HashToString(Hash);
+		UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: mutation event=%d transfer=%.12f uplift_records=%d in %.3fs"), Result.CollisionEventCount, Result.CollisionTransferredContinentalArea, Audit.UpliftRecordCount, FPlatformTime::Seconds() - StartSeconds);
+		return true;
+	}
+
+	bool RunPrimaryReplay(const int32 Replay, const bool bEnableIIID, FPrimaryReplayResult& OutResult)
+	{
+		UE_LOG(LogTemp, Display, TEXT("IIID8 primary replay %d (%s): start (%d samples, %d plates, %d steps)"), Replay, bEnableIIID ? TEXT("IIID active") : TEXT("baseline"), BaselineSamples, BaselinePlates, BaselineSteps);
+		OutResult = FPrimaryReplayResult();
+		OutResult.Replay = Replay;
+		OutResult.bIIIDActive = bEnableIIID;
+		OutResult.FixtureName = bEnableIIID ? TEXT("iiid_active_primary_60k") : TEXT("phase_ii_slice55_baseline_60k");
+		OutResult.CollisionMutationHash = TEXT("0000000000000000");
+		UWorld* World = GetCommandletWorld();
+		if (World == nullptr)
+		{
+			return false;
+		}
+
+		const double StartSeconds = FPlatformTime::Seconds();
+		ACarrierLabVisualizationActor* Actor = SpawnActor(*World, BaselineSamples, BaselinePlates, 0.30, DefaultVelocityMmPerYear);
+		if (Actor == nullptr)
+		{
+			return false;
+		}
+		if (!Actor->InitializeCarrier())
+		{
+			Actor->Destroy();
+			return false;
+		}
+		Actor->ConfigurePhaseIIMotionFixture(ECarrierLabPhaseIIMotionFixture::Default);
+		Actor->ConfigurePhaseIIICProcessLayer(bEnableIIID, false);
+
+		for (int32 Step = 0; Step < BaselineSteps; ++Step)
+		{
+			const double StepStartSeconds = FPlatformTime::Seconds();
+			UE_LOG(LogTemp, Display, TEXT("IIID8 primary replay %d (%s): begin step %d/%d"), Replay, bEnableIIID ? TEXT("IIID active") : TEXT("baseline"), Step + 1, BaselineSteps);
+			Actor->StepOnce();
+			UE_LOG(LogTemp, Display, TEXT("IIID8 primary replay %d (%s): StepOnce step %d/%d complete in %.3fs"), Replay, bEnableIIID ? TEXT("IIID active") : TEXT("baseline"), Step + 1, BaselineSteps, FPlatformTime::Seconds() - StepStartSeconds);
+			if (bEnableIIID && !ApplyOneCollisionIfAvailable(*Actor, OutResult))
+			{
+				Actor->Destroy();
+				return false;
+			}
+			if (((Step + 1) % 4) == 0 || (Step + 1) == BaselineSteps)
+			{
+				UE_LOG(LogTemp, Display, TEXT("IIID8 primary replay %d (%s): step %d/%d collisions=%d"), Replay, bEnableIIID ? TEXT("IIID active") : TEXT("baseline"), Step + 1, BaselineSteps, OutResult.CollisionEventCount);
+			}
+		}
+
+		UE_LOG(LogTemp, Display, TEXT("IIID8 primary replay %d (%s): contacts/labels/filter"), Replay, bEnableIIID ? TEXT("IIID active") : TEXT("baseline"));
+		TArray<FCarrierLabPhaseIIContactRecord> Contacts;
+		TArray<FCarrierLabPhaseIITriangleLabelRecord> Labels;
+		TArray<FCarrierLabPhaseIIFilterDecisionRecord> Decisions;
+		FCarrierLabPhaseIITriangleLabelConfig LabelConfig;
+		const bool bOk =
+			Actor->DetectPhaseIIContacts(Contacts, OutResult.ContactMetrics) &&
+			Actor->BuildPhaseIITriangleLabels(Contacts, LabelConfig, Labels, OutResult.LabelMetrics) &&
+			Actor->ApplyPhaseIIResamplingFilterEvent(Labels, Decisions, OutResult.FilterMetrics, nullptr, &OutResult.LedgerMetrics) &&
+			Actor->GetPhaseIIIB7HashClosureAudit(OutResult.ClosureAudit);
+
+		OutResult.PolicyResolvedMultiHitCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
+		OutResult.StepCount = Actor->CurrentMetrics.Step;
+		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
+		OutResult.bCompleted = bOk;
+		OutResult.ReplayHash = ComputePrimaryReplayHash(OutResult);
+		UE_LOG(LogTemp, Display, TEXT("IIID8 primary replay %d (%s): %s in %.3fs collisions=%d transfer=%.12f uniform_oceanic_net=%.12f"), Replay, bEnableIIID ? TEXT("IIID active") : TEXT("baseline"), bOk ? TEXT("complete") : TEXT("failed"), OutResult.Seconds, OutResult.CollisionEventCount, OutResult.CollisionTransferredContinentalArea, SingleHitUniformOceanicNet(OutResult.LedgerMetrics));
+
+		Actor->Destroy();
+		CollectGarbage(RF_NoFlags);
+		return bOk;
+	}
+
+	bool PrimaryReplayStable(const FPrimaryReplayResult& A, const FPrimaryReplayResult& B)
+	{
+		return A.bCompleted && B.bCompleted &&
+			A.FixtureName == B.FixtureName &&
+			A.ReplayHash == B.ReplayHash &&
+			A.FilterMetrics.FilterDecisionHash == B.FilterMetrics.FilterDecisionHash &&
+			A.FilterMetrics.StateHashAfter == B.FilterMetrics.StateHashAfter &&
+			A.LedgerMetrics.MaterialLedgerHash == B.LedgerMetrics.MaterialLedgerHash &&
+			A.CollisionMutationHash == B.CollisionMutationHash &&
+			A.CollisionEventCount == B.CollisionEventCount &&
+			A.PolicyResolvedMultiHitCount == B.PolicyResolvedMultiHitCount;
+	}
+
+	double ReductionFraction(const FPrimaryReplayResult& Baseline, const FPrimaryReplayResult& Active)
+	{
+		const double BaselineLoss = NetLossMagnitude(SingleHitUniformOceanicNet(Baseline.LedgerMetrics));
+		const double ActiveLoss = NetLossMagnitude(SingleHitUniformOceanicNet(Active.LedgerMetrics));
+		return SafeRatio(BaselineLoss - ActiveLoss, BaselineLoss);
+	}
+
+	double EliminatedLoss(const FPrimaryReplayResult& Baseline, const FPrimaryReplayResult& Active)
+	{
+		const double BaselineLoss = NetLossMagnitude(SingleHitUniformOceanicNet(Baseline.LedgerMetrics));
+		const double ActiveLoss = NetLossMagnitude(SingleHitUniformOceanicNet(Active.LedgerMetrics));
+		return BaselineLoss - ActiveLoss;
+	}
+
+	double CollisionAttributionFraction(const FPrimaryReplayResult& Baseline, const FPrimaryReplayResult& Active)
+	{
+		return SafeRatio(Active.CollisionTransferredContinentalArea, EliminatedLoss(Baseline, Active));
+	}
+
+	bool IIIDActivePasses(
+		const FPrimaryReplayResult& BaselineA,
+		const FPrimaryReplayResult& ActiveA,
+		const FPrimaryReplayResult& ActiveB)
+	{
+		const double Reduction = ReductionFraction(BaselineA, ActiveA);
+		const double Attribution = CollisionAttributionFraction(BaselineA, ActiveA);
+		return PrimaryReplayStable(ActiveA, ActiveB) &&
+			ActiveA.CollisionEventCount > 0 &&
+			ActiveA.PolicyResolvedMultiHitCount == 0 &&
+			ActiveB.PolicyResolvedMultiHitCount == 0 &&
+			Reduction >= RequiredReductionFraction &&
+			Attribution >= RequiredCollisionAttributionFraction;
+	}
+
+	void AppendPrimaryJson(const FPrimaryReplayResult& Result, TArray<FString>& Lines)
+	{
+		const double UniformOceanicNet = SingleHitUniformOceanicNet(Result.LedgerMetrics);
+		Lines.Add(FString::Printf(
+			TEXT("{\"kind\":\"primary_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"iiid_active\":%s,\"step_count\":%d,\"collision_events\":%d,\"collision_attempts\":%d,\"collision_transferred_continental_area\":%.15f,\"collision_uplift_records\":%d,\"collision_uplift_delta_km\":%.15f,\"policy_resolved_multi_hit_count\":%d,\"contact_hash\":%s,\"label_hash\":%s,\"filter_decision_hash\":%s,\"state_hash_after\":%s,\"material_ledger_hash\":%s,\"single_hit_uniform_oceanic_count\":%d,\"single_hit_uniform_oceanic_loss\":%.15f,\"single_hit_uniform_oceanic_gain\":%.15f,\"single_hit_uniform_oceanic_net\":%.15f,\"single_hit_uniform_continental_count\":%d,\"single_hit_uniform_continental_net\":%.15f,\"single_hit_mixed_count\":%d,\"single_hit_mixed_net\":%.15f,\"auth_caf_before\":%.12f,\"auth_caf_after\":%.12f,\"seconds\":%.6f,\"replay_hash\":%s}"),
+			*JsonString(Result.FixtureName),
+			Result.Replay,
+			Result.bCompleted ? TEXT("true") : TEXT("false"),
+			Result.bIIIDActive ? TEXT("true") : TEXT("false"),
+			Result.StepCount,
+			Result.CollisionEventCount,
+			Result.CollisionAttemptCount,
+			Result.CollisionTransferredContinentalArea,
+			Result.CollisionUpliftRecordCount,
+			Result.CollisionUpliftDeltaKm,
+			Result.PolicyResolvedMultiHitCount,
+			*JsonString(Result.ContactMetrics.ContactLogHash),
+			*JsonString(Result.LabelMetrics.TriangleLabelHash),
+			*JsonString(Result.FilterMetrics.FilterDecisionHash),
+			*JsonString(Result.FilterMetrics.StateHashAfter),
+			*JsonString(Result.LedgerMetrics.MaterialLedgerHash),
+			Result.LedgerMetrics.SingleHitUniformOceanicRecordCount,
+			Result.LedgerMetrics.SingleHitUniformOceanicLoss,
+			Result.LedgerMetrics.SingleHitUniformOceanicGain,
+			UniformOceanicNet,
+			Result.LedgerMetrics.SingleHitUniformContinentalRecordCount,
+			SingleHitUniformContinentalNet(Result.LedgerMetrics),
+			Result.LedgerMetrics.SingleHitMixedTriangleRecordCount,
+			SingleHitMixedNet(Result.LedgerMetrics),
+			Result.FilterMetrics.AuthoritativeCAFBefore,
+			Result.FilterMetrics.AuthoritativeCAFAfter,
+			Result.Seconds,
+			*JsonString(Result.ReplayHash)));
+	}
+
+	FString BuildReport(
+		const FString& OutputRoot,
+		const FSlice55BypassResult& BypassA,
+		const FSlice55BypassResult& BypassB,
+		const FIIIBSignatureResult& IIIBA,
+		const FIIIBSignatureResult& IIIBB,
+		const FPrimaryReplayResult& BaselineA,
+		const FPrimaryReplayResult& BaselineB,
+		const FPrimaryReplayResult& ActiveA,
+		const FPrimaryReplayResult& ActiveB,
+		const bool bActiveReplay1Requested)
+	{
+		const bool bBypassPass = BypassPasses(BypassA, BypassB);
+		const bool bIIIBPass = IIIBIndependentSignaturePasses(IIIBA, IIIBB);
+		const bool bBaselineStable = PrimaryReplayStable(BaselineA, BaselineB);
+		const bool bActivePass = IIIDActivePasses(BaselineA, ActiveA, ActiveB);
+		const double Reduction = ReductionFraction(BaselineA, ActiveA);
+		const double Eliminated = EliminatedLoss(BaselineA, ActiveA);
+		const double Attribution = CollisionAttributionFraction(BaselineA, ActiveA);
+		const bool bAllPass = bBypassPass && bIIIBPass && bBaselineStable && bActivePass;
+
+		FString Report;
+		Report += TEXT("# Phase III Slice IIID.8 Report - Slice 5.5 Asymmetry Recheck\n\n");
+		Report += FString::Printf(TEXT("Status: %s. This slice re-runs the 60k Slice 5.5 single-hit source-triangle subdivision with IIID collision handling active, then compares the uniform-oceanic single-hit continental loss against the accepted Phase II Slice 5.5 baseline. It does not add paper remeshing, qGamma oceanic generation, rifting, erosion, terrain displacement, ownership recovery, or projection repair.\n\n"), bAllPass ? TEXT("PASS") : TEXT("FAIL"));
+		Report += FString::Printf(TEXT("Output root: `%s`\n\n"), *OutputRoot);
+
+		Report += TEXT("## Gate Summary\n\n");
+		Report += TEXT("| Gate | Result | Evidence |\n");
+		Report += TEXT("|---|---:|---|\n");
+		Report += FString::Printf(
+			TEXT("| Slice 5.5 fixed-fixture regression | %s | state `%s` / `%s`, ledger `%s` / `%s` |\n"),
+			*PassFail(bBypassPass),
+			*BypassA.FilterMetrics.StateHashAfter,
+			*BypassB.FilterMetrics.StateHashAfter,
+			*BypassA.LedgerMetrics.MaterialLedgerHash,
+			*BypassB.LedgerMetrics.MaterialLedgerHash);
+		Report += FString::Printf(
+			TEXT("| IIIB independent signature regression | %s | replay A `%s`, replay B `%s`, expected `%s` |\n"),
+			*PassFail(bIIIBPass),
+			*IIIBA.IndependentSignatureHash,
+			*IIIBB.IndependentSignatureHash,
+			ExpectedIIIBIndependentSignature);
+		Report += FString::Printf(
+			TEXT("| Baseline primary replay stable | %s | replay A `%s`, replay B `%s`, ledger `%s` / `%s` |\n"),
+			*PassFail(bBaselineStable),
+			*BaselineA.ReplayHash,
+			*BaselineB.ReplayHash,
+			*BaselineA.LedgerMetrics.MaterialLedgerHash,
+			*BaselineB.LedgerMetrics.MaterialLedgerHash);
+		Report += FString::Printf(
+			TEXT("| Uniform-oceanic single-hit loss reduction | %s | baseline %.12f, IIID %.12f, reduction %.2f%%, target %.2f%% |\n"),
+			*PassFail(Reduction >= RequiredReductionFraction),
+			SingleHitUniformOceanicNet(BaselineA.LedgerMetrics),
+			SingleHitUniformOceanicNet(ActiveA.LedgerMetrics),
+			Reduction * 100.0,
+			RequiredReductionFraction * 100.0);
+		Report += FString::Printf(
+			TEXT("| Collision-transfer attribution | %s | eliminated %.12f, transferred %.12f, attribution %.2f%%, target %.2f%% |\n"),
+			*PassFail(Attribution >= RequiredCollisionAttributionFraction),
+			Eliminated,
+			ActiveA.CollisionTransferredContinentalArea,
+			Attribution * 100.0,
+			RequiredCollisionAttributionFraction * 100.0);
+		Report += FString::Printf(
+			TEXT("| No lab multi-hit policy influence | %s | baseline %d / %d, IIID %d / %d |\n\n"),
+			*PassFail(BaselineA.PolicyResolvedMultiHitCount == 0 && BaselineB.PolicyResolvedMultiHitCount == 0 && ActiveA.PolicyResolvedMultiHitCount == 0 && (!bActiveReplay1Requested || ActiveB.PolicyResolvedMultiHitCount == 0)),
+			BaselineA.PolicyResolvedMultiHitCount,
+			BaselineB.PolicyResolvedMultiHitCount,
+			ActiveA.PolicyResolvedMultiHitCount,
+			ActiveB.PolicyResolvedMultiHitCount);
+		if (!bActiveReplay1Requested)
+		{
+			Report += TEXT("| IIID active replay 1 | SKIP | Not run by default because the 60k/40 collision-application replay is expensive; pass/fail remains false unless `-RunActiveReplay1` is supplied and replay stability is proven. |\n\n");
+		}
+
+		Report += TEXT("## Primary Rows\n\n");
+		Report += TEXT("| Fixture | Replay | IIID | Events | Uniform oceanic count/net | Uniform continental count/net | Mixed count/net | Auth CAF before/after | Ledger hash | Replay hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
+		const FPrimaryReplayResult* Rows[] = { &BaselineA, &BaselineB, &ActiveA, &ActiveB };
+		for (const FPrimaryReplayResult* Row : Rows)
+		{
+			if (Row == &ActiveB && !bActiveReplay1Requested)
+			{
+				Report += TEXT("| iiid_active_primary_60k | 1 | yes | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
+				continue;
+			}
+			Report += FString::Printf(
+				TEXT("| %s | %d | %s | %d | %d / %.12f | %d / %.12f | %d / %.12f | %.12f / %.12f | `%s` | `%s` |\n"),
+				*Row->FixtureName,
+				Row->Replay,
+				Row->bIIIDActive ? TEXT("yes") : TEXT("no"),
+				Row->CollisionEventCount,
+				Row->LedgerMetrics.SingleHitUniformOceanicRecordCount,
+				SingleHitUniformOceanicNet(Row->LedgerMetrics),
+				Row->LedgerMetrics.SingleHitUniformContinentalRecordCount,
+				SingleHitUniformContinentalNet(Row->LedgerMetrics),
+				Row->LedgerMetrics.SingleHitMixedTriangleRecordCount,
+				SingleHitMixedNet(Row->LedgerMetrics),
+				Row->FilterMetrics.AuthoritativeCAFBefore,
+				Row->FilterMetrics.AuthoritativeCAFAfter,
+				*Row->LedgerMetrics.MaterialLedgerHash,
+				*Row->ReplayHash);
+		}
+
+		Report += TEXT("\n## Interpretation\n\n");
+		if (!bActiveReplay1Requested)
+		{
+			Report += TEXT("The second IIID-active replay was not run. This report can still serve as an investigation checkpoint when replay 0 fails the quantitative gate, but it cannot serve as a passing determinism checkpoint. A passing IIID.8 run must supply `-RunActiveReplay1` and prove replay stability.\n\n");
+		}
+		if (bActivePass)
+		{
+			Report += TEXT("The IIID-active row reduces the Slice 5.5 uniform-oceanic-source single-hit continental loss by the required amount, and the collision-transfer ledger is large enough to explain at least half of the eliminated loss. This supports the Phase III hypothesis that continental collision/suture is the missing persistence mechanism for this Slice 5.5 bucket.\n\n");
+		}
+		else
+		{
+			Report += TEXT("The IIID-active row does not meet one or both quantitative exit gates. Per the slice plan, this is an investigation checkpoint rather than permission to claim IIID closed the Slice 5.5 asymmetry. Do not use this report to claim full carrier/remesh success.\n\n");
+		}
+		Report += TEXT("This is still a Phase II filtered-resampling comparison, not the IIIE paper remesh. Stage 1.5 remains foundation characterization; IIIE owns subducting/colliding-triangle remesh filtering, continuous q1/q2, qGamma oceanic generation, and process-state reset.\n\n");
+
+		Report += TEXT("## Verdict\n\n");
+		Report += bAllPass
+			? TEXT("PASS. IIID collision handling materially reduces the Slice 5.5 uniform-oceanic-source loss under this 60k recheck. IIID consolidation may summarize this as the sub-phase headline result, while preserving the IIIE remesh caveat.\n")
+			: TEXT("FAIL. Pause before IIID consolidation and write/extend an investigation checkpoint for the failed quantitative gate.\n");
+		return Report;
+	}
+}
+
+UCarrierLabPhaseIIID8Commandlet::UCarrierLabPhaseIIID8Commandlet()
+{
+	IsClient = false;
+	IsEditor = true;
+	LogToConsole = true;
+}
+
+int32 UCarrierLabPhaseIIID8Commandlet::Main(const FString& Params)
+{
+	const FString OutputRoot = GetOutputRoot(Params);
+	IFileManager::Get().MakeDirectory(*OutputRoot, true);
+	UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIID8 output root: %s"), *OutputRoot);
+
+	FSlice55BypassResult BypassA;
+	FSlice55BypassResult BypassB;
+	const bool bBypassA = RunSlice55Bypass(0, BypassA);
+	const bool bBypassB = RunSlice55Bypass(1, BypassB);
+
+	FIIIBSignatureResult IIIBA;
+	FIIIBSignatureResult IIIBB;
+	const bool bIIIBA = RunIIIBLocalVsPairSignatureReplay(0, BypassA, BypassB, IIIBA);
+	const bool bIIIBB = RunIIIBLocalVsPairSignatureReplay(1, BypassA, BypassB, IIIBB);
+
+	FPrimaryReplayResult BaselineA = MakePrimaryReplayFromBypass(BypassA);
+	FPrimaryReplayResult BaselineB = MakePrimaryReplayFromBypass(BypassB);
+	FPrimaryReplayResult ActiveA;
+	FPrimaryReplayResult ActiveB;
+	const bool bRunActiveReplay1 = Params.Contains(TEXT("RunActiveReplay1"));
+	const bool bActiveA = RunPrimaryReplay(0, true, ActiveA);
+	const bool bActiveB = bRunActiveReplay1 ? RunPrimaryReplay(1, true, ActiveB) : false;
+	if (!bRunActiveReplay1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("IIID8 active replay 1 skipped. Pass/fail remains false unless -RunActiveReplay1 is supplied."));
+	}
+
+	TArray<FString> JsonLines;
+	JsonLines.Add(FString::Printf(
+		TEXT("{\"kind\":\"slice55_bypass\",\"replay\":0,\"completed\":%s,\"state_hash\":%s,\"material_ledger_hash\":%s,\"seconds\":%.6f}"),
+		bBypassA ? TEXT("true") : TEXT("false"),
+		*JsonString(BypassA.FilterMetrics.StateHashAfter),
+		*JsonString(BypassA.LedgerMetrics.MaterialLedgerHash),
+		BypassA.Seconds));
+	JsonLines.Add(FString::Printf(
+		TEXT("{\"kind\":\"slice55_bypass\",\"replay\":1,\"completed\":%s,\"state_hash\":%s,\"material_ledger_hash\":%s,\"seconds\":%.6f}"),
+		bBypassB ? TEXT("true") : TEXT("false"),
+		*JsonString(BypassB.FilterMetrics.StateHashAfter),
+		*JsonString(BypassB.LedgerMetrics.MaterialLedgerHash),
+		BypassB.Seconds));
+	JsonLines.Add(FString::Printf(
+		TEXT("{\"kind\":\"iiib_signature\",\"replay\":0,\"completed\":%s,\"computed_signature\":%s,\"expected_signature\":%s,\"step\":%d,\"seconds\":%.6f}"),
+		bIIIBA ? TEXT("true") : TEXT("false"),
+		*JsonString(IIIBA.IndependentSignatureHash),
+		*JsonString(ExpectedIIIBIndependentSignature),
+		IIIBA.StepCount,
+		IIIBA.Seconds));
+	JsonLines.Add(FString::Printf(
+		TEXT("{\"kind\":\"iiib_signature\",\"replay\":1,\"completed\":%s,\"computed_signature\":%s,\"expected_signature\":%s,\"step\":%d,\"seconds\":%.6f}"),
+		bIIIBB ? TEXT("true") : TEXT("false"),
+		*JsonString(IIIBB.IndependentSignatureHash),
+		*JsonString(ExpectedIIIBIndependentSignature),
+		IIIBB.StepCount,
+		IIIBB.Seconds));
+	AppendPrimaryJson(BaselineA, JsonLines);
+	AppendPrimaryJson(BaselineB, JsonLines);
+	AppendPrimaryJson(ActiveA, JsonLines);
+	if (bRunActiveReplay1)
+	{
+		AppendPrimaryJson(ActiveB, JsonLines);
+	}
+	else
+	{
+		JsonLines.Add(TEXT("{\"kind\":\"primary_replay\",\"fixture\":\"iiid_active_primary_60k\",\"replay\":1,\"iiid_active\":true,\"completed\":false,\"skipped\":true,\"skip_reason\":\"pass -RunActiveReplay1 to run the expensive second active replay\"}"));
+	}
+
+	const FString MetricsPath = FPaths::Combine(OutputRoot, TEXT("metrics.jsonl"));
+	FFileHelper::SaveStringToFile(
+		FString::Join(JsonLines, TEXT("\n")) + TEXT("\n"),
+		*MetricsPath,
+		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+	const FString Report = BuildReport(OutputRoot, BypassA, BypassB, IIIBA, IIIBB, BaselineA, BaselineB, ActiveA, ActiveB, bRunActiveReplay1);
+	const FString ReportPath = ResolveReportPath(Params);
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
+	FFileHelper::SaveStringToFile(Report, *ReportPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+	const bool bPass =
+		bBypassA &&
+		bBypassB &&
+		bIIIBA &&
+		bIIIBB &&
+		BaselineA.bCompleted &&
+		BaselineB.bCompleted &&
+		bActiveA &&
+		bRunActiveReplay1 &&
+		bActiveB &&
+		BypassPasses(BypassA, BypassB) &&
+		IIIBIndependentSignaturePasses(IIIBA, IIIBB) &&
+		PrimaryReplayStable(BaselineA, BaselineB) &&
+		IIIDActivePasses(BaselineA, ActiveA, ActiveB);
+
+	UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIID8 report: %s"), *ReportPath);
+	UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIID8 output: %s"), *OutputRoot);
+	return bPass ? 0 : 1;
+}
