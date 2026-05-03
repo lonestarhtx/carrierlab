@@ -299,6 +299,15 @@ namespace
 		HashMix(Hash, static_cast<uint64>(FMath::RoundToInt64(Value * 1000000000.0)));
 	}
 
+	void HashMixString(uint64& Hash, const FString& Value)
+	{
+		for (const TCHAR Ch : Value)
+		{
+			HashMix(Hash, static_cast<uint64>(Ch));
+		}
+		HashMix(Hash, 0xffull);
+	}
+
 	uint64 MakePlatePairKey(const int32 A, const int32 B)
 	{
 		const uint32 MinPlateId = static_cast<uint32>(FMath::Min(A, B));
@@ -663,6 +672,186 @@ namespace
 		return TotalWeight > UE_DOUBLE_SMALL_NUMBER
 			? WeightedAge / TotalWeight
 			: 0.0;
+	}
+
+	double ComputePlateLocalTriangleContinentalFraction(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 LocalTriangleId)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return 0.0;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return 0.0;
+		}
+
+		return (FMath::Clamp(Plate.Vertices[Triangle.A].ContinentalFraction, 0.0, 1.0) +
+			FMath::Clamp(Plate.Vertices[Triangle.B].ContinentalFraction, 0.0, 1.0) +
+			FMath::Clamp(Plate.Vertices[Triangle.C].ContinentalFraction, 0.0, 1.0)) / 3.0;
+	}
+
+	bool IsPlateLocalTriangleContinental(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 LocalTriangleId)
+	{
+		return ComputePlateLocalTriangleContinentalFraction(Plate, LocalTriangleId) > 0.5;
+	}
+
+	double ComputePlateLocalTriangleAreaWeight(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 LocalTriangleId)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			return 0.0;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+			!Plate.Vertices.IsValidIndex(Triangle.B) ||
+			!Plate.Vertices.IsValidIndex(Triangle.C))
+		{
+			return 0.0;
+		}
+
+		return (FMath::Max(Plate.Vertices[Triangle.A].AreaWeight, 0.0) +
+			FMath::Max(Plate.Vertices[Triangle.B].AreaWeight, 0.0) +
+			FMath::Max(Plate.Vertices[Triangle.C].AreaWeight, 0.0)) / 3.0;
+	}
+
+	struct FPhaseIIID1TerraneComponent
+	{
+		TArray<int32> LocalTriangleIds;
+		TSet<int32> ContinentalTriangleSet;
+		int32 ContinentalTriangleCount = 0;
+		int32 InnerSeaTriangleCount = 0;
+	};
+
+	bool BuildPhaseIIID1TerraneComponent(
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 SeedLocalTriangleId,
+		FPhaseIIID1TerraneComponent& OutComponent)
+	{
+		OutComponent = FPhaseIIID1TerraneComponent();
+		if (!Plate.LocalTriangles.IsValidIndex(SeedLocalTriangleId) ||
+			!IsPlateLocalTriangleContinental(Plate, SeedLocalTriangleId))
+		{
+			return false;
+		}
+
+		TArray<int32> Queue;
+		TSet<int32> ContinentalComponent;
+		Queue.Add(SeedLocalTriangleId);
+		ContinentalComponent.Add(SeedLocalTriangleId);
+
+		for (int32 QueueIndex = 0; QueueIndex < Queue.Num(); ++QueueIndex)
+		{
+			TArray<int32> Neighbors;
+			GetPlateLocalTriangleNeighbors(Plate, Queue[QueueIndex], Neighbors);
+			for (const int32 NeighborId : Neighbors)
+			{
+				if (!Plate.LocalTriangles.IsValidIndex(NeighborId) ||
+					ContinentalComponent.Contains(NeighborId) ||
+					!IsPlateLocalTriangleContinental(Plate, NeighborId))
+				{
+					continue;
+				}
+				ContinentalComponent.Add(NeighborId);
+				Queue.Add(NeighborId);
+			}
+		}
+
+		TSet<int32> TerraneTriangles = ContinentalComponent;
+		int32 InnerSeaTriangleCount = 0;
+		TSet<int32> VisitedOceanicTriangles;
+		for (int32 LocalTriangleId = 0; LocalTriangleId < Plate.LocalTriangles.Num(); ++LocalTriangleId)
+		{
+			if (ContinentalComponent.Contains(LocalTriangleId) ||
+				VisitedOceanicTriangles.Contains(LocalTriangleId) ||
+				IsPlateLocalTriangleContinental(Plate, LocalTriangleId))
+			{
+				continue;
+			}
+
+			TArray<int32> OceanicQueue;
+			TArray<int32> OceanicRegion;
+			bool bTouchesPlateBoundary = false;
+			bool bAdjacentToComponent = false;
+			bool bAdjacentOnlyToComponentContinents = true;
+
+			OceanicQueue.Add(LocalTriangleId);
+			VisitedOceanicTriangles.Add(LocalTriangleId);
+			for (int32 QueueIndex = 0; QueueIndex < OceanicQueue.Num(); ++QueueIndex)
+			{
+				const int32 OceanicTriangleId = OceanicQueue[QueueIndex];
+				OceanicRegion.Add(OceanicTriangleId);
+
+				const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[OceanicTriangleId];
+				if (Triangle.bBoundary)
+				{
+					bTouchesPlateBoundary = true;
+				}
+
+				TArray<int32> Neighbors;
+				GetPlateLocalTriangleNeighbors(Plate, OceanicTriangleId, Neighbors);
+				if (Neighbors.Num() < 3)
+				{
+					bTouchesPlateBoundary = true;
+				}
+
+				for (const int32 NeighborId : Neighbors)
+				{
+					if (!Plate.LocalTriangles.IsValidIndex(NeighborId))
+					{
+						bTouchesPlateBoundary = true;
+						continue;
+					}
+
+					if (IsPlateLocalTriangleContinental(Plate, NeighborId))
+					{
+						if (ContinentalComponent.Contains(NeighborId))
+						{
+							bAdjacentToComponent = true;
+						}
+						else
+						{
+							bAdjacentOnlyToComponentContinents = false;
+						}
+						continue;
+					}
+
+					if (!VisitedOceanicTriangles.Contains(NeighborId))
+					{
+						VisitedOceanicTriangles.Add(NeighborId);
+						OceanicQueue.Add(NeighborId);
+					}
+				}
+			}
+
+			if (!bTouchesPlateBoundary &&
+				bAdjacentToComponent &&
+				bAdjacentOnlyToComponentContinents)
+			{
+				for (const int32 OceanicTriangleId : OceanicRegion)
+				{
+					TerraneTriangles.Add(OceanicTriangleId);
+					++InnerSeaTriangleCount;
+				}
+			}
+		}
+
+		OutComponent.LocalTriangleIds = TerraneTriangles.Array();
+		OutComponent.LocalTriangleIds.Sort();
+		OutComponent.ContinentalTriangleSet = MoveTemp(ContinentalComponent);
+		OutComponent.ContinentalTriangleCount = OutComponent.ContinentalTriangleSet.Num();
+		OutComponent.InnerSeaTriangleCount = InnerSeaTriangleCount;
+		return OutComponent.LocalTriangleIds.Num() > 0;
 	}
 
 	bool IntersectRayWithTriangle(
@@ -4277,6 +4466,213 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIC5ElevationLedgerAudit(FCarrierLa
 	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
 	OutAudit.HistoricalElevationHash = CurrentMetrics.HistoricalElevationHash;
 	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLabPhaseIIID1TerraneAudit& OutAudit) const
+{
+	OutAudit = FCarrierLabPhaseIIID1TerraneAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+
+	TArray<FPhaseIIID1TerraneComponent> ComponentCache;
+	TMap<uint64, int32> ComponentIndexByTriangle;
+
+	auto FindOrBuildComponent = [&ComponentCache, &ComponentIndexByTriangle](
+		const CarrierLab::FCarrierPlate& Plate,
+		const int32 SeedLocalTriangleId,
+		FPhaseIIID1TerraneComponent const*& OutComponent) -> bool
+	{
+		OutComponent = nullptr;
+		const uint64 SeedKey = MakePlateTriangleKey(Plate.PlateId, SeedLocalTriangleId);
+		if (const int32* ExistingIndex = ComponentIndexByTriangle.Find(SeedKey))
+		{
+			if (ComponentCache.IsValidIndex(*ExistingIndex))
+			{
+				OutComponent = &ComponentCache[*ExistingIndex];
+				return true;
+			}
+		}
+
+		FPhaseIIID1TerraneComponent NewComponent;
+		if (!BuildPhaseIIID1TerraneComponent(Plate, SeedLocalTriangleId, NewComponent))
+		{
+			return false;
+		}
+
+		const int32 NewIndex = ComponentCache.Add(MoveTemp(NewComponent));
+		for (const int32 LocalTriangleId : ComponentCache[NewIndex].LocalTriangleIds)
+		{
+			if (ComponentCache[NewIndex].ContinentalTriangleSet.Contains(LocalTriangleId))
+			{
+				ComponentIndexByTriangle.Add(MakePlateTriangleKey(Plate.PlateId, LocalTriangleId), NewIndex);
+			}
+		}
+		OutComponent = &ComponentCache[NewIndex];
+		return true;
+	};
+
+	TArray<CarrierLab::FConvergenceSubductionTriangleHit> SortedHits = State.ConvergenceSubductionTriangleHits;
+	SortedHits.Sort([](
+		const CarrierLab::FConvergenceSubductionTriangleHit& A,
+		const CarrierLab::FConvergenceSubductionTriangleHit& B)
+	{
+		if (A.PairKey != B.PairKey)
+		{
+			return A.PairKey < B.PairKey;
+		}
+		if (A.PlateId != B.PlateId)
+		{
+			return A.PlateId < B.PlateId;
+		}
+		if (A.LocalTriangleId != B.LocalTriangleId)
+		{
+			return A.LocalTriangleId < B.LocalTriangleId;
+		}
+		return A.EvidenceId < B.EvidenceId;
+	});
+
+	uint64 AuditHash = 1469598103934665603ull;
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.EventCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.PlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ResetSerial + 1));
+	HashMix(AuditHash, static_cast<uint64>(SortedHits.Num() + 1));
+
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : SortedHits)
+	{
+		HashMix(AuditHash, Hit.PairKey + 1ull);
+		HashMix(AuditHash, static_cast<uint64>(Hit.PlateId + 1));
+		HashMix(AuditHash, static_cast<uint64>(Hit.OtherPlateId + 1));
+		HashMix(AuditHash, static_cast<uint64>(Hit.LocalTriangleId + 1));
+		HashMix(AuditHash, static_cast<uint64>(Hit.EvidenceId + 1));
+		HashMixDouble(AuditHash, Hit.SignedConvergenceVelocity);
+
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision == nullptr ||
+			Decision->DecisionClass != CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate)
+		{
+			++OutAudit.NonCollisionDecisionHitCount;
+			continue;
+		}
+
+		++OutAudit.CollisionCandidateHitCount;
+		if (!State.Plates.IsValidIndex(Hit.PlateId))
+		{
+			++OutAudit.InvalidSeedCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[Hit.PlateId];
+		if (!Plate.LocalTriangles.IsValidIndex(Hit.LocalTriangleId))
+		{
+			++OutAudit.InvalidSeedCount;
+			continue;
+		}
+		if (!IsPlateLocalTriangleContinental(Plate, Hit.LocalTriangleId))
+		{
+			++OutAudit.NonContinentalSeedCount;
+			continue;
+		}
+
+		const FPhaseIIID1TerraneComponent* Component = nullptr;
+		if (!FindOrBuildComponent(Plate, Hit.LocalTriangleId, Component) || Component == nullptr)
+		{
+			++OutAudit.EmptyTerraneCount;
+			continue;
+		}
+
+		FCarrierLabPhaseIIID1TerraneRecord& Record = OutAudit.Records.AddDefaulted_GetRef();
+		Record.RecordId = OutAudit.Records.Num() - 1;
+		Record.PairKey = Hit.PairKey;
+		Record.SourcePlateId = Hit.PlateId;
+		Record.OtherPlateId = Hit.OtherPlateId;
+		Record.SeedLocalTriangleId = Hit.LocalTriangleId;
+		Record.EvidenceId = Hit.EvidenceId;
+		Record.SignedConvergenceVelocity = Hit.SignedConvergenceVelocity;
+		Record.LocalTriangleIds = Component->LocalTriangleIds;
+		Record.TriangleCount = Record.LocalTriangleIds.Num();
+		Record.ContinentalTriangleCount = Component->ContinentalTriangleCount;
+		Record.InnerSeaTriangleCount = Component->InnerSeaTriangleCount;
+
+		TSet<int32> VertexIds;
+		double WeightedContinentalFraction = 0.0;
+		double TotalAreaWeight = 0.0;
+		uint64 TerraneHash = 1469598103934665603ull;
+		HashMix(TerraneHash, Hit.PairKey + 1ull);
+		HashMix(TerraneHash, static_cast<uint64>(Hit.PlateId + 1));
+		HashMix(TerraneHash, static_cast<uint64>(Hit.OtherPlateId + 1));
+		HashMix(TerraneHash, static_cast<uint64>(Hit.LocalTriangleId + 1));
+		HashMix(TerraneHash, static_cast<uint64>(Hit.EvidenceId + 1));
+		HashMixDouble(TerraneHash, Hit.SignedConvergenceVelocity);
+		HashMix(TerraneHash, static_cast<uint64>(Record.LocalTriangleIds.Num() + 1));
+
+		for (const int32 LocalTriangleId : Record.LocalTriangleIds)
+		{
+			HashMix(TerraneHash, static_cast<uint64>(LocalTriangleId + 1));
+			if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+			{
+				continue;
+			}
+
+			const double TriangleAreaWeight = ComputePlateLocalTriangleAreaWeight(Plate, LocalTriangleId);
+			const double TriangleContinentalFraction = ComputePlateLocalTriangleContinentalFraction(Plate, LocalTriangleId);
+			WeightedContinentalFraction += TriangleAreaWeight * TriangleContinentalFraction;
+			TotalAreaWeight += TriangleAreaWeight;
+
+			const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+			VertexIds.Add(Triangle.A);
+			VertexIds.Add(Triangle.B);
+			VertexIds.Add(Triangle.C);
+		}
+
+		Record.VertexCount = VertexIds.Num();
+		Record.AreaWeight = TotalAreaWeight;
+		Record.MeanContinentalFraction = TotalAreaWeight > UE_DOUBLE_SMALL_NUMBER
+			? WeightedContinentalFraction / TotalAreaWeight
+			: 0.0;
+		Record.TerraneHash = HashToString(TerraneHash);
+
+		++OutAudit.TerraneRecordCount;
+		OutAudit.TotalTerraneTriangleCount += Record.TriangleCount;
+		OutAudit.TotalContinentalTriangleCount += Record.ContinentalTriangleCount;
+		OutAudit.TotalInnerSeaTriangleCount += Record.InnerSeaTriangleCount;
+		OutAudit.MaxTerraneTriangleCount = FMath::Max(OutAudit.MaxTerraneTriangleCount, Record.TriangleCount);
+
+		HashMix(AuditHash, static_cast<uint64>(Record.RecordId + 1));
+		HashMixString(AuditHash, Record.TerraneHash);
+		HashMix(AuditHash, static_cast<uint64>(Record.TriangleCount + 1));
+		HashMix(AuditHash, static_cast<uint64>(Record.ContinentalTriangleCount + 1));
+		HashMix(AuditHash, static_cast<uint64>(Record.InnerSeaTriangleCount + 1));
+		HashMix(AuditHash, static_cast<uint64>(Record.VertexCount + 1));
+		HashMixDouble(AuditHash, Record.MeanContinentalFraction);
+		HashMixDouble(AuditHash, Record.AreaWeight);
+	}
+
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.CollisionCandidateHitCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TerraneRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalTerraneTriangleCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalContinentalTriangleCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalInnerSeaTriangleCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.MaxTerraneTriangleCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.InvalidSeedCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.NonCollisionDecisionHitCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.NonContinentalSeedCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.EmptyTerraneCount + 1));
+	OutAudit.TerraneDetectionHash = HashToString(AuditHash);
 	return true;
 }
 

@@ -915,6 +915,45 @@ struct FCarrierLabPhaseIIIC5ElevationLedgerAudit
 	TArray<FCarrierLabPhaseIIIC5ElevationLedgerRecord> Records;
 };
 
+struct FCarrierLabPhaseIIID1TerraneRecord
+{
+	int32 RecordId = INDEX_NONE;
+	uint64 PairKey = 0;
+	int32 SourcePlateId = INDEX_NONE;
+	int32 OtherPlateId = INDEX_NONE;
+	int32 SeedLocalTriangleId = INDEX_NONE;
+	int32 EvidenceId = INDEX_NONE;
+	double SignedConvergenceVelocity = 0.0;
+	int32 TriangleCount = 0;
+	int32 ContinentalTriangleCount = 0;
+	int32 InnerSeaTriangleCount = 0;
+	int32 VertexCount = 0;
+	double MeanContinentalFraction = 0.0;
+	double AreaWeight = 0.0;
+	FString TerraneHash;
+	TArray<int32> LocalTriangleIds;
+};
+
+struct FCarrierLabPhaseIIID1TerraneAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	int32 CollisionCandidateHitCount = 0;
+	int32 TerraneRecordCount = 0;
+	int32 TotalTerraneTriangleCount = 0;
+	int32 TotalContinentalTriangleCount = 0;
+	int32 TotalInnerSeaTriangleCount = 0;
+	int32 MaxTerraneTriangleCount = 0;
+	int32 InvalidSeedCount = 0;
+	int32 NonCollisionDecisionHitCount = 0;
+	int32 NonContinentalSeedCount = 0;
+	int32 EmptyTerraneCount = 0;
+	TArray<FCarrierLabPhaseIIID1TerraneRecord> Records;
+	FString TerraneDetectionHash;
+};
+
 struct FCarrierLabPhaseIIIProcessOverlayTriangle
 {
 	FVector3d A = FVector3d::ZeroVector;
@@ -1160,6 +1199,7 @@ public:
 	bool GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const;
 	bool GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
 	bool GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const;
+	bool DetectPhaseIIID1ConnectedTerranes(FCarrierLabPhaseIIID1TerraneAudit& OutAudit) const;
 	bool GetPhaseIIIProcessOverlayTriangles(
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles,
