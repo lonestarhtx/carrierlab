@@ -386,6 +386,62 @@ namespace
 		return UpliftRateMmPerYear * DeltaTimeMa * DistanceTransfer * SpeedTransfer * ReliefTransfer;
 	}
 
+	double PhaseIIID7CollisionDistanceTransfer(const double DistanceKm, const double InfluenceRadiusKm)
+	{
+		if (!FMath::IsFinite(DistanceKm) ||
+			!FMath::IsFinite(InfluenceRadiusKm) ||
+			InfluenceRadiusKm <= UE_DOUBLE_SMALL_NUMBER ||
+			DistanceKm < 0.0 ||
+			DistanceKm > InfluenceRadiusKm)
+		{
+			return 0.0;
+		}
+		const double NormalizedDistance = DistanceKm / InfluenceRadiusKm;
+		const double OneMinusSquared = 1.0 - NormalizedDistance * NormalizedDistance;
+		return OneMinusSquared * OneMinusSquared;
+	}
+
+	double PhaseIIID7CollisionDeltaKm(
+		const double CollisionCoefficientPerKm,
+		const double TerraneAreaKm2,
+		const double DistanceTransfer)
+	{
+		if (!FMath::IsFinite(CollisionCoefficientPerKm) ||
+			!FMath::IsFinite(TerraneAreaKm2) ||
+			!FMath::IsFinite(DistanceTransfer) ||
+			CollisionCoefficientPerKm <= 0.0 ||
+			TerraneAreaKm2 <= 0.0 ||
+			DistanceTransfer <= 0.0)
+		{
+			return 0.0;
+		}
+		return CollisionCoefficientPerKm * TerraneAreaKm2 * DistanceTransfer;
+	}
+
+	double PhaseIIID7InfluenceRadiusKm(
+		const double CollisionRadiusConstantKm,
+		const double RelativeVelocityMmPerYear,
+		const double ReferenceVelocityMmPerYear,
+		const double TerraneAreaKm2,
+		const double ReferencePlateAreaKm2)
+	{
+		if (!FMath::IsFinite(CollisionRadiusConstantKm) ||
+			!FMath::IsFinite(RelativeVelocityMmPerYear) ||
+			!FMath::IsFinite(ReferenceVelocityMmPerYear) ||
+			!FMath::IsFinite(TerraneAreaKm2) ||
+			!FMath::IsFinite(ReferencePlateAreaKm2) ||
+			CollisionRadiusConstantKm <= 0.0 ||
+			ReferenceVelocityMmPerYear <= UE_DOUBLE_SMALL_NUMBER ||
+			ReferencePlateAreaKm2 <= UE_DOUBLE_SMALL_NUMBER ||
+			TerraneAreaKm2 <= 0.0)
+		{
+			return 0.0;
+		}
+		const double Scale = FMath::Max(0.0, RelativeVelocityMmPerYear / ReferenceVelocityMmPerYear) *
+			(TerraneAreaKm2 / ReferencePlateAreaKm2);
+		return Scale > 0.0 ? CollisionRadiusConstantKm * FMath::Sqrt(Scale) : 0.0;
+	}
+
 	void DecodePlatePairKey(const uint64 Key, int32& OutA, int32& OutB)
 	{
 		OutA = static_cast<int32>(static_cast<uint32>(Key >> 32));
@@ -6489,6 +6545,385 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSuture(
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.AppliedMutationCount + 1));
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.DeferredValidPlanCount + 1));
 	OutAudit.TopologyMutationHash = HashToString(AuditHash);
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::PlanPhaseIIID7CollisionUplift(
+	FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID7CollisionUpliftAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	if (!DetectPhaseIIID2CollisionGroups(GroupingAudit, InterpenetrationThresholdKm))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
+	if (!PlanPhaseIIID4SlabBreak(SlabBreakAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID5SuturePlanAudit SutureAudit;
+	if (!PlanPhaseIIID5Suture(SutureAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCountBefore = CurrentMetrics.EventCount;
+	OutAudit.EventCountAfter = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerialBefore = State.ConvergenceTrackingResetSerial;
+	OutAudit.ResetSerialAfter = State.ConvergenceTrackingResetSerial;
+	OutAudit.InterpenetrationThresholdKm = InterpenetrationThresholdKm;
+	OutAudit.DestinationMassThresholdRatio = DestinationMassThresholdRatio;
+	OutAudit.CollisionRadiusConstantKm = PhaseIIIDCollisionRadiusKm;
+	OutAudit.CollisionCoefficientPerKm = PhaseIIIDCollisionCoefficientPerKm;
+	OutAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	OutAudit.PlanetRadiusKm = EarthRadiusKm;
+	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
+	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+	OutAudit.bPlannedOnly = true;
+
+	const FCarrierLabPhaseIIID5SuturePlanRecord* SuturePlan = nullptr;
+	for (const FCarrierLabPhaseIIID5SuturePlanRecord& Candidate : SutureAudit.Plans)
+	{
+		if (Candidate.bTopologyValid && Candidate.bBoundaryTrackingReinitializable)
+		{
+			SuturePlan = &Candidate;
+			break;
+		}
+	}
+	if (SuturePlan == nullptr ||
+		!State.Plates.IsValidIndex(SuturePlan->SourcePlateId) ||
+		!State.Plates.IsValidIndex(SuturePlan->DestinationPlateId))
+	{
+		OutAudit.bNoUpliftAvailable = true;
+		OutAudit.UpliftHash = TEXT("0000000000000000");
+		return true;
+	}
+	OutAudit.SourceSuturePlanHash = SuturePlan->PlanHash;
+
+	const FCarrierLabPhaseIIID2CollisionGroupRecord* GroupRecord = nullptr;
+	for (const FCarrierLabPhaseIIID2CollisionGroupRecord& Candidate : GroupingAudit.Groups)
+	{
+		if (Candidate.GroupId == SuturePlan->GroupId &&
+			Candidate.PairKey == SuturePlan->PairKey)
+		{
+			GroupRecord = &Candidate;
+			break;
+		}
+	}
+	if (GroupRecord == nullptr)
+	{
+		++OutAudit.InvalidInputCount;
+		OutAudit.UpliftHash = TEXT("0000000000000000");
+		return true;
+	}
+
+	const CarrierLab::FCarrierPlate& SourcePlate = State.Plates[SuturePlan->SourcePlateId];
+	const CarrierLab::FCarrierPlate& DestinationPlate = State.Plates[SuturePlan->DestinationPlateId];
+	const double ReferencePlateAreaWeight = State.Plates.Num() > 0
+		? 4.0 * UE_DOUBLE_PI / static_cast<double>(State.Plates.Num())
+		: 0.0;
+	OutAudit.TerraneAreaWeight = SuturePlan->AddedAreaWeight;
+	OutAudit.TerraneAreaKm2 = SuturePlan->AddedAreaWeight * EarthRadiusKm * EarthRadiusKm;
+	OutAudit.ReferencePlateAreaKm2 = ReferencePlateAreaWeight * EarthRadiusKm * EarthRadiusKm;
+	OutAudit.RelativeVelocityMmPerYear = FMath::Max(0.0, GroupRecord->MaxSignedConvergenceVelocity) * EarthRadiusKm / DeltaTimeMa;
+	OutAudit.InfluenceRadiusKm = PhaseIIID7InfluenceRadiusKm(
+		PhaseIIIDCollisionRadiusKm,
+		OutAudit.RelativeVelocityMmPerYear,
+		PhaseIIICReferenceVelocityMmPerYear,
+		OutAudit.TerraneAreaKm2,
+		OutAudit.ReferencePlateAreaKm2);
+	OutAudit.CenterExpectedDeltaKm = PhaseIIID7CollisionDeltaKm(
+		PhaseIIIDCollisionCoefficientPerKm,
+		OutAudit.TerraneAreaKm2,
+		1.0);
+
+	TArray<FVector3d> TerranePoints;
+	FVector3d WeightedCentroid = FVector3d::ZeroVector;
+	for (const int32 SourceLocalTriangleId : SuturePlan->AddedSourceLocalTriangleIds)
+	{
+		if (!SourcePlate.LocalTriangles.IsValidIndex(SourceLocalTriangleId))
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = SourcePlate.LocalTriangles[SourceLocalTriangleId];
+		const int32 VertexIds[3] = { Triangle.A, Triangle.B, Triangle.C };
+		bool bValidTriangle = true;
+		FVector3d TriangleSum = FVector3d::ZeroVector;
+		for (const int32 VertexId : VertexIds)
+		{
+			if (!SourcePlate.Vertices.IsValidIndex(VertexId))
+			{
+				bValidTriangle = false;
+				break;
+			}
+			TerranePoints.Add(SourcePlate.Vertices[VertexId].UnitPosition);
+			TriangleSum += SourcePlate.Vertices[VertexId].UnitPosition;
+		}
+		if (!bValidTriangle)
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+		const FVector3d Barycenter = NormalizeOrFallback(TriangleSum, SourcePlate.Vertices[VertexIds[0]].UnitPosition);
+		TerranePoints.Add(Barycenter);
+		const double TriangleArea = ComputePlateLocalTriangleAreaWeight(SourcePlate, SourceLocalTriangleId);
+		WeightedCentroid += Barycenter * TriangleArea;
+	}
+	OutAudit.TerraneCentroid = NormalizeOrFallback(
+		WeightedCentroid,
+		!TerranePoints.IsEmpty() ? TerranePoints[0] : FVector3d::UnitZ());
+
+	if (OutAudit.InfluenceRadiusKm <= UE_DOUBLE_SMALL_NUMBER ||
+		OutAudit.CenterExpectedDeltaKm <= 0.0 ||
+		TerranePoints.IsEmpty())
+	{
+		OutAudit.bNoUpliftAvailable = true;
+		OutAudit.UpliftHash = TEXT("0000000000000000");
+		return true;
+	}
+
+	TSet<uint64> UpliftedVertexKeys;
+	uint64 UpliftHash = 1469598103934665603ull;
+	HashMixString(UpliftHash, TEXT("CarrierLab-IIID7-collision-uplift-plan-v1"));
+	HashMix(UpliftHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(UpliftHash, static_cast<uint64>(OutAudit.EventCountBefore + 1));
+	HashMix(UpliftHash, static_cast<uint64>(SuturePlan->SourcePlateId + 1));
+	HashMix(UpliftHash, static_cast<uint64>(SuturePlan->DestinationPlateId + 1));
+	HashMixDouble(UpliftHash, OutAudit.CollisionRadiusConstantKm);
+	HashMixDouble(UpliftHash, OutAudit.CollisionCoefficientPerKm);
+	HashMixDouble(UpliftHash, OutAudit.TerraneAreaKm2);
+	HashMixDouble(UpliftHash, OutAudit.ReferencePlateAreaKm2);
+	HashMixDouble(UpliftHash, OutAudit.RelativeVelocityMmPerYear);
+	HashMixDouble(UpliftHash, OutAudit.InfluenceRadiusKm);
+
+	auto AddCandidateVertex = [&](
+		const int32 DestinationVertexId,
+		const CarrierLab::FCarrierVertex& Vertex)
+	{
+		++OutAudit.CandidateVertexCount;
+		if (Vertex.ContinentalFraction <= 0.5)
+		{
+			++OutAudit.SkippedNonContinentalVertexCount;
+			return;
+		}
+
+		double BestDistanceKm = TNumericLimits<double>::Max();
+		for (const FVector3d& TerranePoint : TerranePoints)
+		{
+			const double Dot = FMath::Clamp(FVector3d::DotProduct(Vertex.UnitPosition, TerranePoint), -1.0, 1.0);
+			BestDistanceKm = FMath::Min(BestDistanceKm, FMath::Acos(Dot) * EarthRadiusKm);
+		}
+		if (!FMath::IsFinite(BestDistanceKm) || BestDistanceKm > OutAudit.InfluenceRadiusKm)
+		{
+			++OutAudit.SkippedOutsideRadiusCount;
+			return;
+		}
+
+		const double DistanceTransfer = PhaseIIID7CollisionDistanceTransfer(BestDistanceKm, OutAudit.InfluenceRadiusKm);
+		const double DeltaKm = PhaseIIID7CollisionDeltaKm(
+			PhaseIIIDCollisionCoefficientPerKm,
+			OutAudit.TerraneAreaKm2,
+			DistanceTransfer);
+		if (!FMath::IsFinite(DeltaKm) || DeltaKm <= 0.0)
+		{
+			++OutAudit.InvalidInputCount;
+			return;
+		}
+
+		const FVector3d DirectionFromCentroid = Vertex.UnitPosition - OutAudit.TerraneCentroid;
+		const FVector3d UnitDirectionFromCentroid = DirectionFromCentroid.Size() > UE_DOUBLE_SMALL_NUMBER
+			? DirectionFromCentroid / DirectionFromCentroid.Size()
+			: MakeDeterministicTangent(Vertex.UnitPosition);
+		const FVector3d ExpectedFoldDirection = RetangentAndNormalizeVectorField(
+			FVector3d::CrossProduct(FVector3d::CrossProduct(Vertex.UnitPosition, UnitDirectionFromCentroid), Vertex.UnitPosition),
+			Vertex.UnitPosition);
+
+		FCarrierLabPhaseIIID7CollisionUpliftRecord& Record = OutAudit.Records.AddDefaulted_GetRef();
+		Record.RecordId = OutAudit.Records.Num() - 1;
+		Record.EventId = CurrentMetrics.EventCount + 1;
+		Record.Step = CurrentMetrics.Step;
+		Record.SourcePlateId = SuturePlan->SourcePlateId;
+		Record.DestinationPlateId = SuturePlan->DestinationPlateId;
+		Record.DestinationLocalVertexId = DestinationVertexId;
+		Record.GlobalSampleId = Vertex.GlobalSampleId;
+		Record.TerraneAreaWeight = OutAudit.TerraneAreaWeight;
+		Record.TerraneAreaKm2 = OutAudit.TerraneAreaKm2;
+		Record.ReferencePlateAreaKm2 = OutAudit.ReferencePlateAreaKm2;
+		Record.RelativeVelocityMmPerYear = OutAudit.RelativeVelocityMmPerYear;
+		Record.InfluenceRadiusKm = OutAudit.InfluenceRadiusKm;
+		Record.DistanceToTerraneKm = BestDistanceKm;
+		Record.DistanceTransfer = DistanceTransfer;
+		Record.PreviousElevationKm = Vertex.Elevation;
+		Record.AppliedDeltaKm = DeltaKm;
+		Record.NewElevationKm = Vertex.Elevation + DeltaKm;
+		Record.PreviousFoldMagnitude = Vertex.FoldDirection.Size();
+		Record.NewFoldMagnitude = ExpectedFoldDirection.Size();
+		Record.VertexUnitPosition = Vertex.UnitPosition;
+		Record.TerraneCentroid = OutAudit.TerraneCentroid;
+		Record.ExpectedFoldDirection = ExpectedFoldDirection;
+		Record.bApplied = false;
+
+		const uint64 VertexKey = MakePlateVertexKey(SuturePlan->DestinationPlateId, DestinationVertexId);
+		UpliftedVertexKeys.Add(VertexKey);
+		++OutAudit.UpliftRecordCount;
+		OutAudit.TotalAppliedDeltaKm += DeltaKm;
+		OutAudit.MaxAppliedDeltaKm = FMath::Max(OutAudit.MaxAppliedDeltaKm, DeltaKm);
+		if (BestDistanceKm <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			OutAudit.CenterAppliedDeltaKm = FMath::Max(OutAudit.CenterAppliedDeltaKm, DeltaKm);
+		}
+
+		HashMix(UpliftHash, static_cast<uint64>(Record.RecordId + 1));
+		HashMix(UpliftHash, static_cast<uint64>(Record.DestinationLocalVertexId + 1));
+		HashMix(UpliftHash, static_cast<uint64>(Record.GlobalSampleId + 1));
+		HashMixDouble(UpliftHash, Record.DistanceToTerraneKm);
+		HashMixDouble(UpliftHash, Record.DistanceTransfer);
+		HashMixDouble(UpliftHash, Record.PreviousElevationKm);
+		HashMixDouble(UpliftHash, Record.AppliedDeltaKm);
+		HashMixDouble(UpliftHash, Record.NewElevationKm);
+		HashMixDouble(UpliftHash, Record.ExpectedFoldDirection.X);
+		HashMixDouble(UpliftHash, Record.ExpectedFoldDirection.Y);
+		HashMixDouble(UpliftHash, Record.ExpectedFoldDirection.Z);
+	};
+
+	for (int32 DestinationVertexId = 0; DestinationVertexId < DestinationPlate.Vertices.Num(); ++DestinationVertexId)
+	{
+		AddCandidateVertex(DestinationVertexId, DestinationPlate.Vertices[DestinationVertexId]);
+	}
+	for (int32 SourceVertexId = 0; SourceVertexId < SuturePlan->SourceToDestinationAddedVertexIds.Num(); ++SourceVertexId)
+	{
+		const int32 DestinationVertexId = SuturePlan->SourceToDestinationAddedVertexIds[SourceVertexId];
+		if (DestinationVertexId == INDEX_NONE)
+		{
+			continue;
+		}
+		if (!SourcePlate.Vertices.IsValidIndex(SourceVertexId))
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+		AddCandidateVertex(DestinationVertexId, SourcePlate.Vertices[SourceVertexId]);
+	}
+
+	OutAudit.UniqueUpliftedVertexCount = UpliftedVertexKeys.Num();
+	HashMix(UpliftHash, static_cast<uint64>(OutAudit.CandidateVertexCount + 1));
+	HashMix(UpliftHash, static_cast<uint64>(OutAudit.UpliftRecordCount + 1));
+	HashMix(UpliftHash, static_cast<uint64>(OutAudit.UniqueUpliftedVertexCount + 1));
+	HashMixDouble(UpliftHash, OutAudit.TotalAppliedDeltaKm);
+	HashMixDouble(UpliftHash, OutAudit.MaxAppliedDeltaKm);
+	OutAudit.UpliftHash = HashToString(UpliftHash);
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
+	FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio)
+{
+	FCarrierLabPhaseIIID7CollisionUpliftAudit PlannedAudit;
+	if (!PlanPhaseIIID7CollisionUplift(PlannedAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+
+	OutAudit = PlannedAudit;
+	OutAudit.bPlannedOnly = false;
+	if (PlannedAudit.bNoUpliftAvailable || PlannedAudit.Records.IsEmpty())
+	{
+		return true;
+	}
+
+	FCarrierLabPhaseIIID6TopologyMutationAudit TopologyAudit;
+	if (!ApplyPhaseIIID6DetachAndSuture(TopologyAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	OutAudit.TopologyAudit = TopologyAudit;
+	OutAudit.SourceTopologyMutationHash = TopologyAudit.TopologyMutationHash;
+	OutAudit.EventCountAfter = CurrentMetrics.EventCount;
+	OutAudit.ResetSerialAfter = State.ConvergenceTrackingResetSerial;
+	OutAudit.bTopologyMutationApplied = TopologyAudit.bMutationApplied && TopologyAudit.AppliedMutationCount == 1;
+
+	if (!OutAudit.bTopologyMutationApplied ||
+		TopologyAudit.Records.IsEmpty() ||
+		TopologyAudit.Records[0].SuturePlanHash != PlannedAudit.SourceSuturePlanHash)
+	{
+		++OutAudit.InvalidInputCount;
+		return true;
+	}
+
+	if (!State.Plates.IsValidIndex(TopologyAudit.Records[0].DestinationPlateId))
+	{
+		++OutAudit.InvalidInputCount;
+		return true;
+	}
+	CarrierLab::FCarrierPlate& DestinationPlate = State.Plates[TopologyAudit.Records[0].DestinationPlateId];
+	double AppliedDeltaSum = 0.0;
+	double MaxRecordResidual = 0.0;
+	for (FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : OutAudit.Records)
+	{
+		if (!DestinationPlate.Vertices.IsValidIndex(Record.DestinationLocalVertexId))
+		{
+			++OutAudit.InvalidInputCount;
+			continue;
+		}
+		CarrierLab::FCarrierVertex& Vertex = DestinationPlate.Vertices[Record.DestinationLocalVertexId];
+		const double PreviousElevation = Vertex.Elevation;
+		const double PreviousFoldMagnitude = Vertex.FoldDirection.Size();
+		Vertex.Elevation += Record.AppliedDeltaKm;
+		Vertex.FoldDirection = Record.ExpectedFoldDirection;
+		Record.PreviousElevationKm = PreviousElevation;
+		Record.NewElevationKm = Vertex.Elevation;
+		Record.PreviousFoldMagnitude = PreviousFoldMagnitude;
+		Record.NewFoldMagnitude = Vertex.FoldDirection.Size();
+		Record.bApplied = true;
+		AppliedDeltaSum += Record.AppliedDeltaKm;
+		MaxRecordResidual = FMath::Max(
+			MaxRecordResidual,
+			FMath::Abs((Record.NewElevationKm - Record.PreviousElevationKm) - Record.AppliedDeltaKm));
+	}
+
+	OutAudit.TotalAppliedDeltaKm = AppliedDeltaSum;
+	OutAudit.FormulaResidualKm = MaxRecordResidual;
+	OutAudit.bUpliftApplied = OutAudit.bTopologyMutationApplied && OutAudit.UpliftRecordCount > 0 && MaxRecordResidual <= 1.0e-9;
+	bProjectionRayMeshTopologyDirty = true;
+	bRenderMeshTopologyDirty = true;
+	ProjectCurrentCarrier();
+	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
+	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+
+	uint64 UpliftHash = 1469598103934665603ull;
+	HashMixString(UpliftHash, TEXT("CarrierLab-IIID7-collision-uplift-applied-v1"));
+	HashMixString(UpliftHash, PlannedAudit.UpliftHash);
+	HashMixString(UpliftHash, TopologyAudit.TopologyMutationHash);
+	HashMix(UpliftHash, OutAudit.bTopologyMutationApplied ? 1ull : 0ull);
+	HashMix(UpliftHash, OutAudit.bUpliftApplied ? 1ull : 0ull);
+	HashMixDouble(UpliftHash, OutAudit.TotalAppliedDeltaKm);
+	HashMixDouble(UpliftHash, OutAudit.FormulaResidualKm);
+	HashMixString(UpliftHash, OutAudit.VisibleElevationHash);
+	HashMixString(UpliftHash, OutAudit.CrustStateHash);
+	for (const FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : OutAudit.Records)
+	{
+		HashMix(UpliftHash, static_cast<uint64>(Record.RecordId + 1));
+		HashMix(UpliftHash, static_cast<uint64>(Record.DestinationLocalVertexId + 1));
+		HashMixDouble(UpliftHash, Record.PreviousElevationKm);
+		HashMixDouble(UpliftHash, Record.AppliedDeltaKm);
+		HashMixDouble(UpliftHash, Record.NewElevationKm);
+		HashMixDouble(UpliftHash, Record.NewFoldMagnitude);
+		HashMix(UpliftHash, Record.bApplied ? 1ull : 0ull);
+	}
+	OutAudit.UpliftHash = HashToString(UpliftHash);
 	return true;
 }
 

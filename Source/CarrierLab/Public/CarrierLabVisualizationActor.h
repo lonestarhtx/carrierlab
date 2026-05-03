@@ -1278,6 +1278,78 @@ struct FCarrierLabPhaseIIID6TopologyMutationAudit
 	FString TopologyMutationHash;
 };
 
+struct FCarrierLabPhaseIIID7CollisionUpliftRecord
+{
+	int32 RecordId = INDEX_NONE;
+	int32 EventId = INDEX_NONE;
+	int32 Step = 0;
+	int32 SourcePlateId = INDEX_NONE;
+	int32 DestinationPlateId = INDEX_NONE;
+	int32 DestinationLocalVertexId = INDEX_NONE;
+	int32 GlobalSampleId = INDEX_NONE;
+	double TerraneAreaWeight = 0.0;
+	double TerraneAreaKm2 = 0.0;
+	double ReferencePlateAreaKm2 = 0.0;
+	double RelativeVelocityMmPerYear = 0.0;
+	double InfluenceRadiusKm = 0.0;
+	double DistanceToTerraneKm = 0.0;
+	double DistanceTransfer = 0.0;
+	double PreviousElevationKm = 0.0;
+	double AppliedDeltaKm = 0.0;
+	double NewElevationKm = 0.0;
+	double PreviousFoldMagnitude = 0.0;
+	double NewFoldMagnitude = 0.0;
+	FVector3d VertexUnitPosition = FVector3d::ZeroVector;
+	FVector3d TerraneCentroid = FVector3d::ZeroVector;
+	FVector3d ExpectedFoldDirection = FVector3d::ZeroVector;
+	bool bApplied = false;
+};
+
+struct FCarrierLabPhaseIIID7CollisionUpliftAudit
+{
+	int32 Step = 0;
+	int32 EventCountBefore = 0;
+	int32 EventCountAfter = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerialBefore = 0;
+	int32 ResetSerialAfter = 0;
+	double InterpenetrationThresholdKm = 300.0;
+	double DestinationMassThresholdRatio = 0.5;
+	double CollisionRadiusConstantKm = 4200.0;
+	double CollisionCoefficientPerKm = 1.3e-5;
+	double ReferenceVelocityMmPerYear = 100.0;
+	double PlanetRadiusKm = 6371.0;
+	double TerraneAreaWeight = 0.0;
+	double TerraneAreaKm2 = 0.0;
+	double ReferencePlateAreaKm2 = 0.0;
+	double RelativeVelocityMmPerYear = 0.0;
+	double InfluenceRadiusKm = 0.0;
+	int32 CandidateVertexCount = 0;
+	int32 UpliftRecordCount = 0;
+	int32 UniqueUpliftedVertexCount = 0;
+	int32 SkippedOutsideRadiusCount = 0;
+	int32 SkippedNonContinentalVertexCount = 0;
+	int32 InvalidInputCount = 0;
+	double TotalAppliedDeltaKm = 0.0;
+	double MaxAppliedDeltaKm = 0.0;
+	double CenterExpectedDeltaKm = 0.0;
+	double CenterAppliedDeltaKm = 0.0;
+	double MaxOutsideRadiusDeltaKm = 0.0;
+	double FormulaResidualKm = 0.0;
+	bool bPlannedOnly = false;
+	bool bTopologyMutationApplied = false;
+	bool bUpliftApplied = false;
+	bool bNoUpliftAvailable = false;
+	FVector3d TerraneCentroid = FVector3d::ZeroVector;
+	FString SourceSuturePlanHash;
+	FString SourceTopologyMutationHash;
+	FString UpliftHash;
+	FString VisibleElevationHash;
+	FString CrustStateHash;
+	FCarrierLabPhaseIIID6TopologyMutationAudit TopologyAudit;
+	TArray<FCarrierLabPhaseIIID7CollisionUpliftRecord> Records;
+};
+
 struct FCarrierLabPhaseIIIProcessOverlayTriangle
 {
 	FVector3d A = FVector3d::ZeroVector;
@@ -1366,6 +1438,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICSlabPullSpeedMmPerYear = 8.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIIDCollisionRadiusKm = 4200.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIIDCollisionCoefficientPerKm = 1.3e-5;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
 	bool bAutoInitialize = true;
@@ -1542,6 +1620,14 @@ public:
 		double DestinationMassThresholdRatio = 0.5) const;
 	bool ApplyPhaseIIID6DetachAndSuture(
 		FCarrierLabPhaseIIID6TopologyMutationAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0,
+		double DestinationMassThresholdRatio = 0.5);
+	bool PlanPhaseIIID7CollisionUplift(
+		FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0,
+		double DestinationMassThresholdRatio = 0.5) const;
+	bool ApplyPhaseIIID7CollisionUplift(
+		FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
 		double InterpenetrationThresholdKm = 300.0,
 		double DestinationMassThresholdRatio = 0.5);
 	bool GetPhaseIIIProcessOverlayTriangles(
