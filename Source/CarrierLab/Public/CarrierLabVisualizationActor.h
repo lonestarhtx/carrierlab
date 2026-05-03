@@ -1189,6 +1189,95 @@ struct FCarrierLabPhaseIIID5SuturePlanAudit
 	FString SuturePlanHash;
 };
 
+struct FCarrierLabPhaseIIID6TopologyMutationRecord
+{
+	int32 EventId = INDEX_NONE;
+	int32 Step = 0;
+	int32 AppliedSuturePlanId = INDEX_NONE;
+	int32 AppliedSlabBreakPlanId = INDEX_NONE;
+	int32 GroupId = INDEX_NONE;
+	uint64 PairKey = 0;
+	int32 SourcePlateId = INDEX_NONE;
+	int32 DestinationPlateId = INDEX_NONE;
+	int32 SourceTriangleCountBefore = 0;
+	int32 SourceTriangleCountAfter = 0;
+	int32 SourceVertexCountBefore = 0;
+	int32 SourceVertexCountAfter = 0;
+	int32 DestinationTriangleCountBefore = 0;
+	int32 DestinationTriangleCountAfter = 0;
+	int32 DestinationVertexCountBefore = 0;
+	int32 DestinationVertexCountAfter = 0;
+	int32 RemovedTriangleCount = 0;
+	int32 AddedTriangleCount = 0;
+	int32 RemovedVertexCount = 0;
+	int32 AddedVertexCount = 0;
+	int32 DeferredValidPlanCount = 0;
+	int32 InvalidAppliedTriangleCount = 0;
+	int32 InvalidAppliedVertexCount = 0;
+	int32 SourceBoundaryTriangleCountAfter = 0;
+	int32 DestinationBoundaryTriangleCountAfter = 0;
+	int32 SourceNonManifoldEdgeCountAfter = 0;
+	int32 DestinationNonManifoldEdgeCountAfter = 0;
+	int32 InvalidatedMatrixPairCount = 0;
+	int32 InvalidatedPolarityDecisionCount = 0;
+	int32 InvalidatedTriangleHitCount = 0;
+	int32 InvalidatedMatrixEvidenceCount = 0;
+	int32 InvalidatedSubductingMarkCount = 0;
+	double SourceContinentalAreaBefore = 0.0;
+	double SourceContinentalAreaAfter = 0.0;
+	double DestinationContinentalAreaBefore = 0.0;
+	double DestinationContinentalAreaAfter = 0.0;
+	double SourceContinentalAreaDelta = 0.0;
+	double DestinationContinentalAreaDelta = 0.0;
+	double TransferredContinentalArea = 0.0;
+	double ContinentalAreaResidual = 0.0;
+	double MaxCopiedElevationDelta = 0.0;
+	double MaxCopiedHistoricalElevationDelta = 0.0;
+	bool bApplied = false;
+	bool bOneCollisionOnly = false;
+	bool bSlabBreakPlanValid = false;
+	bool bSuturePlanValid = false;
+	bool bSourceTopologyValidAfter = false;
+	bool bDestinationTopologyValidAfter = false;
+	bool bBoundaryTrackingReinitialized = false;
+	bool bSubductionTrackingInvalidated = false;
+	bool bNoUpliftApplied = false;
+	FString SlabBreakPlanHash;
+	FString SuturePlanHash;
+	FString SourceTopologyHashAfter;
+	FString DestinationTopologyHashAfter;
+	FString MutationHash;
+};
+
+struct FCarrierLabPhaseIIID6TopologyMutationAudit
+{
+	int32 Step = 0;
+	int32 EventCountBefore = 0;
+	int32 EventCountAfter = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerialBefore = 0;
+	int32 ResetSerialAfter = 0;
+	double InterpenetrationThresholdKm = 300.0;
+	double DestinationMassThresholdRatio = 0.5;
+	int32 SlabBreakPlanCount = 0;
+	int32 ValidSlabBreakPlanCount = 0;
+	int32 SuturePlanCount = 0;
+	int32 ValidSuturePlanCount = 0;
+	int32 AppliedMutationCount = 0;
+	int32 DeferredValidPlanCount = 0;
+	int32 InvalidPlanCount = 0;
+	int32 MissingSlabBreakPlanCount = 0;
+	bool bMutationAttempted = false;
+	bool bMutationApplied = false;
+	bool bTopologyMutated = false;
+	bool bOneCollisionOnly = false;
+	bool bNoPlanAvailable = false;
+	TArray<FCarrierLabPhaseIIID6TopologyMutationRecord> Records;
+	FString SourceSlabBreakPlanHash;
+	FString SourceSuturePlanHash;
+	FString TopologyMutationHash;
+};
+
 struct FCarrierLabPhaseIIIProcessOverlayTriangle
 {
 	FVector3d A = FVector3d::ZeroVector;
@@ -1451,6 +1540,10 @@ public:
 		FCarrierLabPhaseIIID5SuturePlanAudit& OutAudit,
 		double InterpenetrationThresholdKm = 300.0,
 		double DestinationMassThresholdRatio = 0.5) const;
+	bool ApplyPhaseIIID6DetachAndSuture(
+		FCarrierLabPhaseIIID6TopologyMutationAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0,
+		double DestinationMassThresholdRatio = 0.5);
 	bool GetPhaseIIIProcessOverlayTriangles(
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles,
