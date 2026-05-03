@@ -161,7 +161,10 @@ subduction/collision state; they are not thesis-faithful substitutes for the
 thesis filter. Stage 1.5 reports AuthoritativeCAF, ProjectedCAF, gap-fill
 behavior, and per-plate area deltas under each policy so the checkpoint can
 distinguish process-independent carrier behavior from behavior future
-subduction integration owns.
+subduction/collision integration owns. Once the Phase III process state exists,
+the paper-faithful remesh path filters subducting/colliding triangles before
+candidate selection; centroid/random/synthetic policies remain comparison
+diagnostics only.
 
 ## Stage Split
 
@@ -201,6 +204,12 @@ Stage 1.5: cross-window resampling
 - Rebuild plate-local duplicated triangulations after assignment.
 - Report authoritative CAF, projected CAF, projected-authoritative delta, and
   per-plate area deltas before and after every resampling event.
+- Status after the paper/thesis reread: Stage 1.5 is foundation
+  characterization, not standalone paper-faithful resampling. The thesis
+  remesh consumes convergence/collision state that Stage 1.5 intentionally did
+  not have. The paper-faithful integration point is Phase IIIE, after
+  IIIB/IIIC/IIID provide subducting/colliding marks and continental
+  collision/suture behavior.
 
 Stage 2: long-horizon stability
 

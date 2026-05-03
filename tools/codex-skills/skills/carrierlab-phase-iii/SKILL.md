@@ -14,18 +14,25 @@ Load only the relevant subset before Phase III work:
 - `docs/phase-iii-paper-process-design.md`
 - `docs/phase-iii-pre-mortem.md`
 - `docs/phase-iii-slice-plan.md`
+- `docs/paper-resampling-extraction.md` before any IIIE/remesh work
 - latest relevant checkpoint in `docs/checkpoints/`
 - for IIIC work, also read `docs/checkpoints/phase-iii-iiic-entry-reconciliation.md`
 
 ## Core Contract
 
-- Phase III recreates paper process state on top of the validated carrier foundation.
+- Phase III recreates paper process state on top of the validated carrier
+  substrate. Stage 1.5 is foundation characterization, not standalone
+  paper-faithful remeshing.
 - Carrier authority remains plate-local geometry/material state.
 - Global samples are projection/resampling targets, not persistent authority.
 - Vertex positions remain on the unit sphere throughout Phase III.
 - Elevation is a scalar field until Phase IV amplification consumes it.
 - Phase IV visual terrain/amplification must not leak into Phase III.
-- Stage 1.5/Slice 5.5 open evidence remains preserved; later slices may explain pieces but must not claim it is erased.
+- Stage 1.5/Slice 5.5 open evidence remains preserved; later slices may
+  explain pieces but must not claim it is erased.
+- The paper-faithful remesh path consumes IIIB/IIIC/IIID process state:
+  subducting/colliding triangles are filtered before remesh rays, and
+  continental persistence comes from collision/suture before remesh.
 
 ## Sub-Phase Shape
 
@@ -33,7 +40,7 @@ Load only the relevant subset before Phase III work:
 - IIIB: read-only convergence tracking.
 - IIIC: subduction process mutation, including trench, uplift, slab-pull feedback.
 - IIID: continental collision/suture behavior.
-- IIIE: oceanic generation and divergent gap accounting.
+- IIIE: paper remesh plus oceanic generation and divergent gap accounting.
 - IIIF: rifting.
 - IIIG: per-step elevation evolution.
 - IIIH: tectonic-only long-horizon validation.
@@ -63,3 +70,5 @@ Pause and write an investigation checkpoint if:
 - unit-sphere geometry is displaced before Phase IV
 - replay hash determinism breaks
 - a report claims more than the current slice proves
+- IIIE promotes Stage 1.5 lab policies (centroid/random/synthetic/prior-owner
+  fallback or discrete q1/q2 approximation) into the primary remesh path

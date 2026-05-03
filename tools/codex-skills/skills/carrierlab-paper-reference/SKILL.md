@@ -13,7 +13,9 @@ Prefer local files in the repo:
 - `docs/ProceduralTectonicPlanets/ProceduralTectonicPlanets.txt` when present
 - `docs/Synthèse de terrain à léchelle planétaire/Synthèse de terrain à l'échelle planétaire.pdf`
 - PNG page exports in the same folders when visual figures matter
-- existing extracted notes in `docs/paper-carrier-extraction.md`, `docs/carrier-design.md`, and checkpoint reports
+- existing extracted notes in `docs/paper-carrier-extraction.md`,
+  `docs/paper-resampling-extraction.md`, `docs/carrier-design.md`, and
+  checkpoint reports
 
 Use text extraction for searchable text, but inspect PNG/page images for diagrams, formulas, and visual morphology.
 

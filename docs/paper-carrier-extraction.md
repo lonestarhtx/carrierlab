@@ -4,6 +4,12 @@ Status: revised pre-Stage-0 deliverable. Stage 0 may not be accepted until the
 code audit in `docs/carrier-design.md` is satisfied and the readback is
 approved.
 
+Resampling note: the focused reread in
+`docs/paper-resampling-extraction.md` is now the canonical reference for
+thesis §3.3.2.3 remeshing, multi-hit filtering, q1/q2/qGamma provenance, and
+Stage 1.5 reframing. Where this older extraction is less specific about
+resampling, the focused doc supersedes it.
+
 ## Scope And Source Handling
 
 CarrierLab is now framed as paper-faithful reproduction with Aurous differential
@@ -77,16 +83,20 @@ specification so the lab remains reviewable without reproducing long passages.
    until exact nearest-boundary provenance is implemented or proven equivalent.
 
 6. Multi-hit handling is only fully specified when subduction/collision has
-   already selected losing triangles. For no-subduction Stage 1 and Stage 1.5,
-   CarrierLab must use an explicit temporary tie-break and report raw multi-hit
-   counts before resolving.
+   already selected losing triangles. In the paper-faithful remesh path,
+   subducting/colliding triangles are filtered before candidate selection. For
+   no-subduction Stage 1 and standalone Stage 1.5, CarrierLab must use an
+   explicit temporary tie-break and report raw multi-hit counts before
+   resolving; those policies are diagnostics, not paper-faithful substitutes.
 
 ## Remaining Ambiguity
 
 The only open carrier ambiguity for the early lab is the no-subduction
-multi-hit tie-break. The approved default is nearest plate centroid, with
-lowest plate id as a deterministic tie-break, and with raw multi-hit counts
-reported separately from resolved output.
+multi-hit tie-break. The approved diagnostic default is nearest plate centroid,
+with lowest plate id as a deterministic tie-break, and with raw multi-hit
+counts reported separately from resolved output. This ambiguity should not
+survive into the primary IIIE remesh path once IIIB/IIIC/IIID process state is
+available.
 
 Boundary degeneracy is no longer treated as a paper ambiguity. It is a lab
 measurement policy: exact edge/vertex cases are logged as zero-area

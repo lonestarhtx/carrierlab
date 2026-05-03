@@ -18,6 +18,19 @@ Rules:
 - They must read existing Phase III fields only. No inferred ownership, no projection changes, no material mutation, no smoothing, no terrain displacement.
 - Vertex positions remain on the unit sphere; Phase IV remains responsible for amplified terrain geometry.
 
+## Paper Remesh Reframe
+
+`docs/paper-resampling-extraction.md` is the canonical reference for remesh
+semantics after the thesis reread. Stage 1.5 remains a foundation
+characterization of resampling without the paper's prerequisite process state;
+it is not the final paper-faithful remesh implementation. The first
+paper-faithful remesh integration point is IIIE, after IIIB/IIIC/IIID have
+created the subduction/collision state that the thesis remesher consumes.
+
+Consequence for future slices: centroid, random, synthetic, or prior-owner
+fallback policies are allowed only as comparison diagnostics. They must not be
+promoted to the primary remesh path once IIIE lands.
+
 ## Sub-Phase IIIA: Paper Crust State Schema
 
 Goal: add the paper's crust-state fields to the carrier vertex/sample without changing tectonic behavior. Storage and rotation only; no consumers, no mutation outside rotation.
@@ -434,71 +447,122 @@ Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiid8-report.md`.
 
 Work: `docs/checkpoints/phase-iii-iiid-consolidated.md` summarizing collision implementation, with the IIID.8 quantification as the headline result.
 
-## Sub-Phase IIIE: Divergent Zone / Oceanic Crust Generation
+## Sub-Phase IIIE: Paper Remesh / Divergent Zone Oceanic Crust Generation
 
-Goal: complete the paper's oceanic crust generation model and reframe the Slice 4/5 ledger interpretation.
+Goal: implement the full thesis §3.3.2.3 remesh operation on top of the
+IIIB/IIIC/IIID process state. This includes remesh-time filtering of
+subducting/colliding triangles, continuous q1/q2 boundary provenance,
+qGamma-based oceanic generation, plate-local rebuild, and remesh-time
+process-state reset. It also reframes the Slice 4/5 ledger interpretation.
 
-### IIIE.1: Q1/Q2 Audit Against Current Implementation
+### IIIE.1: Remesh Contract Audit And Stage 1.5 Reframe
 
 Work:
 
-- Read the current Stage 1.5 q1/q2/ridge-midpoint implementation in detail.
-- Compare to thesis §3.3.2.3 step 2b.
-- Document discrepancies, if any. If the implementation is faithful, proceed to IIIE.2 with no code changes.
+- Read `docs/paper-resampling-extraction.md` and the current Stage 1.5/actor
+  remesh paths.
+- Produce a no-code audit listing every Stage 1.5 lab-policy branch that must
+  be retired, bypassed, or retained only as a comparison control.
+- Confirm that IIIE depends on IIIB/IIIC/IIID state and must not be judged as
+  a standalone Stage 1.5 replay.
 
 Exit gate:
 
-- Audit report concludes either "implementation matches thesis spec" or lists specific discrepancies for remediation.
+- Report names the primary remesh source of truth: filtered ray hit, divergent
+  q1/q2 gap fill, or unresolved anomaly.
+- Report explicitly states that nearest-centroid/random/prior-owner fallback
+  are not primary-path remesh policies.
 - No code changes in this slice.
 
 Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie1-report.md`.
 
-### IIIE.2: Ridge Direction Field Assignment At Gap Fill
+### IIIE.2: Continuous Q1/Q2 Boundary Query
 
 Work:
 
-- For each gap-fill sample in the divergent-zone path, compute `RidgeDirection = (p - q_Γ) × p` per thesis §3.3.2.1.
-- Re-tangent and normalize.
-- Store on the new sample.
+- Replace the discrete endpoint/midpoint q1/q2 search in the primary path with
+  continuous closest-point-on-boundary-edge provenance.
+- Boundary candidates are plate-local boundary edges after subducting/colliding
+  triangles are excluded.
+- q1 and q2 must come from different plates; qGamma is the spherical midpoint
+  `R(q1+q2)/||q1+q2||`.
 
 Exit gate:
 
-- Forced-divergence fixture: gap-fill samples receive non-zero ridge direction.
-- Ridge direction is approximately tangent to the ridge midpoint segment.
+- Analytical edge fixtures match the continuous nearest-point oracle.
+- Existing endpoint/midpoint approximation remains available only as a
+  diagnostic comparison.
+- Same-seed replay produces byte-identical q1/q2/qGamma provenance.
 
 Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie2-report.md`.
 
-### IIIE.3: Oceanic Age Initialization At Gap Fill
+### IIIE.3: Filtered Remesh Candidate Selection
 
 Work:
 
-- For each gap-fill sample, set `OceanicAge = 0`.
-- For all other oceanic samples that survive resampling, increment age by `δt` (this is the per-step age aging — strictly speaking part of IIIG, but included here because it's tied to oceanic-generation provenance).
+- For each global TDS vertex, cast the center ray against plate-local BVHs.
+- Ignore subducting and colliding triangles before choosing a remesh source.
+- If exactly one valid hit remains, barycentrically interpolate all crust
+  fields from that triangle and assign the hit plate id.
+- If zero valid hits remain, route to the IIIE.2 divergent gap path.
+- If more than one valid hit remains after filtering, record an unresolved
+  multi-hit anomaly and fail the paper-faithful gate until a paper-cited rule
+  or explicit lab policy is approved.
 
 Exit gate:
 
-- Gap-fill samples have age zero post-resample.
-- Surviving oceanic samples have age incremented by the resample interval since previous remesh.
-- Continental samples have undefined age (or 0; not consumed).
+- Forced oceanic-continental convergence: the subducting side is invisible to
+  remesh rays and the overriding plate supplies the interpolated crust fields.
+- Same-material and third-plate unresolved counts are reported separately, not
+  collapsed into a winner.
+- Primary path contains no centroid/random/prior-owner fallback.
+- IIIB independent-signature regression remains explicit because this slice
+  consumes convergence-tracking state.
 
 Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie3-report.md`.
 
-### IIIE.4: Ridge Elevation Profile
+### IIIE.4: Divergent Oceanic Crust Field Generation
 
 Work:
 
-- For each gap-fill sample, compute `Elevation = α · z̄(p) + (1-α) · z_Γ(p)` per thesis §3.3.2.1.
-- `α = d_Γ(p) / (d_Γ(p) + d_P(p))`.
-- `z_Γ(p)` from the generic ridge profile (Table 3.2: ridge max `z_r = -1 km`, abyssal `z_a = -6 km`).
+- For each zero-hit divergent gap sample, set `OceanicAge = 0`.
+- Compute `RidgeDirection = (p - qGamma) x p`, retangent and normalize.
+- Compute `Elevation = alpha * zBar(p) + (1-alpha) * zGamma(p)` per thesis
+  §3.3.2.1.
+- Record q1 plate id, q2 plate id, boundary edge ids, qGamma, signed relative
+  velocity, and generated oceanic fields in the event log.
 
 Exit gate:
 
-- Forced-divergence fixture: gap-fill elevation profile peaks at ridge midpoint, decays toward `z_a` away from ridge.
-- Profile shape matches analytical expectation.
+- Forced-divergence fixture: gap-fill samples have age zero, non-zero tangent
+  ridge direction, and ridge-profile elevation matching an independent oracle.
+- Gap fill fires only where signed separating velocity is positive; non-positive
+  q1/q2 pairs are reported as anomalies.
 
 Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie4-report.md`.
 
-### IIIE.5: Ledger Reframing
+### IIIE.5: Plate Rebuild And Process-State Reset
+
+Work:
+
+- Repartition the global TDS triangles by remesh vertex plate assignment.
+- Duplicate, re-index, and re-compact plate-local triangulations.
+- Preserve each plate's geodetic motion `G`.
+- Invalidate subduction marks, active convergence lists, distance-to-front
+  records, and the subduction matrix at remesh, then prove the next step
+  rebuilds them from geometry rather than carrying stale state.
+
+Exit gate:
+
+- Rebuilt plate-local topology covers the assigned global TDS triangles without
+  duplicate authority.
+- Remesh-reset process state is empty immediately after remesh and repopulates
+  only through IIIB/IIIC tracking in later steps.
+- No persistent global sample ownership is introduced.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie5-report.md`.
+
+### IIIE.6: Ledger Reframing
 
 Work:
 
@@ -509,13 +573,19 @@ Work:
 Exit gate:
 
 - Ledger reconciles with new lines.
-- "Overwritten by ridge generation" continental loss is below the `1e-4` threshold in fixtures with collision active.
+- "Overwritten by ridge generation" continental loss is below the `1e-4`
+  threshold in fixtures with collision active, or the report pauses for an
+  investigation that audits IIID/IIIE ordering.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie5-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiie6-report.md`.
 
 ### IIIE Consolidation
 
-Work: `docs/checkpoints/phase-iii-iiie-consolidated.md` summarizing oceanic generation completeness and the ledger reframe.
+Work: `docs/checkpoints/phase-iii-iiie-consolidated.md` summarizing the full
+paper remesh integration, oceanic generation completeness, process-state reset,
+and the ledger reframe. The consolidation must say whether Stage 1.5's
+standalone failure has been architecturally explained by the integrated
+paper-remesh path; it must not claim Stage 1.5 itself was retroactively proven.
 
 ## Sub-Phase IIIF: Plate Rifting
 

@@ -7,27 +7,31 @@ Status: draft for user review. Phase III implementation may not start until the 
 - `docs/phase-iii-paper-process-design.md`: ADR-shaped design contract. Eight sub-phases (IIIA–IIIH), authority rules, data model, sub-phase architectural decisions, gates, non-goals.
 - `docs/phase-iii-pre-mortem.md`: ten ranked failure modes, required negative controls, and stop conditions.
 - `docs/phase-iii-slice-plan.md`: per-sub-phase tiny slices with goals, work items, exit gates, and per-slice checkpoint artifacts.
+- `docs/paper-resampling-extraction.md`: focused paper/thesis extraction for the §3.3.2.3 remesh operation. This supersedes earlier resampling notes where they treated Stage 1.5 as standalone.
 
-Supporting reread material from CODEX (already in tree, untracked, to be landed with this packet):
+Supporting reread material:
 
 - `docs/phase-iii-paper-process-extraction.md`: process-level reread of paper §3 / thesis §3.
 - `docs/phase-iii-figure-reading.md`: figure-level reread.
 
 ## Grounding
 
-Phase II is closed (commit `4ad8148`, see `docs/phase-ii-closeout.md`). The tested carrier mechanics reproduce faithfully within the Phase I/II scope; runtime is ~6× under paper Table 2 budget for the measured kernel. Slice 5.5 produced a load-bearing finding: continental loss in the resampling ledger is *not* mixed-triangle barycentric smear (only 0.7% of single-hit records, contributing -0.004 of the -0.375 net at 60k). It is *coherent transfer* — continental samples reading from uniformly-oceanic interior triangles of plates that have moved into their position. The asymmetry is consistent with continental plates losing area at convergent zones because no collision/suture process exists.
+Phase II is closed (commit `4ad8148`, see `docs/phase-ii-closeout.md`). Stage 0/1 validated the paper carrier substrate within their scope; Stage 1.5 is now explicitly foundation characterization, not standalone paper-faithful resampling. The paper/thesis remesh operation consumes Phase III process state: subducting and colliding triangles are filtered before remesh rays, and continental terranes persist through collision/suture before the next remesh. Runtime is ~6× under paper Table 2 budget for the measured kernel. Slice 5.5 produced a load-bearing finding: continental loss in the resampling ledger is *not* mixed-triangle barycentric smear (only 0.7% of single-hit records, contributing -0.004 of the -0.375 net at 60k). It is *coherent transfer* — continental samples reading from uniformly-oceanic interior triangles of plates that have moved into their position. The asymmetry is consistent with continental plates losing area at convergent zones because no collision/suture process exists.
 
-Phase III is therefore not "fix the carrier." It is "reconstruct the paper processes whose absence produces the Slice 5.5 asymmetry." The architectural answer to that asymmetry is continental collision (sub-phase IIID), which transfers continental material rather than losing it.
+Phase III is therefore not "fix the carrier" through a projection tie-break. It is "reconstruct the paper processes whose absence produces the Slice 5.5 asymmetry." The architectural answer to continental persistence is continental collision (sub-phase IIID), which transfers continental material before remesh. The architectural answer to paper-faithful resampling is IIIE, which must implement the full §3.3.2.3 remesh rather than merely extending the old Stage 1.5 lab path.
 
 ## Phase III Goal
 
-Reconstruct the paper's full tectonic process layer on top of the validated Phase I/II carrier foundation, in eight sub-phases sequenced storage → tracking → mutation → topology → events → equilibrium:
+Reconstruct the paper's full tectonic process layer on top of the measured
+Stage 0/1 carrier substrate and Phase II process scaffolding, in eight
+sub-phases sequenced storage → tracking → mutation → topology → events →
+equilibrium:
 
 - IIIA: paper crust state schema (storage only)
 - IIIB: convergence tracking (read-only)
 - IIIC: continuous subduction/obduction (mutation, including slab-pull feedback into carrier authority)
 - IIID: continental collision (topology mutation; the architectural answer to Slice 5.5)
-- IIIE: divergent zone / oceanic crust generation (full process plus ledger reframe)
+- IIIE: paper remesh / divergent-zone oceanic crust generation (full §3.3.2.3 integration plus ledger reframe)
 - IIIF: plate rifting (discrete event)
 - IIIG: per-step elevation evolution
 - IIIH: tectonic-only long-horizon validation
@@ -47,7 +51,7 @@ The success condition is narrow:
 - Global samples remain projection/resampling targets, never persistent tectonic authority.
 - Process state may persist across timesteps within a remesh window. It is invalidated at every remesh per thesis §3.3.2.3.
 - Slab pull is the only place process output feeds back into carrier authority. It is opt-in, hash-gated separately, and always has a parallel "off" baseline computed for differential testing.
-- Centroid and random tie-breaks remain comparison controls only.
+- Centroid and random tie-breaks remain comparison controls only. They are not paper-faithful remesh policy once IIIB/IIIC/IIID state exists.
 - No terrain beauty, displaced geometry, exemplar synthesis, or amplification — those belong to Phase IV.
 - No additional carrier numerical hardening beyond what Phase III state requires.
 - Optimization acceptance is hash-gated as in Phase II: same seed produces identical projection and carrier-state hashes before and after each commit.
@@ -56,12 +60,13 @@ The success condition is narrow:
 ## Review Questions
 
 1. Is the eight-sub-phase decomposition (IIIA–IIIH) acceptable, with the storage → tracking → mutation → topology → events → equilibrium sequencing as binding?
-2. Do you approve continental collision (IIID) as the architectural answer to Slice 5.5, with the IIID.8 quantification target (≥80% reduction in uniform-oceanic-source continental loss, investigated if missed rather than tuned around)?
-3. Do you approve slab pull (IIIC.4) as the single allowed process-to-carrier-authority feedback, with the off/on differential gate?
-4. Do you approve the Phase III gates as the success condition (long-horizon equilibrium, deterministic replay, Slice 5.5 reduction, kernel within Table 2)?
-5. Do you approve the non-negotiable that Phase IV (amplification) is downstream and never bleeds into Phase III scope, including the "vertex positions remain on the unit sphere" stop condition?
-6. Do you accept that Phase III sub-phases will land slowly, with per-slice checkpoints for tiny units of work (e.g., IIIA has 4 sub-slices, IIID has 8), to keep change blast radius small?
-7. Are the Phase III pre-mortem's ten failure modes the right ones to instrument against, or are there project-specific ones (e.g., Unreal-engine-specific topology concerns) that should be added before approval?
+2. Do you approve the Stage 1.5 reframing: standalone Stage 1.5 remains foundation characterization, while paper-faithful remeshing is owned by IIIE after convergence/collision state exists?
+3. Do you approve continental collision (IIID) as the architectural answer to Slice 5.5, with the IIID.8 quantification target (≥80% reduction in uniform-oceanic-source continental loss, investigated if missed rather than tuned around)?
+4. Do you approve slab pull (IIIC.4) as the single allowed process-to-carrier-authority feedback, with the off/on differential gate?
+5. Do you approve the Phase III gates as the success condition (long-horizon equilibrium, deterministic replay, Slice 5.5 reduction, kernel within Table 2)?
+6. Do you approve the non-negotiable that Phase IV (amplification) is downstream and never bleeds into Phase III scope, including the "vertex positions remain on the unit sphere" stop condition?
+7. Do you accept that Phase III sub-phases will land slowly, with per-slice checkpoints for tiny units of work (e.g., IIIA has 4 sub-slices, IIID has 8), to keep change blast radius small?
+8. Are the Phase III pre-mortem's failure modes the right ones to instrument against, or are there project-specific ones (e.g., Unreal-engine-specific topology concerns) that should be added before approval?
 
 ## Proposed Approval Statement
 
@@ -76,7 +81,8 @@ If accepted, record:
 
 ## Tidy Items Before Packet Lands
 
-These untracked items should be folded into the same commit as the Phase III planning packet:
+Historical note from the original packet landing. These files were the packet
+contents to keep together before Phase III began:
 
 - `docs/ProceduralTectonicPlanets/` (paper PDF + page PNGs)
 - `docs/Synthèse de terrain à léchelle planétaire/` (thesis PDF + page PNGs)

@@ -206,6 +206,10 @@ Pause Phase III and write an investigation checkpoint if any of these appear:
 - slab-pull-off run produces different motion than the IIIB baseline
 - collision events transfer more area than the source plate's continental coverage
 - Auth CAF jumps by more than 5% in a single event
+- IIIE's primary remesh path promotes Stage 1.5 lab-policy behavior
+  (centroid/random/synthetic tie-break, prior-owner fallback, or discrete
+  endpoint/midpoint q1/q2 as the authoritative source) instead of the
+  paper-remesh contract in `docs/paper-resampling-extraction.md`
 - subduction matrix has non-zero entries in step zero of a remesh window
 - third-plate contact emits a `Subducting`, `Overriding`, or collision label
 - vertex position is mutated radially anywhere in Phase III code

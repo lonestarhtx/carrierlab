@@ -4,11 +4,11 @@ Status: draft for user review. This document is an ADR-shaped design contract fo
 
 ## Context
 
-Phase I (Stages 0/1/1.5) established that the tested paper-style carrier mechanics reproduce faithfully within their clean-room scope. Phase II (Slices 0–5 plus 5.5) added the minimum process-coupled subduction machinery needed to make convergent multi-hit resolution explicit and auditable, and showed that paper Table 2 runtime is comfortably within reach for the measured kernel (~6× headroom at 250k samples).
+Phase I established the core carrier substrate: Stage 0/1 validate plate-local duplicated topology, ray-from-origin projection, and rigid geodetic motion. Stage 1.5 is now treated as a foundation-characterization slice, not as standalone paper-faithful resampling. The focused reread in `docs/paper-resampling-extraction.md` shows that the paper remesher consumes convergence/collision state as input: subducting and colliding triangles are filtered before resampling rays, and continental persistence is handled by collision-driven terrane transfer before the remesh. Phase II (Slices 0–5 plus 5.5) added the minimum process-coupled subduction machinery needed to make convergent multi-hit resolution explicit and auditable, and showed that paper Table 2 runtime is comfortably within reach for the measured kernel (~6× headroom at 250k samples).
 
 Phase II also produced an unexpected piece of evidence in Slice 5.5: the dominant single-hit continental delta is *not* mixed-triangle barycentric smear (only 168 of 23,967 single-hit records, contributing -0.004 of the -0.375 net at 60k). It is *coherent transfer* — continental samples reading from uniformly-oceanic interior triangles of plates that have moved into their position via geodetic motion, and the converse. The asymmetry (loss exceeding gain by ~0.37) is consistent with continental plates losing area at convergent zones because no collision/suture process exists to transfer continental material rather than lose it.
 
-Phase III's job is therefore not to "fix" the carrier. It is to reconstruct the paper processes whose absence shows up as the Slice 5.5 coherent-transfer asymmetry: continental collision (the load-bearing one), persistent subduction state, oceanic crust generation as a full process, rifting, and per-step elevation evolution.
+Phase III's job is therefore not to "fix" the carrier by adding clever projection policy. It is to reconstruct the paper processes whose absence shows up as the Slice 5.5 coherent-transfer asymmetry: continental collision (the load-bearing one), persistent subduction state, the full remesh/oceanic-generation operation, rifting, and per-step elevation evolution.
 
 ## Decision
 
@@ -18,7 +18,7 @@ Build Phase III as eight sub-phases (IIIA–IIIH) sequenced storage → tracking
 - **IIIB** — convergence tracking (read-only state, no mutation).
 - **IIIC** — continuous subduction/obduction (mutation, including slab-pull feedback into carrier authority).
 - **IIID** — continental collision (topology mutation; the architectural answer to Slice 5.5).
-- **IIIE** — divergent zone / oceanic crust generation as a full process (re-interpretation of existing gap-fill plus full crust-field assignment).
+- **IIIE** — paper remesh / divergent-zone oceanic crust generation (full §3.3.2.3 remesh integration, including filtering, continuous q1/q2, qGamma, and state reset).
 - **IIIF** — plate rifting (discrete event).
 - **IIIG** — per-step elevation evolution (continental erosion, oceanic dampening, sediment accretion).
 - **IIIH** — tectonic-only long-horizon validation (closes Phase III before any Phase IV amplification work).
@@ -32,7 +32,7 @@ These authority rules from Phase I/II remain non-negotiable:
 - Plate-local duplicated triangulations are crust authority. Global TDS samples are projection/resampling targets, never persistent tectonic authority.
 - Per-plate triangulation construction follows thesis §3.2.4: duplicated topology, local re-indexing, local re-compaction, empty neighborhood at borders.
 - Resampling at cadence `ΔT = (1-α)M + αm`, `α = min(1, vm/v0)`, `m = 32 Ma`, `M = 128 Ma`.
-- Ray-from-origin per global TDS sample for projection-time intersection. Subducting/colliding triangles excluded at projection time.
+- Ray-from-origin per global TDS sample for projection/remesh-time intersection. In the paper-faithful remesh path, subducting/colliding triangles are excluded before candidate selection.
 - Determinism: same-seed replay produces byte-identical hashes for projection, carrier state, and all process artifacts.
 - No persistent global sample ownership as authority. No ownership recovery, repair, backfill, hysteresis, or anchoring.
 - No centroid or random tie-break in any primary path. They remain comparison controls only.
@@ -138,17 +138,22 @@ Names will evolve in code, but the separations are binding.
 
 **Non-decisions:** IIID does not implement reverse subduction (the thesis explicitly skips this). It does not implement post-collision tectonic-axis re-orientation beyond what the Slab Break implies.
 
-### IIIE — Divergent Zone / Oceanic Crust Generation
+### IIIE — Paper Remesh / Divergent Zone Oceanic Crust Generation
 
-**Goal:** complete the paper's oceanic crust generation model and reframe the existing gap-fill ledger interpretation.
+**Goal:** replace the standalone Stage 1.5 lab-policy remesh with the paper's full §3.3.2.3 operation, including process-state filtering, continuous q1/q2 provenance, divergent oceanic crust generation, plate-local rebuild, and remesh-time process-state invalidation.
 
 **Architectural decisions:**
 
-- The existing q1/q2/ridge-midpoint algorithm in Stage 1.5 is preserved; IIIE adds the missing crust-field assignments at gap-filled samples: `OceanicAge = 0`, `RidgeDirection = (p - q_Γ) × p` (per thesis §3.3.2.1), `Elevation = blend(z̄, z_Γ)` per the ridge profile formula.
-- Gap-fill samples no longer contribute to the "continental destruction" framing in the ledger. They contribute to a renamed "new oceanic creation" line. Pre-existing continental material at a gap-filled sample is recorded in a separate "overwritten by ridge generation" line — that quantity should be near-zero in healthy runs (continental material should have been transferred via collision IIID, or carried with the plate).
-- The Slice 4/5 ledger schema is extended, not rewritten. Existing categories remain for replay determinism; the new categories add detail.
+- IIIE consumes the process state created by IIIB/IIIC/IIID. Subducting triangles and colliding triangles are invisible to remesh rays. The remaining valid intersection, if any, is the remesh source; centroid/random policies are not a primary-path resolver.
+- A multi-hit that remains after subducting/colliding filtering is an explicit unresolved/underspecified event. It is counted and gated; it must not fall back to nearest-centroid, random, prior owner, or any other lab policy in the paper-faithful path.
+- Zero-hit samples are divergent gaps. q1 and q2 are continuous nearest points on plate boundary edges from two different plates, not merely discrete boundary vertices. qGamma is the spherical midpoint `R(q1+q2)/||q1+q2||`.
+- Gap-fill samples receive the paper oceanic-generation fields: `OceanicAge = 0`, `RidgeDirection = (p - q_Gamma) x p` (retangent/normalized), and `Elevation = blend(z_bar, z_Gamma)` per the ridge profile formula.
+- After assignment, the global TDS triangles are partitioned by remesh ownership and duplicated/re-indexed/re-compacted into plate-local triangulations. Per-plate geodetic motion `G` is preserved.
+- Remesh invalidates subduction marks, convergence tracking lists, and the subduction matrix. They are rebuilt in the subsequent window; they are not persistent ownership.
+- Gap-fill samples no longer contribute to the old "continental destruction" framing. They contribute to a "new oceanic creation" line. Pre-existing continental material overwritten by ridge generation is still tracked as an anomaly; after IIID, that quantity should be near-zero because collision/suture should have moved continental terranes before remesh.
+- The Slice 4/5 ledger schema is extended, not rewritten. Existing categories remain for replay determinism; the new categories add detail and reframe what was previously described as destruction.
 
-**Non-decisions:** IIIE does not implement the oceanic-age aging mechanism over time (that's part of IIIG). It does not implement oceanic crust dampening (also IIIG).
+**Non-decisions:** IIIE does not implement oceanic crust dampening or global erosion (IIIG). It does not repair Stage 1.5 in isolation; it integrates remeshing with the Phase III tracking/collision state the paper requires.
 
 ### IIIF — Plate Rifting
 
@@ -212,7 +217,7 @@ Phase III as a whole is accepted when:
 Every Phase III sub-phase checkpoint must include:
 
 - Per-sub-phase replay hashes (separate from Phase II hashes).
-- Phase II material ledger continues to reconcile, now extended with new categories per IIIE.
+- Phase II material ledger continues to reconcile, now extended with paper-remesh categories per IIIE.
 - New crust-field heatmaps in the visualization actor (`Elevation`, `OceanicAge`, `RidgeDirection` magnitude, `FoldDirection` magnitude).
 - Collision and rifting event timelines with per-event topology deltas.
 - Subduction tracking state snapshots: active triangle count, distance-to-front histogram, subduction matrix density.
@@ -234,6 +239,7 @@ Phase III is also not Phase II rescue work:
 - No additional carrier numerical hardening beyond what's needed to support new state.
 - No new ownership-recovery, hysteresis, or backfill heuristics under any name.
 - No centroid/random tie-breaks promoted to the primary path.
+- No Stage 1.5 standalone remesh policy promoted to paper-faithful evidence; IIIE is the first paper-remesh integration point.
 
 ## Consequences
 
@@ -241,4 +247,8 @@ Phase III is also not Phase II rescue work:
 
 **If Phase III fails:** the failure should localize to one sub-phase. The most likely failure surfaces (per `phase-iii-pre-mortem.md`) are the slab-pull feedback loop, continental collision becoming an area-fill, or long-horizon Auth CAF drift not equilibrating. Each is detectable at its own checkpoint; none should require unwinding the whole phase.
 
-**Either outcome:** the carrier foundation from Phase I/II remains intact and validated. Phase III is additive on top of a proven base.
+**Either outcome:** the Stage 0/1 carrier substrate remains useful and
+validated within its scope. Stage 1.5 remains preserved as evidence about what
+happens when remeshing is isolated from the process state the paper expects.
+Phase III is additive on top of that measured substrate, not a retroactive
+claim that standalone Stage 1.5 was paper-faithful.
