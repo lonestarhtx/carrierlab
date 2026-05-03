@@ -1056,6 +1056,69 @@ struct FCarrierLabPhaseIIID3DestinationMassAudit
 	FString DestinationMassHash;
 };
 
+struct FCarrierLabPhaseIIID4SlabBreakPlanRecord
+{
+	int32 PlanId = INDEX_NONE;
+	int32 GroupId = INDEX_NONE;
+	uint64 PairKey = 0;
+	int32 SourceRecordId = INDEX_NONE;
+	int32 DestinationMassRecordId = INDEX_NONE;
+	int32 SourcePlateId = INDEX_NONE;
+	int32 DestinationPlateId = INDEX_NONE;
+	int32 SourceTriangleCountBefore = 0;
+	int32 SourceVertexCountBefore = 0;
+	int32 RemovedTriangleCount = 0;
+	int32 SurvivingTriangleCount = 0;
+	int32 SurvivingVertexCount = 0;
+	int32 RemovedVertexCount = 0;
+	int32 BoundaryEdgeCount = 0;
+	int32 CutBoundaryEdgeCount = 0;
+	int32 InteriorEdgeCount = 0;
+	int32 NonManifoldEdgeCount = 0;
+	int32 InvalidMappedTriangleCount = 0;
+	int32 DuplicateRemovalTriangleCount = 0;
+	double RemovedAreaWeight = 0.0;
+	bool bMassAccepted = false;
+	bool bRemovalSetMatchesTerrane = false;
+	bool bTopologyValid = false;
+	bool bWouldDestroySourcePlate = false;
+	FString SourceTerraneHash;
+	FString RemovalSetHash;
+	FString OldToNewTriangleMapHash;
+	FString OldToNewVertexMapHash;
+	FString SurvivorTopologyHash;
+	FString PlanHash;
+	TArray<int32> RemovedLocalTriangleIds;
+	TArray<int32> OldToNewLocalTriangleIds;
+	TArray<int32> OldToNewLocalVertexIds;
+};
+
+struct FCarrierLabPhaseIIID4SlabBreakPlanAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	double InterpenetrationThresholdKm = 300.0;
+	double DestinationMassThresholdRatio = 0.5;
+	int32 DestinationMassRecordCount = 0;
+	int32 AcceptedDestinationMassRecordCount = 0;
+	int32 RejectedDestinationMassRecordCount = 0;
+	int32 InterpenetrationAcceptedGroupCount = 0;
+	int32 DuplicatePlanCandidateCount = 0;
+	int32 MissingSourceRecordCount = 0;
+	int32 PlanCount = 0;
+	int32 ValidPlanCount = 0;
+	int32 InvalidPlanCount = 0;
+	int32 WouldDestroySourcePlateCount = 0;
+	int32 TotalRemovedTriangleCount = 0;
+	int32 TotalSurvivingTriangleCount = 0;
+	double TotalRemovedAreaWeight = 0.0;
+	FString SourceDestinationMassHash;
+	TArray<FCarrierLabPhaseIIID4SlabBreakPlanRecord> Plans;
+	FString SlabBreakPlanHash;
+};
+
 struct FCarrierLabPhaseIIIProcessOverlayTriangle
 {
 	FVector3d A = FVector3d::ZeroVector;
@@ -1308,6 +1371,10 @@ public:
 		double InterpenetrationThresholdKm = 300.0) const;
 	bool DetectPhaseIIID3DestinationMass(
 		FCarrierLabPhaseIIID3DestinationMassAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0,
+		double DestinationMassThresholdRatio = 0.5) const;
+	bool PlanPhaseIIID4SlabBreak(
+		FCarrierLabPhaseIIID4SlabBreakPlanAudit& OutAudit,
 		double InterpenetrationThresholdKm = 300.0,
 		double DestinationMassThresholdRatio = 0.5) const;
 	bool GetPhaseIIIProcessOverlayTriangles(

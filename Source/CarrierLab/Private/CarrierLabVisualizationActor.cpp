@@ -866,6 +866,53 @@ namespace
 		return AreaWeight;
 	}
 
+	uint64 MakeLocalEdgeKey(const int32 A, const int32 B)
+	{
+		const uint32 MinVertexId = static_cast<uint32>(FMath::Min(A, B));
+		const uint32 MaxVertexId = static_cast<uint32>(FMath::Max(A, B));
+		return (static_cast<uint64>(MinVertexId) << 32) | static_cast<uint64>(MaxVertexId);
+	}
+
+	void AddPlateTriangleEdgeCounts(
+		const CarrierLab::FCarrierPlateTriangle& Triangle,
+		TMap<uint64, int32>& EdgeCounts)
+	{
+		++EdgeCounts.FindOrAdd(MakeLocalEdgeKey(Triangle.A, Triangle.B));
+		++EdgeCounts.FindOrAdd(MakeLocalEdgeKey(Triangle.B, Triangle.C));
+		++EdgeCounts.FindOrAdd(MakeLocalEdgeKey(Triangle.C, Triangle.A));
+	}
+
+	FString ComputePhaseIIID4TriangleSetHash(
+		const int32 PlateId,
+		const TArray<int32>& LocalTriangleIds)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIID4-triangle-set-v1"));
+		HashMix(Hash, static_cast<uint64>(PlateId + 1));
+		HashMix(Hash, static_cast<uint64>(LocalTriangleIds.Num() + 1));
+		for (const int32 LocalTriangleId : LocalTriangleIds)
+		{
+			HashMix(Hash, static_cast<uint64>(LocalTriangleId + 1));
+		}
+		return HashToString(Hash);
+	}
+
+	FString ComputePhaseIIID4IndexMapHash(
+		const FString& Domain,
+		const int32 PlateId,
+		const TArray<int32>& OldToNew)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, Domain);
+		HashMix(Hash, static_cast<uint64>(PlateId + 1));
+		HashMix(Hash, static_cast<uint64>(OldToNew.Num() + 1));
+		for (const int32 NewIndex : OldToNew)
+		{
+			HashMix(Hash, static_cast<uint64>(NewIndex + 2));
+		}
+		return HashToString(Hash);
+	}
+
 	bool IntersectRayWithTriangle(
 		const FVector3d& RayDirection,
 		const FVector3d& A,
@@ -5137,6 +5184,311 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID3DestinationMass(
 	HashMixDouble(AuditHash, OutAudit.MinAcceptedDestinationMassRatio);
 	HashMixDouble(AuditHash, OutAudit.MinRejectedDestinationMassRatio);
 	OutAudit.DestinationMassHash = HashToString(AuditHash);
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::PlanPhaseIIID4SlabBreak(
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID4SlabBreakPlanAudit();
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
+	{
+		return false;
+	}
+
+	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
+	if (!DetectPhaseIIID3DestinationMass(DestinationMassAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+
+	OutAudit.Step = DestinationMassAudit.Step;
+	OutAudit.EventCount = DestinationMassAudit.EventCount;
+	OutAudit.PlateCount = DestinationMassAudit.PlateCount;
+	OutAudit.ResetSerial = DestinationMassAudit.ResetSerial;
+	OutAudit.InterpenetrationThresholdKm = InterpenetrationThresholdKm;
+	OutAudit.DestinationMassThresholdRatio = DestinationMassThresholdRatio;
+	OutAudit.DestinationMassRecordCount = DestinationMassAudit.TestedMassRecordCount;
+	OutAudit.AcceptedDestinationMassRecordCount = DestinationMassAudit.AcceptedMassRecordCount;
+	OutAudit.RejectedDestinationMassRecordCount = DestinationMassAudit.RejectedMassRecordCount;
+	OutAudit.InterpenetrationAcceptedGroupCount = DestinationMassAudit.InterpenetrationAcceptedGroupCount;
+	OutAudit.SourceDestinationMassHash = DestinationMassAudit.DestinationMassHash;
+
+	TMap<int32, const FCarrierLabPhaseIIID1TerraneRecord*> TerraneRecordById;
+	for (const FCarrierLabPhaseIIID1TerraneRecord& Record : TerraneAudit.Records)
+	{
+		TerraneRecordById.Add(Record.RecordId, &Record);
+	}
+
+	TSet<FString> PlannedSourceTerranes;
+	uint64 AuditHash = 1469598103934665603ull;
+	HashMixString(AuditHash, TEXT("CarrierLab-IIID4-slab-break-plan-v1"));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.EventCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.PlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ResetSerial + 1));
+	HashMixDouble(AuditHash, OutAudit.InterpenetrationThresholdKm);
+	HashMixDouble(AuditHash, OutAudit.DestinationMassThresholdRatio);
+	HashMixString(AuditHash, OutAudit.SourceDestinationMassHash);
+
+	for (const FCarrierLabPhaseIIID3DestinationMassRecord& MassRecord : DestinationMassAudit.Records)
+	{
+		if (!MassRecord.bMassAccepted)
+		{
+			continue;
+		}
+
+		const FCarrierLabPhaseIIID1TerraneRecord* SourceRecord = TerraneRecordById.FindRef(MassRecord.SourceRecordId);
+		if (SourceRecord == nullptr)
+		{
+			++OutAudit.MissingSourceRecordCount;
+			continue;
+		}
+		if (!State.Plates.IsValidIndex(SourceRecord->SourcePlateId))
+		{
+			++OutAudit.MissingSourceRecordCount;
+			continue;
+		}
+
+		TArray<int32> RemovedTriangleIds = SourceRecord->LocalTriangleIds;
+		RemovedTriangleIds.Sort();
+		const FString RemovalSetHash = ComputePhaseIIID4TriangleSetHash(SourceRecord->SourcePlateId, RemovedTriangleIds);
+		const FString PlanDedupKey = FString::Printf(TEXT("%d:%s"), SourceRecord->SourcePlateId, *RemovalSetHash);
+		if (PlannedSourceTerranes.Contains(PlanDedupKey))
+		{
+			++OutAudit.DuplicatePlanCandidateCount;
+			continue;
+		}
+		PlannedSourceTerranes.Add(PlanDedupKey);
+
+		const CarrierLab::FCarrierPlate& SourcePlate = State.Plates[SourceRecord->SourcePlateId];
+		FCarrierLabPhaseIIID4SlabBreakPlanRecord& Plan = OutAudit.Plans.AddDefaulted_GetRef();
+		Plan.PlanId = OutAudit.Plans.Num() - 1;
+		Plan.GroupId = MassRecord.GroupId;
+		Plan.PairKey = MassRecord.PairKey;
+		Plan.SourceRecordId = SourceRecord->RecordId;
+		Plan.DestinationMassRecordId = MassRecord.RecordId;
+		Plan.SourcePlateId = SourceRecord->SourcePlateId;
+		Plan.DestinationPlateId = SourceRecord->OtherPlateId;
+		Plan.SourceTriangleCountBefore = SourcePlate.LocalTriangles.Num();
+		Plan.SourceVertexCountBefore = SourcePlate.Vertices.Num();
+		Plan.bMassAccepted = MassRecord.bMassAccepted;
+		Plan.SourceTerraneHash = SourceRecord->TerraneHash;
+		Plan.RemovalSetHash = RemovalSetHash;
+		Plan.RemovedLocalTriangleIds = RemovedTriangleIds;
+		Plan.RemovedAreaWeight = SourceRecord->AreaWeight;
+
+		TSet<int32> RemovedSet;
+		for (const int32 LocalTriangleId : RemovedTriangleIds)
+		{
+			if (RemovedSet.Contains(LocalTriangleId))
+			{
+				++Plan.DuplicateRemovalTriangleCount;
+				continue;
+			}
+			RemovedSet.Add(LocalTriangleId);
+			if (!SourcePlate.LocalTriangles.IsValidIndex(LocalTriangleId))
+			{
+				++Plan.InvalidMappedTriangleCount;
+			}
+		}
+		Plan.RemovedTriangleCount = RemovedSet.Num();
+		Plan.SurvivingTriangleCount = FMath::Max(0, SourcePlate.LocalTriangles.Num() - Plan.RemovedTriangleCount);
+		Plan.bWouldDestroySourcePlate = Plan.SurvivingTriangleCount == 0;
+		Plan.bRemovalSetMatchesTerrane =
+			Plan.DuplicateRemovalTriangleCount == 0 &&
+			Plan.InvalidMappedTriangleCount == 0 &&
+			Plan.RemovedTriangleCount == SourceRecord->TriangleCount;
+
+		Plan.OldToNewLocalTriangleIds.Init(INDEX_NONE, SourcePlate.LocalTriangles.Num());
+
+		TMap<uint64, int32> OriginalEdgeCounts;
+		TMap<uint64, int32> SurvivorEdgeCounts;
+		TSet<int32> SurvivingVertexSet;
+		int32 NextTriangleIndex = 0;
+		for (int32 OldTriangleId = 0; OldTriangleId < SourcePlate.LocalTriangles.Num(); ++OldTriangleId)
+		{
+			const CarrierLab::FCarrierPlateTriangle& Triangle = SourcePlate.LocalTriangles[OldTriangleId];
+			if (!SourcePlate.Vertices.IsValidIndex(Triangle.A) ||
+				!SourcePlate.Vertices.IsValidIndex(Triangle.B) ||
+				!SourcePlate.Vertices.IsValidIndex(Triangle.C) ||
+				Triangle.A == Triangle.B ||
+				Triangle.B == Triangle.C ||
+				Triangle.C == Triangle.A)
+			{
+				if (!RemovedSet.Contains(OldTriangleId))
+				{
+					++Plan.InvalidMappedTriangleCount;
+				}
+				continue;
+			}
+
+			AddPlateTriangleEdgeCounts(Triangle, OriginalEdgeCounts);
+			if (RemovedSet.Contains(OldTriangleId))
+			{
+				continue;
+			}
+
+			Plan.OldToNewLocalTriangleIds[OldTriangleId] = NextTriangleIndex++;
+			SurvivingVertexSet.Add(Triangle.A);
+			SurvivingVertexSet.Add(Triangle.B);
+			SurvivingVertexSet.Add(Triangle.C);
+			AddPlateTriangleEdgeCounts(Triangle, SurvivorEdgeCounts);
+		}
+
+		TArray<int32> SurvivingVertexIds = SurvivingVertexSet.Array();
+		SurvivingVertexIds.Sort();
+		Plan.OldToNewLocalVertexIds.Init(INDEX_NONE, SourcePlate.Vertices.Num());
+		for (int32 NewVertexId = 0; NewVertexId < SurvivingVertexIds.Num(); ++NewVertexId)
+		{
+			const int32 OldVertexId = SurvivingVertexIds[NewVertexId];
+			if (Plan.OldToNewLocalVertexIds.IsValidIndex(OldVertexId))
+			{
+				Plan.OldToNewLocalVertexIds[OldVertexId] = NewVertexId;
+			}
+		}
+		Plan.SurvivingVertexCount = SurvivingVertexIds.Num();
+		Plan.RemovedVertexCount = FMath::Max(0, SourcePlate.Vertices.Num() - Plan.SurvivingVertexCount);
+
+		uint64 SurvivorTopologyHash = 1469598103934665603ull;
+		HashMixString(SurvivorTopologyHash, TEXT("CarrierLab-IIID4-survivor-topology-v1"));
+		HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.SourcePlateId + 1));
+		HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.SurvivingTriangleCount + 1));
+		HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.SurvivingVertexCount + 1));
+		for (int32 OldTriangleId = 0; OldTriangleId < SourcePlate.LocalTriangles.Num(); ++OldTriangleId)
+		{
+			if (RemovedSet.Contains(OldTriangleId))
+			{
+				continue;
+			}
+			const CarrierLab::FCarrierPlateTriangle& Triangle = SourcePlate.LocalTriangles[OldTriangleId];
+			const int32 NewA = Plan.OldToNewLocalVertexIds.IsValidIndex(Triangle.A) ? Plan.OldToNewLocalVertexIds[Triangle.A] : INDEX_NONE;
+			const int32 NewB = Plan.OldToNewLocalVertexIds.IsValidIndex(Triangle.B) ? Plan.OldToNewLocalVertexIds[Triangle.B] : INDEX_NONE;
+			const int32 NewC = Plan.OldToNewLocalVertexIds.IsValidIndex(Triangle.C) ? Plan.OldToNewLocalVertexIds[Triangle.C] : INDEX_NONE;
+			if (NewA == INDEX_NONE || NewB == INDEX_NONE || NewC == INDEX_NONE || NewA == NewB || NewB == NewC || NewC == NewA)
+			{
+				++Plan.InvalidMappedTriangleCount;
+				continue;
+			}
+			HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.OldToNewLocalTriangleIds[OldTriangleId] + 1));
+			HashMix(SurvivorTopologyHash, static_cast<uint64>(NewA + 1));
+			HashMix(SurvivorTopologyHash, static_cast<uint64>(NewB + 1));
+			HashMix(SurvivorTopologyHash, static_cast<uint64>(NewC + 1));
+			HashMix(SurvivorTopologyHash, static_cast<uint64>(Triangle.SourceTriangleId + 1));
+		}
+
+		for (const TPair<uint64, int32>& EdgePair : SurvivorEdgeCounts)
+		{
+			const int32 SurvivorCount = EdgePair.Value;
+			const int32 OriginalCount = OriginalEdgeCounts.FindRef(EdgePair.Key);
+			if (SurvivorCount == 1)
+			{
+				++Plan.BoundaryEdgeCount;
+				if (OriginalCount >= 2)
+				{
+					++Plan.CutBoundaryEdgeCount;
+				}
+			}
+			else if (SurvivorCount == 2)
+			{
+				++Plan.InteriorEdgeCount;
+			}
+			else
+			{
+				++Plan.NonManifoldEdgeCount;
+			}
+		}
+
+		Plan.OldToNewTriangleMapHash = ComputePhaseIIID4IndexMapHash(
+			TEXT("CarrierLab-IIID4-triangle-map-v1"),
+			Plan.SourcePlateId,
+			Plan.OldToNewLocalTriangleIds);
+		Plan.OldToNewVertexMapHash = ComputePhaseIIID4IndexMapHash(
+			TEXT("CarrierLab-IIID4-vertex-map-v1"),
+			Plan.SourcePlateId,
+			Plan.OldToNewLocalVertexIds);
+		HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.BoundaryEdgeCount + 1));
+		HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.CutBoundaryEdgeCount + 1));
+		HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.InteriorEdgeCount + 1));
+		HashMix(SurvivorTopologyHash, static_cast<uint64>(Plan.NonManifoldEdgeCount + 1));
+		Plan.SurvivorTopologyHash = HashToString(SurvivorTopologyHash);
+		Plan.bTopologyValid =
+			Plan.bRemovalSetMatchesTerrane &&
+			Plan.InvalidMappedTriangleCount == 0 &&
+			Plan.NonManifoldEdgeCount == 0 &&
+			Plan.SurvivingTriangleCount + Plan.RemovedTriangleCount == Plan.SourceTriangleCountBefore &&
+			Plan.SurvivingVertexCount <= Plan.SourceVertexCountBefore;
+
+		uint64 PlanHash = 1469598103934665603ull;
+		HashMixString(PlanHash, TEXT("CarrierLab-IIID4-plan-record-v1"));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PlanId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.GroupId + 1));
+		HashMix(PlanHash, Plan.PairKey + 1ull);
+		HashMix(PlanHash, static_cast<uint64>(Plan.SourceRecordId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.DestinationMassRecordId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.SourcePlateId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.DestinationPlateId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.SourceTriangleCountBefore + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.SourceVertexCountBefore + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.RemovedTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.SurvivingTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.SurvivingVertexCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.RemovedVertexCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.BoundaryEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.CutBoundaryEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.InteriorEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.NonManifoldEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.InvalidMappedTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.DuplicateRemovalTriangleCount + 1));
+		HashMixDouble(PlanHash, Plan.RemovedAreaWeight);
+		HashMix(PlanHash, Plan.bMassAccepted ? 1ull : 0ull);
+		HashMix(PlanHash, Plan.bRemovalSetMatchesTerrane ? 1ull : 0ull);
+		HashMix(PlanHash, Plan.bTopologyValid ? 1ull : 0ull);
+		HashMix(PlanHash, Plan.bWouldDestroySourcePlate ? 1ull : 0ull);
+		HashMixString(PlanHash, Plan.SourceTerraneHash);
+		HashMixString(PlanHash, Plan.RemovalSetHash);
+		HashMixString(PlanHash, Plan.OldToNewTriangleMapHash);
+		HashMixString(PlanHash, Plan.OldToNewVertexMapHash);
+		HashMixString(PlanHash, Plan.SurvivorTopologyHash);
+		Plan.PlanHash = HashToString(PlanHash);
+
+		++OutAudit.PlanCount;
+		if (Plan.bTopologyValid)
+		{
+			++OutAudit.ValidPlanCount;
+		}
+		else
+		{
+			++OutAudit.InvalidPlanCount;
+		}
+		if (Plan.bWouldDestroySourcePlate)
+		{
+			++OutAudit.WouldDestroySourcePlateCount;
+		}
+		OutAudit.TotalRemovedTriangleCount += Plan.RemovedTriangleCount;
+		OutAudit.TotalSurvivingTriangleCount += Plan.SurvivingTriangleCount;
+		OutAudit.TotalRemovedAreaWeight += Plan.RemovedAreaWeight;
+
+		HashMixString(AuditHash, Plan.PlanHash);
+	}
+
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.DestinationMassRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.AcceptedDestinationMassRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.RejectedDestinationMassRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.InterpenetrationAcceptedGroupCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.DuplicatePlanCandidateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.MissingSourceRecordCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.PlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ValidPlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.InvalidPlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.WouldDestroySourcePlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalRemovedTriangleCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalSurvivingTriangleCount + 1));
+	HashMixDouble(AuditHash, OutAudit.TotalRemovedAreaWeight);
+	OutAudit.SlabBreakPlanHash = HashToString(AuditHash);
 	return true;
 }
 
