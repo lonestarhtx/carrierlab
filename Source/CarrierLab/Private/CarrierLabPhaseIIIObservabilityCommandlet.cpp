@@ -582,6 +582,29 @@ namespace
 		}
 	}
 
+	void DrawThickLine(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const int32 X0,
+		const int32 Y0,
+		const int32 X1,
+		const int32 Y1,
+		const FColor& Color,
+		const int32 Radius)
+	{
+		for (int32 OffsetY = -Radius; OffsetY <= Radius; ++OffsetY)
+		{
+			for (int32 OffsetX = -Radius; OffsetX <= Radius; ++OffsetX)
+			{
+				if (OffsetX * OffsetX + OffsetY * OffsetY <= Radius * Radius)
+				{
+					DrawLine(Pixels, Width, Height, X0 + OffsetX, Y0 + OffsetY, X1 + OffsetX, Y1 + OffsetY, Color);
+				}
+			}
+		}
+	}
+
 	bool ForwardMollweidePixel(const FVector3d& UnitPosition, const int32 Width, const int32 Height, int32& OutX, int32& OutY)
 	{
 		if (!FMath::IsFinite(UnitPosition.X) || !FMath::IsFinite(UnitPosition.Y) || !FMath::IsFinite(UnitPosition.Z))
@@ -801,6 +824,68 @@ namespace
 			Alpha);
 	}
 
+	void DrawProjectedBoundaryTriangle(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const FCarrierLabPhaseIIIProcessOverlayTriangle& Triangle,
+		const FColor& Color,
+		const int32 Thickness)
+	{
+		if (Triangle.BoundaryEdgeMask == 0)
+		{
+			return;
+		}
+
+		int32 X0 = 0;
+		int32 Y0 = 0;
+		int32 X1 = 0;
+		int32 Y1 = 0;
+		int32 X2 = 0;
+		int32 Y2 = 0;
+		if (!ForwardMollweidePixel(Triangle.A, Width, Height, X0, Y0) ||
+			!ForwardMollweidePixel(Triangle.B, Width, Height, X1, Y1) ||
+			!ForwardMollweidePixel(Triangle.C, Width, Height, X2, Y2))
+		{
+			return;
+		}
+
+		const int32 MinX = FMath::Min3(X0, X1, X2);
+		const int32 MaxX = FMath::Max3(X0, X1, X2);
+		if (MaxX - MinX > Width / 2)
+		{
+			if ((Triangle.BoundaryEdgeMask & 1u) != 0)
+			{
+				DrawDisk(Pixels, Width, Height, X0, Y0, Thickness + 1, Color);
+				DrawDisk(Pixels, Width, Height, X1, Y1, Thickness + 1, Color);
+			}
+			if ((Triangle.BoundaryEdgeMask & 2u) != 0)
+			{
+				DrawDisk(Pixels, Width, Height, X1, Y1, Thickness + 1, Color);
+				DrawDisk(Pixels, Width, Height, X2, Y2, Thickness + 1, Color);
+			}
+			if ((Triangle.BoundaryEdgeMask & 4u) != 0)
+			{
+				DrawDisk(Pixels, Width, Height, X2, Y2, Thickness + 1, Color);
+				DrawDisk(Pixels, Width, Height, X0, Y0, Thickness + 1, Color);
+			}
+			return;
+		}
+
+		if ((Triangle.BoundaryEdgeMask & 1u) != 0)
+		{
+			DrawThickLine(Pixels, Width, Height, X0, Y0, X1, Y1, Color, Thickness);
+		}
+		if ((Triangle.BoundaryEdgeMask & 2u) != 0)
+		{
+			DrawThickLine(Pixels, Width, Height, X1, Y1, X2, Y2, Color, Thickness);
+		}
+		if ((Triangle.BoundaryEdgeMask & 4u) != 0)
+		{
+			DrawThickLine(Pixels, Width, Height, X2, Y2, X0, Y0, Color, Thickness);
+		}
+	}
+
 	void DrawRoleTriangleOverlays(
 		TArray<FColor>& Pixels,
 		const int32 Width,
@@ -821,6 +906,20 @@ namespace
 				Triangle,
 				SubductionRoleOverlayColor(Triangle.Role),
 				Alpha);
+		}
+	}
+
+	void DrawPlateBoundaryTriangleOverlays(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& Triangles,
+		const int32 Thickness)
+	{
+		const FColor BoundaryColor(188, 208, 222, 255);
+		for (const FCarrierLabPhaseIIIProcessOverlayTriangle& Triangle : Triangles)
+		{
+			DrawProjectedBoundaryTriangle(Pixels, Width, Height, Triangle, BoundaryColor, Thickness);
 		}
 	}
 
@@ -1017,11 +1116,11 @@ namespace
 			return Actor.BuildVisualizationLayerMap(Layer, OutImage.Pixels, OutImage.Width, OutImage.Height);
 		};
 
+		FLayerPixels PlateIdImage;
 		FLayerPixels CrustType;
-		FLayerPixels BoundaryMaskImage;
 		FLayerPixels ElevationImage;
-		if (!CaptureLayer(ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("CrustType"), TEXT("CRUST TYPE"), CrustType) ||
-			!CaptureLayer(ECarrierLabVisualizationLayer::BoundaryMask, TEXT("_BoundarySource"), TEXT("BOUNDARY SOURCE"), BoundaryMaskImage) ||
+		if (!CaptureLayer(ECarrierLabVisualizationLayer::PlateId, TEXT("PlateId"), TEXT("PLATE ID"), PlateIdImage) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("CrustType"), TEXT("CRUST TYPE"), CrustType) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Elevation"), TEXT("ELEVATION"), ElevationImage))
 		{
 			return false;
@@ -1029,12 +1128,19 @@ namespace
 
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle> RoleTriangles;
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle> DistanceTriangles;
-		if (!Actor.GetPhaseIIIProcessOverlayTriangles(RoleTriangles, DistanceTriangles))
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle> PlateBoundaryTriangles;
+		if (!Actor.GetPhaseIIIProcessOverlayTriangles(RoleTriangles, DistanceTriangles, PlateBoundaryTriangles))
 		{
 			return false;
 		}
 
 		TArray<FLayerPixels> Images;
+
+		if (!SaveImage(PlateIdImage))
+		{
+			return false;
+		}
+		Images.Add(PlateIdImage);
 
 		if (!SaveImage(CrustType))
 		{
@@ -1046,7 +1152,7 @@ namespace
 		PlateBoundaries.Export.Layer = ECarrierLabVisualizationLayer::BoundaryMask;
 		PlateBoundaries.Export.Name = TEXT("PlateBoundaries");
 		PlateBoundaries.Label = TEXT("PLATE BOUNDARIES");
-		OverlayBoundary(PlateBoundaries.Pixels, BoundaryMaskImage.Pixels);
+		DrawPlateBoundaryTriangleOverlays(PlateBoundaries.Pixels, PlateBoundaries.Width, PlateBoundaries.Height, PlateBoundaryTriangles, 1);
 		if (!SaveImage(PlateBoundaries))
 		{
 			return false;
@@ -1087,7 +1193,7 @@ namespace
 		Combined.Export.Name = TEXT("CombinedTectonicSummary");
 		Combined.Label = TEXT("COMBINED SUMMARY");
 		DrawRoleTriangleOverlays(Combined.Pixels, Combined.Width, Combined.Height, RoleTriangles, 0.58);
-		OverlayBoundary(Combined.Pixels, BoundaryMaskImage.Pixels);
+		DrawPlateBoundaryTriangleOverlays(Combined.Pixels, Combined.Width, Combined.Height, PlateBoundaryTriangles, 1);
 		DrawMotionArrows(Actor, Combined.Pixels, Combined.Width, Combined.Height);
 		if (!SaveImage(Combined))
 		{
@@ -1459,13 +1565,14 @@ namespace
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
-		Report += TEXT("- The export names now follow the Aurous-style diagnostic grammar: `CrustType`, `PlateBoundaries`, `VelocityField`, `SubductionRoles`, `Elevation`, `CombinedTectonicSummary`, `DistanceToFront`, and `ElevationProfile`.\n");
+		Report += TEXT("- The export names now follow the Aurous-style diagnostic grammar: `PlateId`, `CrustType`, `PlateBoundaries`, `VelocityField`, `SubductionRoles`, `Elevation`, `CombinedTectonicSummary`, `DistanceToFront`, and `ElevationProfile`.\n");
+		Report += TEXT("- `PlateId` is the projected plate-id map with distinct colors per resolved plate. Use it to check whether all plates are represented before reading process overlays.\n");
 		Report += TEXT("- `CrustType` is the calm base map: blue ocean, green land, no process overlay.\n");
-		Report += TEXT("- `PlateBoundaries` adds only thin light boundary evidence over the same base. This is the first map to check when the summary feels noisy.\n");
+		Report += TEXT("- `PlateBoundaries` adds thin light edges rasterized from current moved plate-local boundary triangles, drawing only edges whose source endpoints belong to different plates. It no longer uses the global sample boundary mask or draws every boundary-triangle outline. This is the first map to check when the summary feels noisy.\n");
 		Report += TEXT("- `VelocityField` adds sparse red plate-motion arrows over the base map.\n");
 		Report += TEXT("- `SubductionRoles` is now rasterized directly from current plate-local triangle geometry. It no longer round-trips through `GlobalSampleId`, so the moving role marks should line up with the current moving plate geometry.\n");
 		Report += TEXT("- `Elevation` shows the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color on the filled continental/oceanic base map.\n");
-		Report += TEXT("- `CombinedTectonicSummary` is deliberately restrained: crust + boundaries + velocity + subduction roles. Elevation remains separate so uplift heat does not swamp the overview.\n");
+		Report += TEXT("- `CombinedTectonicSummary` is deliberately restrained: crust + current plate-local boundaries + velocity + subduction roles. Elevation remains separate so uplift heat does not swamp the overview.\n");
 		Report += TEXT("- `DistanceToFront` is also rasterized from current plate-local active-boundary triangles. It is diagnostic context, not a source of authority.\n");
 		Report += TEXT("- Contact sheet headers include the simulation step and approximate `Myr` timestamp using the CarrierLab `2 Ma` timestep.\n");
 		Report += TEXT("- `ElevationProfile` plots uplift delta against distance-to-front and includes the expected thesis distance-transfer curve as a visual shape reference. It is paired with the IIIC.3 numeric oracle; the plot alone is not a gate.\n\n");

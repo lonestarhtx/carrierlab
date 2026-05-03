@@ -6106,10 +6106,12 @@ void ACarrierLabVisualizationActor::ComputePhaseIIIObservabilityMasks()
 
 bool ACarrierLabVisualizationActor::GetPhaseIIIProcessOverlayTriangles(
 	TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
-	TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles) const
+	TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles,
+	TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutPlateBoundaryTriangles) const
 {
 	OutRoleTriangles.Reset();
 	OutDistanceTriangles.Reset();
+	OutPlateBoundaryTriangles.Reset();
 
 	auto AddTriangle = [this](
 		const int32 PlateId,
@@ -6140,12 +6142,48 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIProcessOverlayTriangles(
 		Overlay.A = Plate.Vertices[Triangle.A].UnitPosition;
 		Overlay.B = Plate.Vertices[Triangle.B].UnitPosition;
 		Overlay.C = Plate.Vertices[Triangle.C].UnitPosition;
+		Overlay.PlateId = PlateId;
 		Overlay.Role = OverlayRole;
+		const auto SourcePlateId = [this, &Plate](const int32 LocalVertexId) -> int32
+		{
+			if (!Plate.Vertices.IsValidIndex(LocalVertexId))
+			{
+				return INDEX_NONE;
+			}
+			const int32 GlobalSampleId = Plate.Vertices[LocalVertexId].GlobalSampleId;
+			return State.Samples.IsValidIndex(GlobalSampleId)
+				? State.Samples[GlobalSampleId].PlateId
+				: INDEX_NONE;
+		};
+		const int32 SourcePlateA = SourcePlateId(Triangle.A);
+		const int32 SourcePlateB = SourcePlateId(Triangle.B);
+		const int32 SourcePlateC = SourcePlateId(Triangle.C);
+		Overlay.BoundaryEdgeMask = 0;
+		if (SourcePlateA != INDEX_NONE && SourcePlateB != INDEX_NONE && SourcePlateA != SourcePlateB)
+		{
+			Overlay.BoundaryEdgeMask |= 1u;
+		}
+		if (SourcePlateB != INDEX_NONE && SourcePlateC != INDEX_NONE && SourcePlateB != SourcePlateC)
+		{
+			Overlay.BoundaryEdgeMask |= 2u;
+		}
+		if (SourcePlateC != INDEX_NONE && SourcePlateA != INDEX_NONE && SourcePlateC != SourcePlateA)
+		{
+			Overlay.BoundaryEdgeMask |= 4u;
+		}
 		Overlay.DistanceKm = DistanceKm;
 	};
 
 	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 	{
+		for (int32 LocalTriangleId = 0; LocalTriangleId < Plate.LocalTriangles.Num(); ++LocalTriangleId)
+		{
+			if (Plate.LocalTriangles[LocalTriangleId].bBoundary)
+			{
+				AddTriangle(Plate.PlateId, LocalTriangleId, 0, -1.0, OutPlateBoundaryTriangles);
+			}
+		}
+
 		for (int32 Index = 0; Index < Plate.ActiveBoundaryTriangles.Num(); ++Index)
 		{
 			const double DistanceKm = Plate.ActiveBoundaryTriangleDistancesKm.IsValidIndex(Index)

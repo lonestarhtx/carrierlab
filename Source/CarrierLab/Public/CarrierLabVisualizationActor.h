@@ -907,7 +907,9 @@ struct FCarrierLabPhaseIIIProcessOverlayTriangle
 	FVector3d A = FVector3d::ZeroVector;
 	FVector3d B = FVector3d::ZeroVector;
 	FVector3d C = FVector3d::ZeroVector;
+	int32 PlateId = INDEX_NONE;
 	uint8 Role = 0;
+	uint8 BoundaryEdgeMask = 0;
 	double DistanceKm = -1.0;
 };
 
@@ -1138,7 +1140,8 @@ public:
 	bool GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const;
 	bool GetPhaseIIIProcessOverlayTriangles(
 		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutRoleTriangles,
-		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles) const;
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutDistanceTriangles,
+		TArray<FCarrierLabPhaseIIIProcessOverlayTriangle>& OutPlateBoundaryTriangles) const;
 	bool SetPlateContinentalForTest(int32 PlateId, bool bContinental);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
