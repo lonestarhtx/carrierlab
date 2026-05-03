@@ -913,6 +913,41 @@ namespace
 		return HashToString(Hash);
 	}
 
+	FString ComputePhaseIIID5TriangleSetHash(
+		const int32 SourcePlateId,
+		const int32 DestinationPlateId,
+		const TArray<int32>& LocalTriangleIds)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIID5-triangle-set-v1"));
+		HashMix(Hash, static_cast<uint64>(SourcePlateId + 1));
+		HashMix(Hash, static_cast<uint64>(DestinationPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(LocalTriangleIds.Num() + 1));
+		for (const int32 LocalTriangleId : LocalTriangleIds)
+		{
+			HashMix(Hash, static_cast<uint64>(LocalTriangleId + 1));
+		}
+		return HashToString(Hash);
+	}
+
+	FString ComputePhaseIIID5IndexMapHash(
+		const FString& Domain,
+		const int32 SourcePlateId,
+		const int32 DestinationPlateId,
+		const TArray<int32>& OldToNew)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, Domain);
+		HashMix(Hash, static_cast<uint64>(SourcePlateId + 1));
+		HashMix(Hash, static_cast<uint64>(DestinationPlateId + 1));
+		HashMix(Hash, static_cast<uint64>(OldToNew.Num() + 1));
+		for (const int32 NewIndex : OldToNew)
+		{
+			HashMix(Hash, static_cast<uint64>(NewIndex + 2));
+		}
+		return HashToString(Hash);
+	}
+
 	bool IntersectRayWithTriangle(
 		const FVector3d& RayDirection,
 		const FVector3d& A,
@@ -5489,6 +5524,414 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID4SlabBreak(
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalSurvivingTriangleCount + 1));
 	HashMixDouble(AuditHash, OutAudit.TotalRemovedAreaWeight);
 	OutAudit.SlabBreakPlanHash = HashToString(AuditHash);
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::PlanPhaseIIID5Suture(
+	FCarrierLabPhaseIIID5SuturePlanAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID5SuturePlanAudit();
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
+	if (!PlanPhaseIIID4SlabBreak(SlabBreakAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+
+	OutAudit.Step = SlabBreakAudit.Step;
+	OutAudit.EventCount = SlabBreakAudit.EventCount;
+	OutAudit.PlateCount = SlabBreakAudit.PlateCount;
+	OutAudit.ResetSerial = SlabBreakAudit.ResetSerial;
+	OutAudit.InterpenetrationThresholdKm = InterpenetrationThresholdKm;
+	OutAudit.DestinationMassThresholdRatio = DestinationMassThresholdRatio;
+	OutAudit.SlabBreakPlanCount = SlabBreakAudit.PlanCount;
+	OutAudit.ValidSlabBreakPlanCount = SlabBreakAudit.ValidPlanCount;
+	OutAudit.SourceSlabBreakPlanHash = SlabBreakAudit.SlabBreakPlanHash;
+
+	uint64 AuditHash = 1469598103934665603ull;
+	HashMixString(AuditHash, TEXT("CarrierLab-IIID5-suture-plan-v1"));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.EventCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.PlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ResetSerial + 1));
+	HashMixDouble(AuditHash, OutAudit.InterpenetrationThresholdKm);
+	HashMixDouble(AuditHash, OutAudit.DestinationMassThresholdRatio);
+	HashMixString(AuditHash, OutAudit.SourceSlabBreakPlanHash);
+
+	for (const FCarrierLabPhaseIIID4SlabBreakPlanRecord& SlabPlan : SlabBreakAudit.Plans)
+	{
+		if (!SlabPlan.bTopologyValid || SlabPlan.bWouldDestroySourcePlate)
+		{
+			continue;
+		}
+		if (!State.Plates.IsValidIndex(SlabPlan.SourcePlateId))
+		{
+			++OutAudit.MissingSourcePlateCount;
+			continue;
+		}
+		if (!State.Plates.IsValidIndex(SlabPlan.DestinationPlateId))
+		{
+			++OutAudit.MissingDestinationPlateCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& SourcePlate = State.Plates[SlabPlan.SourcePlateId];
+		const CarrierLab::FCarrierPlate& DestinationPlate = State.Plates[SlabPlan.DestinationPlateId];
+		FCarrierLabPhaseIIID5SuturePlanRecord& Plan = OutAudit.Plans.AddDefaulted_GetRef();
+		Plan.PlanId = OutAudit.Plans.Num() - 1;
+		Plan.SlabBreakPlanId = SlabPlan.PlanId;
+		Plan.GroupId = SlabPlan.GroupId;
+		Plan.PairKey = SlabPlan.PairKey;
+		Plan.SourcePlateId = SlabPlan.SourcePlateId;
+		Plan.DestinationPlateId = SlabPlan.DestinationPlateId;
+		Plan.SourceTriangleCountBefore = SourcePlate.LocalTriangles.Num();
+		Plan.DestinationTriangleCountBefore = DestinationPlate.LocalTriangles.Num();
+		Plan.DestinationVertexCountBefore = DestinationPlate.Vertices.Num();
+		Plan.bSlabBreakPlanValid = SlabPlan.bTopologyValid && !SlabPlan.bWouldDestroySourcePlate;
+		Plan.SourceTerraneHash = SlabPlan.SourceTerraneHash;
+		Plan.RemovalSetHash = SlabPlan.RemovalSetHash;
+		Plan.AddedSourceLocalTriangleIds = SlabPlan.RemovedLocalTriangleIds;
+		Plan.AddedSourceLocalTriangleIds.Sort();
+		Plan.AddedTriangleSetHash = ComputePhaseIIID5TriangleSetHash(
+			Plan.SourcePlateId,
+			Plan.DestinationPlateId,
+			Plan.AddedSourceLocalTriangleIds);
+
+		TSet<int32> DestinationSourceTriangleIds;
+		TMap<uint64, int32> DestinationEdgeCountsBefore;
+		for (const CarrierLab::FCarrierPlateTriangle& DestinationTriangle : DestinationPlate.LocalTriangles)
+		{
+			if (DestinationTriangle.SourceTriangleId != INDEX_NONE)
+			{
+				DestinationSourceTriangleIds.Add(DestinationTriangle.SourceTriangleId);
+			}
+			if (DestinationPlate.Vertices.IsValidIndex(DestinationTriangle.A) &&
+				DestinationPlate.Vertices.IsValidIndex(DestinationTriangle.B) &&
+				DestinationPlate.Vertices.IsValidIndex(DestinationTriangle.C) &&
+				DestinationTriangle.A != DestinationTriangle.B &&
+				DestinationTriangle.B != DestinationTriangle.C &&
+				DestinationTriangle.C != DestinationTriangle.A)
+			{
+				AddPlateTriangleEdgeCounts(DestinationTriangle, DestinationEdgeCountsBefore);
+			}
+		}
+		for (const TPair<uint64, int32>& EdgePair : DestinationEdgeCountsBefore)
+		{
+			if (EdgePair.Value == 1)
+			{
+				++Plan.DestinationBoundaryEdgeCountBefore;
+			}
+		}
+
+		TSet<int32> AddedTriangleSet;
+		TSet<int32> AddedSourceVertexSet;
+		for (const int32 SourceLocalTriangleId : Plan.AddedSourceLocalTriangleIds)
+		{
+			if (AddedTriangleSet.Contains(SourceLocalTriangleId))
+			{
+				continue;
+			}
+			AddedTriangleSet.Add(SourceLocalTriangleId);
+			if (!SourcePlate.LocalTriangles.IsValidIndex(SourceLocalTriangleId))
+			{
+				++Plan.InvalidSourceTriangleCount;
+				continue;
+			}
+
+			const CarrierLab::FCarrierPlateTriangle& SourceTriangle = SourcePlate.LocalTriangles[SourceLocalTriangleId];
+			if (SourceTriangle.SourceTriangleId != INDEX_NONE &&
+				DestinationSourceTriangleIds.Contains(SourceTriangle.SourceTriangleId))
+			{
+				++Plan.DuplicateDestinationSourceTriangleCount;
+			}
+			if (!SourcePlate.Vertices.IsValidIndex(SourceTriangle.A) ||
+				!SourcePlate.Vertices.IsValidIndex(SourceTriangle.B) ||
+				!SourcePlate.Vertices.IsValidIndex(SourceTriangle.C) ||
+				SourceTriangle.A == SourceTriangle.B ||
+				SourceTriangle.B == SourceTriangle.C ||
+				SourceTriangle.C == SourceTriangle.A)
+			{
+				++Plan.InvalidSourceVertexCount;
+				continue;
+			}
+
+			AddedSourceVertexSet.Add(SourceTriangle.A);
+			AddedSourceVertexSet.Add(SourceTriangle.B);
+			AddedSourceVertexSet.Add(SourceTriangle.C);
+			Plan.AddedAreaWeight += ComputePlateLocalTriangleAreaWeight(SourcePlate, SourceLocalTriangleId);
+		}
+
+		TArray<int32> AddedSourceVertexIds = AddedSourceVertexSet.Array();
+		AddedSourceVertexIds.Sort();
+		Plan.AddedTriangleCount = AddedTriangleSet.Num();
+		Plan.AddedVertexCount = AddedSourceVertexIds.Num();
+		Plan.PostSutureTriangleCount = Plan.DestinationTriangleCountBefore + Plan.AddedTriangleCount;
+		Plan.PostSutureVertexCount = Plan.DestinationVertexCountBefore + Plan.AddedVertexCount;
+		Plan.DestinationOldToNewLocalTriangleIds.Init(INDEX_NONE, DestinationPlate.LocalTriangles.Num());
+		for (int32 LocalTriangleId = 0; LocalTriangleId < DestinationPlate.LocalTriangles.Num(); ++LocalTriangleId)
+		{
+			Plan.DestinationOldToNewLocalTriangleIds[LocalTriangleId] = LocalTriangleId;
+		}
+		Plan.DestinationOldToNewLocalVertexIds.Init(INDEX_NONE, DestinationPlate.Vertices.Num());
+		for (int32 LocalVertexId = 0; LocalVertexId < DestinationPlate.Vertices.Num(); ++LocalVertexId)
+		{
+			Plan.DestinationOldToNewLocalVertexIds[LocalVertexId] = LocalVertexId;
+		}
+		Plan.SourceToDestinationAddedTriangleIds.Init(INDEX_NONE, SourcePlate.LocalTriangles.Num());
+		Plan.SourceToDestinationAddedVertexIds.Init(INDEX_NONE, SourcePlate.Vertices.Num());
+		for (int32 AddedVertexIndex = 0; AddedVertexIndex < AddedSourceVertexIds.Num(); ++AddedVertexIndex)
+		{
+			const int32 SourceVertexId = AddedSourceVertexIds[AddedVertexIndex];
+			if (Plan.SourceToDestinationAddedVertexIds.IsValidIndex(SourceVertexId))
+			{
+				Plan.SourceToDestinationAddedVertexIds[SourceVertexId] =
+					Plan.DestinationVertexCountBefore + AddedVertexIndex;
+			}
+		}
+
+		TMap<uint64, int32> PostEdgeCounts = DestinationEdgeCountsBefore;
+		TMap<uint64, int32> AddedOnlyEdgeCounts;
+		uint64 PostTopologyHash = 1469598103934665603ull;
+		HashMixString(PostTopologyHash, TEXT("CarrierLab-IIID5-post-suture-topology-v1"));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.SourcePlateId + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.DestinationPlateId + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.DestinationTriangleCountBefore + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.DestinationVertexCountBefore + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.AddedTriangleCount + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.AddedVertexCount + 1));
+
+		for (int32 LocalTriangleId = 0; LocalTriangleId < DestinationPlate.LocalTriangles.Num(); ++LocalTriangleId)
+		{
+			const CarrierLab::FCarrierPlateTriangle& Triangle = DestinationPlate.LocalTriangles[LocalTriangleId];
+			HashMix(PostTopologyHash, static_cast<uint64>(LocalTriangleId + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(Triangle.A + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(Triangle.B + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(Triangle.C + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(Triangle.SourceTriangleId + 1));
+		}
+
+		int32 NextAddedTriangleId = Plan.DestinationTriangleCountBefore;
+		for (const int32 SourceLocalTriangleId : Plan.AddedSourceLocalTriangleIds)
+		{
+			if (!SourcePlate.LocalTriangles.IsValidIndex(SourceLocalTriangleId))
+			{
+				continue;
+			}
+			const CarrierLab::FCarrierPlateTriangle& SourceTriangle = SourcePlate.LocalTriangles[SourceLocalTriangleId];
+			const int32 NewA = Plan.SourceToDestinationAddedVertexIds.IsValidIndex(SourceTriangle.A)
+				? Plan.SourceToDestinationAddedVertexIds[SourceTriangle.A]
+				: INDEX_NONE;
+			const int32 NewB = Plan.SourceToDestinationAddedVertexIds.IsValidIndex(SourceTriangle.B)
+				? Plan.SourceToDestinationAddedVertexIds[SourceTriangle.B]
+				: INDEX_NONE;
+			const int32 NewC = Plan.SourceToDestinationAddedVertexIds.IsValidIndex(SourceTriangle.C)
+				? Plan.SourceToDestinationAddedVertexIds[SourceTriangle.C]
+				: INDEX_NONE;
+			if (NewA == INDEX_NONE || NewB == INDEX_NONE || NewC == INDEX_NONE ||
+				NewA == NewB || NewB == NewC || NewC == NewA)
+			{
+				++Plan.InvalidSourceVertexCount;
+				continue;
+			}
+
+			Plan.SourceToDestinationAddedTriangleIds[SourceLocalTriangleId] = NextAddedTriangleId++;
+			CarrierLab::FCarrierPlateTriangle AddedTriangle = SourceTriangle;
+			AddedTriangle.A = NewA;
+			AddedTriangle.B = NewB;
+			AddedTriangle.C = NewC;
+			AddPlateTriangleEdgeCounts(AddedTriangle, PostEdgeCounts);
+			AddPlateTriangleEdgeCounts(AddedTriangle, AddedOnlyEdgeCounts);
+
+			HashMix(PostTopologyHash, static_cast<uint64>(SourceLocalTriangleId + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(Plan.SourceToDestinationAddedTriangleIds[SourceLocalTriangleId] + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(NewA + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(NewB + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(NewC + 1));
+			HashMix(PostTopologyHash, static_cast<uint64>(SourceTriangle.SourceTriangleId + 1));
+		}
+
+		for (const TPair<uint64, int32>& EdgePair : PostEdgeCounts)
+		{
+			if (EdgePair.Value == 1)
+			{
+				++Plan.PostBoundaryEdgeCount;
+			}
+			else if (EdgePair.Value == 2)
+			{
+				++Plan.PostInteriorEdgeCount;
+			}
+			else
+			{
+				++Plan.PostNonManifoldEdgeCount;
+			}
+		}
+		for (const TPair<uint64, int32>& EdgePair : AddedOnlyEdgeCounts)
+		{
+			if (EdgePair.Value == 1 && PostEdgeCounts.FindRef(EdgePair.Key) == 1)
+			{
+				++Plan.SutureBoundaryEdgeCount;
+			}
+		}
+
+		auto TriangleHasBoundaryEdge = [&PostEdgeCounts](
+			const int32 A,
+			const int32 B,
+			const int32 C) -> bool
+		{
+			return PostEdgeCounts.FindRef(MakeLocalEdgeKey(A, B)) == 1 ||
+				PostEdgeCounts.FindRef(MakeLocalEdgeKey(B, C)) == 1 ||
+				PostEdgeCounts.FindRef(MakeLocalEdgeKey(C, A)) == 1;
+		};
+		for (const CarrierLab::FCarrierPlateTriangle& Triangle : DestinationPlate.LocalTriangles)
+		{
+			if (TriangleHasBoundaryEdge(Triangle.A, Triangle.B, Triangle.C))
+			{
+				++Plan.PostBoundaryTriangleCount;
+			}
+		}
+		for (const int32 SourceLocalTriangleId : Plan.AddedSourceLocalTriangleIds)
+		{
+			if (!SourcePlate.LocalTriangles.IsValidIndex(SourceLocalTriangleId))
+			{
+				continue;
+			}
+			const CarrierLab::FCarrierPlateTriangle& SourceTriangle = SourcePlate.LocalTriangles[SourceLocalTriangleId];
+			const int32 NewA = Plan.SourceToDestinationAddedVertexIds.IsValidIndex(SourceTriangle.A)
+				? Plan.SourceToDestinationAddedVertexIds[SourceTriangle.A]
+				: INDEX_NONE;
+			const int32 NewB = Plan.SourceToDestinationAddedVertexIds.IsValidIndex(SourceTriangle.B)
+				? Plan.SourceToDestinationAddedVertexIds[SourceTriangle.B]
+				: INDEX_NONE;
+			const int32 NewC = Plan.SourceToDestinationAddedVertexIds.IsValidIndex(SourceTriangle.C)
+				? Plan.SourceToDestinationAddedVertexIds[SourceTriangle.C]
+				: INDEX_NONE;
+			if (NewA == INDEX_NONE || NewB == INDEX_NONE || NewC == INDEX_NONE)
+			{
+				continue;
+			}
+			if (TriangleHasBoundaryEdge(NewA, NewB, NewC))
+			{
+				++Plan.PostBoundaryTriangleCount;
+				++Plan.AddedBoundaryTriangleCount;
+			}
+		}
+
+		Plan.DestinationOldToNewTriangleMapHash = ComputePhaseIIID5IndexMapHash(
+			TEXT("CarrierLab-IIID5-destination-triangle-map-v1"),
+			Plan.SourcePlateId,
+			Plan.DestinationPlateId,
+			Plan.DestinationOldToNewLocalTriangleIds);
+		Plan.DestinationOldToNewVertexMapHash = ComputePhaseIIID5IndexMapHash(
+			TEXT("CarrierLab-IIID5-destination-vertex-map-v1"),
+			Plan.SourcePlateId,
+			Plan.DestinationPlateId,
+			Plan.DestinationOldToNewLocalVertexIds);
+		Plan.SourceToDestinationAddedTriangleMapHash = ComputePhaseIIID5IndexMapHash(
+			TEXT("CarrierLab-IIID5-added-triangle-map-v1"),
+			Plan.SourcePlateId,
+			Plan.DestinationPlateId,
+			Plan.SourceToDestinationAddedTriangleIds);
+		Plan.SourceToDestinationAddedVertexMapHash = ComputePhaseIIID5IndexMapHash(
+			TEXT("CarrierLab-IIID5-added-vertex-map-v1"),
+			Plan.SourcePlateId,
+			Plan.DestinationPlateId,
+			Plan.SourceToDestinationAddedVertexIds);
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.PostBoundaryEdgeCount + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.PostInteriorEdgeCount + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.PostNonManifoldEdgeCount + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.PostBoundaryTriangleCount + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.AddedBoundaryTriangleCount + 1));
+		HashMix(PostTopologyHash, static_cast<uint64>(Plan.SutureBoundaryEdgeCount + 1));
+		Plan.PostSutureTopologyHash = HashToString(PostTopologyHash);
+
+		Plan.bAddsExactlyRemovedTerrane =
+			Plan.AddedTriangleCount == SlabPlan.RemovedTriangleCount &&
+			Plan.InvalidSourceTriangleCount == 0 &&
+			Plan.InvalidSourceVertexCount == 0 &&
+			Plan.DuplicateDestinationSourceTriangleCount == 0 &&
+			FMath::IsNearlyEqual(Plan.AddedAreaWeight, SlabPlan.RemovedAreaWeight, 1.0e-12);
+		Plan.bBoundaryTrackingReinitializable =
+			Plan.PostBoundaryEdgeCount > 0 &&
+			Plan.PostBoundaryTriangleCount > 0 &&
+			Plan.AddedBoundaryTriangleCount > 0 &&
+			Plan.SutureBoundaryEdgeCount > 0 &&
+			Plan.PostNonManifoldEdgeCount == 0;
+		Plan.bTopologyValid =
+			Plan.bSlabBreakPlanValid &&
+			Plan.bAddsExactlyRemovedTerrane &&
+			Plan.bBoundaryTrackingReinitializable &&
+			Plan.PostSutureTriangleCount == Plan.DestinationTriangleCountBefore + Plan.AddedTriangleCount &&
+			Plan.PostSutureVertexCount == Plan.DestinationVertexCountBefore + Plan.AddedVertexCount;
+
+		uint64 PlanHash = 1469598103934665603ull;
+		HashMixString(PlanHash, TEXT("CarrierLab-IIID5-plan-record-v1"));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PlanId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.SlabBreakPlanId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.GroupId + 1));
+		HashMix(PlanHash, Plan.PairKey + 1ull);
+		HashMix(PlanHash, static_cast<uint64>(Plan.SourcePlateId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.DestinationPlateId + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.AddedTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.AddedVertexCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PostSutureTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PostSutureVertexCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PostBoundaryEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PostInteriorEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PostNonManifoldEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.PostBoundaryTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.AddedBoundaryTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.SutureBoundaryEdgeCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.InvalidSourceTriangleCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.InvalidSourceVertexCount + 1));
+		HashMix(PlanHash, static_cast<uint64>(Plan.DuplicateDestinationSourceTriangleCount + 1));
+		HashMixDouble(PlanHash, Plan.AddedAreaWeight);
+		HashMix(PlanHash, Plan.bSlabBreakPlanValid ? 1ull : 0ull);
+		HashMix(PlanHash, Plan.bAddsExactlyRemovedTerrane ? 1ull : 0ull);
+		HashMix(PlanHash, Plan.bTopologyValid ? 1ull : 0ull);
+		HashMix(PlanHash, Plan.bBoundaryTrackingReinitializable ? 1ull : 0ull);
+		HashMixString(PlanHash, Plan.SourceTerraneHash);
+		HashMixString(PlanHash, Plan.RemovalSetHash);
+		HashMixString(PlanHash, Plan.AddedTriangleSetHash);
+		HashMixString(PlanHash, Plan.DestinationOldToNewTriangleMapHash);
+		HashMixString(PlanHash, Plan.DestinationOldToNewVertexMapHash);
+		HashMixString(PlanHash, Plan.SourceToDestinationAddedTriangleMapHash);
+		HashMixString(PlanHash, Plan.SourceToDestinationAddedVertexMapHash);
+		HashMixString(PlanHash, Plan.PostSutureTopologyHash);
+		Plan.PlanHash = HashToString(PlanHash);
+
+		++OutAudit.SuturePlanCount;
+		if (Plan.bTopologyValid)
+		{
+			++OutAudit.ValidSuturePlanCount;
+		}
+		else
+		{
+			++OutAudit.InvalidSuturePlanCount;
+		}
+		if (Plan.bBoundaryTrackingReinitializable)
+		{
+			++OutAudit.BoundaryReinitializablePlanCount;
+		}
+		OutAudit.TotalAddedTriangleCount += Plan.AddedTriangleCount;
+		OutAudit.TotalAddedVertexCount += Plan.AddedVertexCount;
+		OutAudit.TotalAddedAreaWeight += Plan.AddedAreaWeight;
+
+		HashMixString(AuditHash, Plan.PlanHash);
+	}
+
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.SlabBreakPlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ValidSlabBreakPlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.SuturePlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.ValidSuturePlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.InvalidSuturePlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.BoundaryReinitializablePlanCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.MissingSourcePlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.MissingDestinationPlateCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalAddedTriangleCount + 1));
+	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalAddedVertexCount + 1));
+	HashMixDouble(AuditHash, OutAudit.TotalAddedAreaWeight);
+	OutAudit.SuturePlanHash = HashToString(AuditHash);
 	return true;
 }
 

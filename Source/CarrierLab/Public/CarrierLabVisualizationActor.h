@@ -1119,6 +1119,76 @@ struct FCarrierLabPhaseIIID4SlabBreakPlanAudit
 	FString SlabBreakPlanHash;
 };
 
+struct FCarrierLabPhaseIIID5SuturePlanRecord
+{
+	int32 PlanId = INDEX_NONE;
+	int32 SlabBreakPlanId = INDEX_NONE;
+	int32 GroupId = INDEX_NONE;
+	uint64 PairKey = 0;
+	int32 SourcePlateId = INDEX_NONE;
+	int32 DestinationPlateId = INDEX_NONE;
+	int32 SourceTriangleCountBefore = 0;
+	int32 DestinationTriangleCountBefore = 0;
+	int32 DestinationVertexCountBefore = 0;
+	int32 AddedTriangleCount = 0;
+	int32 AddedVertexCount = 0;
+	int32 PostSutureTriangleCount = 0;
+	int32 PostSutureVertexCount = 0;
+	int32 DestinationBoundaryEdgeCountBefore = 0;
+	int32 PostBoundaryEdgeCount = 0;
+	int32 PostInteriorEdgeCount = 0;
+	int32 PostNonManifoldEdgeCount = 0;
+	int32 PostBoundaryTriangleCount = 0;
+	int32 AddedBoundaryTriangleCount = 0;
+	int32 SutureBoundaryEdgeCount = 0;
+	int32 InvalidSourceTriangleCount = 0;
+	int32 InvalidSourceVertexCount = 0;
+	int32 DuplicateDestinationSourceTriangleCount = 0;
+	double AddedAreaWeight = 0.0;
+	bool bSlabBreakPlanValid = false;
+	bool bAddsExactlyRemovedTerrane = false;
+	bool bTopologyValid = false;
+	bool bBoundaryTrackingReinitializable = false;
+	FString SourceTerraneHash;
+	FString RemovalSetHash;
+	FString AddedTriangleSetHash;
+	FString DestinationOldToNewTriangleMapHash;
+	FString DestinationOldToNewVertexMapHash;
+	FString SourceToDestinationAddedTriangleMapHash;
+	FString SourceToDestinationAddedVertexMapHash;
+	FString PostSutureTopologyHash;
+	FString PlanHash;
+	TArray<int32> AddedSourceLocalTriangleIds;
+	TArray<int32> DestinationOldToNewLocalTriangleIds;
+	TArray<int32> DestinationOldToNewLocalVertexIds;
+	TArray<int32> SourceToDestinationAddedTriangleIds;
+	TArray<int32> SourceToDestinationAddedVertexIds;
+};
+
+struct FCarrierLabPhaseIIID5SuturePlanAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	double InterpenetrationThresholdKm = 300.0;
+	double DestinationMassThresholdRatio = 0.5;
+	int32 SlabBreakPlanCount = 0;
+	int32 ValidSlabBreakPlanCount = 0;
+	int32 SuturePlanCount = 0;
+	int32 ValidSuturePlanCount = 0;
+	int32 InvalidSuturePlanCount = 0;
+	int32 BoundaryReinitializablePlanCount = 0;
+	int32 MissingSourcePlateCount = 0;
+	int32 MissingDestinationPlateCount = 0;
+	int32 TotalAddedTriangleCount = 0;
+	int32 TotalAddedVertexCount = 0;
+	double TotalAddedAreaWeight = 0.0;
+	FString SourceSlabBreakPlanHash;
+	TArray<FCarrierLabPhaseIIID5SuturePlanRecord> Plans;
+	FString SuturePlanHash;
+};
+
 struct FCarrierLabPhaseIIIProcessOverlayTriangle
 {
 	FVector3d A = FVector3d::ZeroVector;
@@ -1375,6 +1445,10 @@ public:
 		double DestinationMassThresholdRatio = 0.5) const;
 	bool PlanPhaseIIID4SlabBreak(
 		FCarrierLabPhaseIIID4SlabBreakPlanAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0,
+		double DestinationMassThresholdRatio = 0.5) const;
+	bool PlanPhaseIIID5Suture(
+		FCarrierLabPhaseIIID5SuturePlanAudit& OutAudit,
 		double InterpenetrationThresholdKm = 300.0,
 		double DestinationMassThresholdRatio = 0.5) const;
 	bool GetPhaseIIIProcessOverlayTriangles(
