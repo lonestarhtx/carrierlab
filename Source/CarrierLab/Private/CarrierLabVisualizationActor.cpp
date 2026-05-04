@@ -11,6 +11,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/PlatformTime.h"
 #include "IndexTypes.h"
 #include "InputCoreTypes.h"
 #include "Spatial/SpatialInterfaces.h"
@@ -4768,6 +4769,7 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIC5ElevationLedgerAudit(FCarrierLa
 
 bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLabPhaseIIID1TerraneAudit& OutAudit) const
 {
+	++PhaseIIIDiagnosticCallCounts.DetectTerranes;
 	OutAudit = FCarrierLabPhaseIIID1TerraneAudit();
 	if (!bInitialized)
 	{
@@ -4977,6 +4979,7 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID2CollisionGroups(
 	FCarrierLabPhaseIIID2CollisionGroupingAudit& OutAudit,
 	const double InterpenetrationThresholdKm) const
 {
+	++PhaseIIIDiagnosticCallCounts.GroupCollisions;
 	OutAudit = FCarrierLabPhaseIIID2CollisionGroupingAudit();
 	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
 	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
@@ -5194,6 +5197,7 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID3DestinationMass(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio) const
 {
+	++PhaseIIIDiagnosticCallCounts.DestinationMass;
 	OutAudit = FCarrierLabPhaseIIID3DestinationMassAudit();
 	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
 	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
@@ -5428,6 +5432,7 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID4SlabBreak(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio) const
 {
+	++PhaseIIIDiagnosticCallCounts.SlabBreakPlan;
 	OutAudit = FCarrierLabPhaseIIID4SlabBreakPlanAudit();
 	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
 	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
@@ -5733,6 +5738,7 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID5Suture(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio) const
 {
+	++PhaseIIIDiagnosticCallCounts.SuturePlan;
 	OutAudit = FCarrierLabPhaseIIID5SuturePlanAudit();
 	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
 	if (!PlanPhaseIIID4SlabBreak(SlabBreakAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
@@ -6141,6 +6147,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSuture(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio)
 {
+	++PhaseIIIDiagnosticCallCounts.TopologyMutation;
 	OutAudit = FCarrierLabPhaseIIID6TopologyMutationAudit();
 	if (!bInitialized && !InitializeCarrier())
 	{
@@ -6553,6 +6560,7 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID7CollisionUplift(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio) const
 {
+	++PhaseIIIDiagnosticCallCounts.UpliftPlan;
 	OutAudit = FCarrierLabPhaseIIID7CollisionUpliftAudit();
 	if (!bInitialized)
 	{
@@ -6831,6 +6839,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio)
 {
+	++PhaseIIIDiagnosticCallCounts.UpliftApply;
 	FCarrierLabPhaseIIID7CollisionUpliftAudit PlannedAudit;
 	if (!PlanPhaseIIID7CollisionUplift(PlannedAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
 	{
@@ -7421,6 +7430,138 @@ double ACarrierLabVisualizationActor::GetObservedMaxPlateSpeedMmPerYear() const
 	return Motions.Num() > 0 ? MaxSpeed : FMath::Max(0.0, VelocityMmPerYear);
 }
 
+void ACarrierLabVisualizationActor::ResetPhaseIIIDiagnosticCallCounts() const
+{
+	PhaseIIIDiagnosticCallCounts = FCarrierLabPhaseIIIDiagnosticCallCounts();
+}
+
+FCarrierLabPhaseIIIDiagnosticCallCounts ACarrierLabVisualizationActor::GetPhaseIIIDiagnosticCallCounts() const
+{
+	return PhaseIIIDiagnosticCallCounts;
+}
+
+bool ACarrierLabVisualizationActor::RunPhaseIIICostDriverAdvanceProbe(FCarrierLabPhaseIIICostDriverStepAudit& OutAudit)
+{
+	OutAudit = FCarrierLabPhaseIIICostDriverStepAudit();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+
+	auto CountActiveTriangles = [&]()
+	{
+		int32 Count = 0;
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			Count += Plate.ActiveBoundaryTriangles.Num();
+		}
+		return Count;
+	};
+
+	OutAudit.StepBefore = CurrentMetrics.Step;
+	OutAudit.SampleCount = State.Samples.Num();
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ActiveTriangleCountBefore = CountActiveTriangles();
+	const double TotalStartSeconds = FPlatformTime::Seconds();
+
+	double StartSeconds = FPlatformTime::Seconds();
+	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		if (!Motions.IsValidIndex(Plate.PlateId))
+		{
+			continue;
+		}
+		const FCarrierLabVisualizationMotion& Motion = Motions[Plate.PlateId];
+		for (CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			Vertex.UnitPosition = NormalizeOrFallback(RotateVector(Vertex.UnitPosition, Motion.Axis, Motion.AngularSpeedRadiansPerStep), Vertex.UnitPosition);
+			Vertex.RidgeDirection = RotateCarrierVectorField(Vertex.RidgeDirection, Motion.Axis, Motion.AngularSpeedRadiansPerStep);
+			Vertex.FoldDirection = RotateCarrierVectorField(Vertex.FoldDirection, Motion.Axis, Motion.AngularSpeedRadiansPerStep);
+		}
+	}
+	for (FCarrierLabVisualizationMotion& Motion : Motions)
+	{
+		Motion.CurrentCenter = NormalizeOrFallback(RotateVector(Motion.CurrentCenter, Motion.Axis, Motion.AngularSpeedRadiansPerStep), Motion.CurrentCenter);
+	}
+	OutAudit.MotionSeconds = FPlatformTime::Seconds() - StartSeconds;
+
+	StartSeconds = FPlatformTime::Seconds();
+	UpdateConvergenceTrackingDistances();
+	OutAudit.DistanceUpdateSeconds = FPlatformTime::Seconds() - StartSeconds;
+
+	StartSeconds = FPlatformTime::Seconds();
+	UpdateConvergenceSubductionMatrix();
+	OutAudit.MatrixTotalSeconds = FPlatformTime::Seconds() - StartSeconds;
+	OutAudit.MatrixBvhBuildSeconds = LastConvergenceMatrixBvhBuildSeconds;
+	OutAudit.MatrixRayQuerySeconds = LastConvergenceMatrixRayQuerySeconds;
+
+	StartSeconds = FPlatformTime::Seconds();
+	UpdateConvergenceSubductionPolarityDecisions();
+	OutAudit.PolaritySeconds = FPlatformTime::Seconds() - StartSeconds;
+
+	StartSeconds = FPlatformTime::Seconds();
+	UpdateConvergenceNeighborPropagation();
+	OutAudit.NeighborPropagationSeconds = FPlatformTime::Seconds() - StartSeconds;
+
+	StartSeconds = FPlatformTime::Seconds();
+	BeginPhaseIIIC5ElevationLedger();
+	OutAudit.LedgerSeconds += FPlatformTime::Seconds() - StartSeconds;
+
+	if (bEnablePhaseIIICSubductingMarks)
+	{
+		StartSeconds = FPlatformTime::Seconds();
+		UpdatePhaseIIICSubductingTriangleMarks();
+		OutAudit.MarkSeconds = FPlatformTime::Seconds() - StartSeconds;
+	}
+	if (bEnablePhaseIIICOverridingPlateUplift)
+	{
+		StartSeconds = FPlatformTime::Seconds();
+		ApplyPhaseIIIC3OverridingPlateUplift();
+		OutAudit.UpliftSeconds = FPlatformTime::Seconds() - StartSeconds;
+	}
+	else
+	{
+		LastPhaseIIIC3UpliftAudit = FCarrierLabPhaseIIIC3UpliftAudit();
+		LastPhaseIIIC3UpliftAudit.Step = CurrentMetrics.Step + 1;
+		LastPhaseIIIC3UpliftAudit.EventCount = CurrentMetrics.EventCount;
+		LastPhaseIIIC3UpliftAudit.PlateCount = State.Plates.Num();
+		LastPhaseIIIC3UpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+		LastPhaseIIIC3UpliftAudit.bMarksEnabled = bEnablePhaseIIICSubductingMarks;
+		LastPhaseIIIC3UpliftAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
+		LastPhaseIIIC3UpliftAudit.bUpliftEnabled = false;
+		LastPhaseIIIC3UpliftAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	}
+
+	StartSeconds = FPlatformTime::Seconds();
+	ApplyPhaseIIIC4SlabPull();
+	OutAudit.SlabPullSeconds = FPlatformTime::Seconds() - StartSeconds;
+
+	StartSeconds = FPlatformTime::Seconds();
+	FinalizePhaseIIIC5ElevationLedger();
+	OutAudit.LedgerSeconds += FPlatformTime::Seconds() - StartSeconds;
+
+	++CurrentMetrics.Step;
+	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
+	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
+	const int32 Cadence = GetNaturalCadenceSteps();
+	CurrentMetrics.CadenceSteps = Cadence;
+	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
+
+	OutAudit.StepAfter = CurrentMetrics.Step;
+	OutAudit.ActiveTriangleCountAfter = CountActiveTriangles();
+	OutAudit.MatrixRayTestCount = State.ConvergenceSubductionMatrixRayTestCount;
+	OutAudit.MatrixHitCount = State.ConvergenceSubductionMatrixHitCount;
+	OutAudit.MatrixEvidenceCount = State.ConvergenceSubductionMatrixEvidence.Num();
+	OutAudit.PolarityDecisionCount = State.ConvergenceSubductionPolarityDecisions.Num();
+	OutAudit.NeighborSeedCount = State.ConvergenceNeighborPropagationSeedCount;
+	OutAudit.NeighborAddedCount = State.ConvergenceNeighborPropagationAddedCount;
+	OutAudit.SubductingMarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	OutAudit.UpliftRecordCount = LastPhaseIIIC3UpliftAudit.UpliftRecordCount;
+	OutAudit.SlabPullContributionCount = LastPhaseIIIC4SlabPullAudit.ContributionCount;
+	OutAudit.TotalProcessSeconds = FPlatformTime::Seconds() - TotalStartSeconds;
+	return true;
+}
+
 void ACarrierLabVisualizationActor::StepOnce()
 {
 	if (!bInitialized && !InitializeCarrier())
@@ -7771,17 +7912,23 @@ void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
 
 void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 {
+	LastConvergenceMatrixBvhBuildSeconds = 0.0;
+	LastConvergenceMatrixRayQuerySeconds = 0.0;
 	State.ConvergenceSubductionTriangleHits.Reset();
 	State.ConvergenceSubductionMatrixEvidence.Reset();
 	FString MeshError;
+	const double BvhStartSeconds = FPlatformTime::Seconds();
 	if (!RefreshPlateRayMeshes(MeshError))
 	{
+		LastConvergenceMatrixBvhBuildSeconds = FPlatformTime::Seconds() - BvhStartSeconds;
 		UE_LOG(LogTemp, Error, TEXT("CarrierLab convergence subduction matrix update failed: %s"), *MeshError);
 		return;
 	}
+	LastConvergenceMatrixBvhBuildSeconds = FPlatformTime::Seconds() - BvhStartSeconds;
 
 	IMeshSpatial::FQueryOptions QueryOptions(2.0 + 1.0e-6);
 	TArray<MeshIntersection::FHitIntersectionResult> Hits;
+	const double QueryStartSeconds = FPlatformTime::Seconds();
 	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
 	{
 		if (!Motions.IsValidIndex(Plate.PlateId))
@@ -7889,6 +8036,7 @@ void ACarrierLabVisualizationActor::UpdateConvergenceSubductionMatrix()
 			}
 		}
 	}
+	LastConvergenceMatrixRayQuerySeconds = FPlatformTime::Seconds() - QueryStartSeconds;
 }
 
 void ACarrierLabVisualizationActor::UpdateConvergenceSubductionPolarityDecisions()

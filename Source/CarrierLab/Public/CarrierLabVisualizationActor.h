@@ -148,6 +148,49 @@ struct FCarrierLabVisualizationMetrics
 	FString LastRemeshMode;
 };
 
+struct FCarrierLabPhaseIIICostDriverStepAudit
+{
+	int32 StepBefore = 0;
+	int32 StepAfter = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 ActiveTriangleCountBefore = 0;
+	int32 ActiveTriangleCountAfter = 0;
+	int32 MatrixRayTestCount = 0;
+	int32 MatrixHitCount = 0;
+	int32 MatrixEvidenceCount = 0;
+	int32 PolarityDecisionCount = 0;
+	int32 NeighborSeedCount = 0;
+	int32 NeighborAddedCount = 0;
+	int32 SubductingMarkCount = 0;
+	int32 UpliftRecordCount = 0;
+	int32 SlabPullContributionCount = 0;
+	double MotionSeconds = 0.0;
+	double DistanceUpdateSeconds = 0.0;
+	double MatrixTotalSeconds = 0.0;
+	double MatrixBvhBuildSeconds = 0.0;
+	double MatrixRayQuerySeconds = 0.0;
+	double PolaritySeconds = 0.0;
+	double NeighborPropagationSeconds = 0.0;
+	double LedgerSeconds = 0.0;
+	double MarkSeconds = 0.0;
+	double UpliftSeconds = 0.0;
+	double SlabPullSeconds = 0.0;
+	double TotalProcessSeconds = 0.0;
+};
+
+struct FCarrierLabPhaseIIIDiagnosticCallCounts
+{
+	int32 DetectTerranes = 0;
+	int32 GroupCollisions = 0;
+	int32 DestinationMass = 0;
+	int32 SlabBreakPlan = 0;
+	int32 SuturePlan = 0;
+	int32 TopologyMutation = 0;
+	int32 UpliftPlan = 0;
+	int32 UpliftApply = 0;
+};
+
 struct FCarrierLabVisualizationMotion
 {
 	FVector3d Axis = FVector3d::UnitZ();
@@ -1647,6 +1690,9 @@ public:
 	bool SeedPhaseIIIB6SingleConvergentTriangleForTest(
 		int32 PreferredUnderPlateId,
 		FCarrierLabPhaseIIIB6SeedMetrics& OutSeedMetrics);
+	bool RunPhaseIIICostDriverAdvanceProbe(FCarrierLabPhaseIIICostDriverStepAudit& OutAudit);
+	void ResetPhaseIIIDiagnosticCallCounts() const;
+	FCarrierLabPhaseIIIDiagnosticCallCounts GetPhaseIIIDiagnosticCallCounts() const;
 
 private:
 	void BindInputControls();
@@ -1701,6 +1747,9 @@ private:
 	TArray<uint8> PlateBoundaryMask;
 	TArray<uint8> SubductionRoleMask;
 	TArray<double> DistanceToFrontKmBySample;
+	mutable FCarrierLabPhaseIIIDiagnosticCallCounts PhaseIIIDiagnosticCallCounts;
+	double LastConvergenceMatrixBvhBuildSeconds = 0.0;
+	double LastConvergenceMatrixRayQuerySeconds = 0.0;
 	FCarrierLabPhaseIIIC3UpliftAudit LastPhaseIIIC3UpliftAudit;
 	FCarrierLabPhaseIIIC4SlabPullAudit LastPhaseIIIC4SlabPullAudit;
 	FCarrierLabPhaseIIIC5ElevationLedgerAudit LastPhaseIIIC5ElevationLedgerAudit;
