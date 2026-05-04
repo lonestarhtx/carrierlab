@@ -25,9 +25,19 @@ namespace
 	constexpr double DestinationMassThresholdRatio = 0.5;
 	constexpr double RequiredReductionFraction = 0.80;
 	constexpr double RequiredCollisionAttributionFraction = 0.50;
+	constexpr double PaperTable2TotalTectonicsSecondsPerStep60k40 = 0.19;
+	constexpr double SoftPaperRatioTarget = 10.0;
 	constexpr TCHAR ExpectedSlice55StateHash[] = TEXT("3b4a85366dab80db");
 	constexpr TCHAR ExpectedSlice55MaterialLedgerHash[] = TEXT("bc3077100ba291b4");
 	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("bf8818a26ed7b1dc");
+
+	enum class EValidationTier : uint8
+	{
+		Tiny,
+		Slice,
+		Integrated,
+		Benchmark
+	};
 
 	void HashMix(uint64& Hash, const uint64 Value)
 	{
@@ -106,6 +116,54 @@ namespace
 		return FMath::Abs(Denominator) > UE_SMALL_NUMBER ? Numerator / Denominator : 0.0;
 	}
 
+	FString TierName(const EValidationTier Tier)
+	{
+		switch (Tier)
+		{
+		case EValidationTier::Tiny:
+			return TEXT("Tiny");
+		case EValidationTier::Integrated:
+			return TEXT("Integrated");
+		case EValidationTier::Benchmark:
+			return TEXT("Benchmark");
+		case EValidationTier::Slice:
+		default:
+			return TEXT("Slice");
+		}
+	}
+
+	EValidationTier ParseValidationTier(const FString& Params)
+	{
+		FString TierValue;
+		if (!FParse::Value(*Params, TEXT("ValidationTier="), TierValue))
+		{
+			return EValidationTier::Slice;
+		}
+		if (TierValue.Equals(TEXT("Tiny"), ESearchCase::IgnoreCase))
+		{
+			return EValidationTier::Tiny;
+		}
+		if (TierValue.Equals(TEXT("Integrated"), ESearchCase::IgnoreCase))
+		{
+			return EValidationTier::Integrated;
+		}
+		if (TierValue.Equals(TEXT("Benchmark"), ESearchCase::IgnoreCase))
+		{
+			return EValidationTier::Benchmark;
+		}
+		return EValidationTier::Slice;
+	}
+
+	bool IsIntegratedLikeTier(const EValidationTier Tier)
+	{
+		return Tier == EValidationTier::Integrated || Tier == EValidationTier::Benchmark;
+	}
+
+	FString RatioString(const double Ratio)
+	{
+		return FString::Printf(TEXT("%.2fx"), Ratio);
+	}
+
 	FString GetOutputRoot(const FString& Params)
 	{
 		FString OutputRoot;
@@ -113,6 +171,10 @@ namespace
 		{
 			const FString Stamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
 			OutputRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("IIID8"), Stamp);
+		}
+		else if (FPaths::IsRelative(OutputRoot))
+		{
+			OutputRoot = FPaths::Combine(FPaths::ProjectDir(), OutputRoot);
 		}
 		return FPaths::ConvertRelativePathToFull(OutputRoot);
 	}
@@ -921,8 +983,39 @@ namespace
 			*JsonString(Result.ReplayHash)));
 	}
 
+	FString BuildTierPolicyReport(const FString& OutputRoot, const EValidationTier Tier)
+	{
+		const double IIID8SecondsPerStep = 1151.130 / static_cast<double>(BaselineSteps);
+		const double PaperRatio = SafeRatio(IIID8SecondsPerStep, PaperTable2TotalTectonicsSecondsPerStep60k40);
+
+		FString Report;
+		Report += TEXT("# Phase III Slice IIID.8 Report - Tier Policy Check\n\n");
+		Report += FString::Printf(
+			TEXT("Status: PASS as a `%s` tier policy check. This invocation intentionally does not launch the 60k/40/32 collision-active replay. It is not a passing IIID.8 integrated evidence run.\n\n"),
+			*TierName(Tier));
+		Report += FString::Printf(TEXT("Output root: `%s`\n\n"), *OutputRoot);
+		Report += TEXT("## Tier Rule\n\n");
+		Report += TEXT("IIID.8 runs at `Integrated` tier when invoked for sub-phase consolidation. Per-slice or hardening review may use `Slice` or `Tiny` tier fast checks, but those tiers emit a yellow flag instead of pretending the integrated replay was proven.\n\n");
+		Report += TEXT("Sub-phase consolidation integrated runs are mandatory. No soft-skip is allowed at consolidation: skipped, failed, or interrupted integrated runs must be dispatched before the consolidation can close.\n\n");
+		Report += TEXT("## Paper Table 2 Cost Flag\n\n");
+		Report += FString::Printf(
+			TEXT("The last IIID.8 integrated replay 0 measurement was `1151.130s` for `%d` steps, or `%.6fs/step`. Paper Table 2 reports `%.2fs/step` total tectonic-process cost at `60k` samples / `40` plates, so the current integrated run is `%s` paper baseline. The soft target is `<= %.0fx`; exceeding it is a tracked performance finding, not a reason to skip integrated consolidation evidence.\n\n"),
+			BaselineSteps,
+			IIID8SecondsPerStep,
+			PaperTable2TotalTectonicsSecondsPerStep60k40,
+			*RatioString(PaperRatio),
+			SoftPaperRatioTarget);
+		Report += TEXT("## Yellow Flags\n\n");
+		Report += TEXT("- `iiid8_integrated_replay_required_for_consolidation`: this tier did not run the integrated replay.\n");
+		Report += TEXT("- `paper_table2_ratio_over_target`: the known integrated run exceeds the paper Table 2 baseline by far more than the `<=10x` soft target.\n\n");
+		Report += TEXT("## Scope Notes\n\n");
+		Report += TEXT("This policy report preserves the workflow rule only. It does not update the IIID.8 quantitative gate, does not run replay 1, and does not claim Slice 5.5 asymmetry reduction.\n");
+		return Report;
+	}
+
 	FString BuildReport(
 		const FString& OutputRoot,
+		const EValidationTier Tier,
 		const FSlice55BypassResult& BypassA,
 		const FSlice55BypassResult& BypassB,
 		const FIIIBSignatureResult& IIIBA,
@@ -945,6 +1038,7 @@ namespace
 		FString Report;
 		Report += TEXT("# Phase III Slice IIID.8 Report - Slice 5.5 Asymmetry Recheck\n\n");
 		Report += FString::Printf(TEXT("Status: %s. This slice re-runs the 60k Slice 5.5 single-hit source-triangle subdivision with IIID collision handling active, then compares the uniform-oceanic single-hit continental loss against the accepted Phase II Slice 5.5 baseline. It does not add paper remeshing, qGamma oceanic generation, rifting, erosion, terrain displacement, ownership recovery, or projection repair.\n\n"), bAllPass ? TEXT("PASS") : TEXT("FAIL"));
+		Report += FString::Printf(TEXT("Validation tier: `%s`. Integrated tier runs the 60k/40/32 path and is mandatory at sub-phase consolidation.\n\n"), *TierName(Tier));
 		Report += FString::Printf(TEXT("Output root: `%s`\n\n"), *OutputRoot);
 
 		Report += TEXT("## Gate Summary\n\n");
@@ -993,7 +1087,7 @@ namespace
 			ActiveB.PolicyResolvedMultiHitCount);
 		if (!bActiveReplay1Requested)
 		{
-			Report += TEXT("| IIID active replay 1 | SKIP | Not run by default because the 60k/40 collision-application replay is expensive; pass/fail remains false unless `-RunActiveReplay1` is supplied and replay stability is proven. |\n\n");
+			Report += TEXT("| IIID active replay 1 | SKIP | Context-aware skip: replay 0 already failed or this path is investigation-only. Pass/fail remains false unless replay 1 runs and stability is proven. |\n\n");
 		}
 
 		Report += TEXT("## Primary Rows\n\n");
@@ -1028,7 +1122,7 @@ namespace
 		Report += TEXT("\n## Interpretation\n\n");
 		if (!bActiveReplay1Requested)
 		{
-			Report += TEXT("The second IIID-active replay was not run. This report can still serve as an investigation checkpoint when replay 0 fails the quantitative gate, but it cannot serve as a passing determinism checkpoint. A passing IIID.8 run must supply `-RunActiveReplay1` and prove replay stability.\n\n");
+			Report += TEXT("The second IIID-active replay was not run because replay 0 is already an investigation result or the operator explicitly selected that policy. This report can still serve as an investigation checkpoint when replay 0 fails the quantitative gate, but it cannot serve as a passing determinism checkpoint. Consolidation gates expected to pass run replay 1 by default.\n\n");
 		}
 		if (bActivePass)
 		{
@@ -1057,9 +1151,43 @@ UCarrierLabPhaseIIID8Commandlet::UCarrierLabPhaseIIID8Commandlet()
 
 int32 UCarrierLabPhaseIIID8Commandlet::Main(const FString& Params)
 {
+	const EValidationTier Tier = ParseValidationTier(Params);
 	const FString OutputRoot = GetOutputRoot(Params);
 	IFileManager::Get().MakeDirectory(*OutputRoot, true);
-	UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIID8 output root: %s"), *OutputRoot);
+	UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIID8 tier=%s output root: %s"), *TierName(Tier), *OutputRoot);
+
+	if (!IsIntegratedLikeTier(Tier))
+	{
+		TArray<FString> JsonLines;
+		const double IIID8SecondsPerStep = 1151.130 / static_cast<double>(BaselineSteps);
+		JsonLines.Add(FString::Printf(
+			TEXT("{\"kind\":\"validation_tier\",\"tier\":%s,\"integrated_replay_launched\":false,\"completed\":true,\"yellow_flag\":%s}"),
+			*JsonString(TierName(Tier)),
+			*JsonString(TEXT("iiid8_integrated_replay_required_for_consolidation"))));
+		JsonLines.Add(FString::Printf(
+			TEXT("{\"kind\":\"paper_table2_ratio\",\"surface\":\"iiid8_integrated_total_last_run\",\"wall_seconds\":1151.130000,\"step_count\":%d,\"seconds_per_step\":%.9f,\"paper_table2_seconds_per_step\":%.9f,\"paper_ratio\":%.6f,\"target_ratio\":%.6f,\"target_status\":%s}"),
+			BaselineSteps,
+			IIID8SecondsPerStep,
+			PaperTable2TotalTectonicsSecondsPerStep60k40,
+			SafeRatio(IIID8SecondsPerStep, PaperTable2TotalTectonicsSecondsPerStep60k40),
+			SoftPaperRatioTarget,
+			*JsonString(SafeRatio(IIID8SecondsPerStep, PaperTable2TotalTectonicsSecondsPerStep60k40) <= SoftPaperRatioTarget ? TEXT("within_target") : TEXT("over_target"))));
+
+		const FString MetricsPath = FPaths::Combine(OutputRoot, TEXT("metrics.jsonl"));
+		FFileHelper::SaveStringToFile(
+			FString::Join(JsonLines, TEXT("\n")) + TEXT("\n"),
+			*MetricsPath,
+			FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+		const FString Report = BuildTierPolicyReport(OutputRoot, Tier);
+		const FString ReportPath = ResolveReportPath(Params);
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
+		FFileHelper::SaveStringToFile(Report, *ReportPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+		UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIID8 tier policy report: %s"), *ReportPath);
+		UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIID8 tier policy metrics: %s"), *MetricsPath);
+		return 0;
+	}
 
 	FSlice55BypassResult BypassA;
 	FSlice55BypassResult BypassB;
@@ -1075,15 +1203,28 @@ int32 UCarrierLabPhaseIIID8Commandlet::Main(const FString& Params)
 	FPrimaryReplayResult BaselineB = MakePrimaryReplayFromBypass(BypassB);
 	FPrimaryReplayResult ActiveA;
 	FPrimaryReplayResult ActiveB;
-	const bool bRunActiveReplay1 = Params.Contains(TEXT("RunActiveReplay1"));
 	const bool bActiveA = RunPrimaryReplay(0, true, ActiveA);
+	const bool bReplay0QuantitativePass =
+		bActiveA &&
+		ActiveA.CollisionEventCount > 0 &&
+		ActiveA.PolicyResolvedMultiHitCount == 0 &&
+		ReductionFraction(BaselineA, ActiveA) >= RequiredReductionFraction &&
+		CollisionAttributionFraction(BaselineA, ActiveA) >= RequiredCollisionAttributionFraction;
+	const bool bRunActiveReplay1 =
+		Params.Contains(TEXT("RunActiveReplay1")) ||
+		(!Params.Contains(TEXT("SkipActiveReplay1")) && bReplay0QuantitativePass);
 	const bool bActiveB = bRunActiveReplay1 ? RunPrimaryReplay(1, true, ActiveB) : false;
 	if (!bRunActiveReplay1)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("IIID8 active replay 1 skipped. Pass/fail remains false unless -RunActiveReplay1 is supplied."));
+		UE_LOG(LogTemp, Warning, TEXT("IIID8 active replay 1 skipped by context-aware policy. Replay 0 quantitative pass=%s."), bReplay0QuantitativePass ? TEXT("true") : TEXT("false"));
 	}
 
 	TArray<FString> JsonLines;
+	JsonLines.Add(FString::Printf(
+		TEXT("{\"kind\":\"validation_tier\",\"tier\":%s,\"integrated_replay_launched\":true,\"replay0_quantitative_pass\":%s,\"active_replay1_launched\":%s}"),
+		*JsonString(TierName(Tier)),
+		bReplay0QuantitativePass ? TEXT("true") : TEXT("false"),
+		bRunActiveReplay1 ? TEXT("true") : TEXT("false")));
 	JsonLines.Add(FString::Printf(
 		TEXT("{\"kind\":\"slice55_bypass\",\"replay\":0,\"completed\":%s,\"state_hash\":%s,\"material_ledger_hash\":%s,\"seconds\":%.6f}"),
 		bBypassA ? TEXT("true") : TEXT("false"),
@@ -1119,7 +1260,7 @@ int32 UCarrierLabPhaseIIID8Commandlet::Main(const FString& Params)
 	}
 	else
 	{
-		JsonLines.Add(TEXT("{\"kind\":\"primary_replay\",\"fixture\":\"iiid_active_primary_60k\",\"replay\":1,\"iiid_active\":true,\"completed\":false,\"skipped\":true,\"skip_reason\":\"pass -RunActiveReplay1 to run the expensive second active replay\"}"));
+		JsonLines.Add(TEXT("{\"kind\":\"primary_replay\",\"fixture\":\"iiid_active_primary_60k\",\"replay\":1,\"iiid_active\":true,\"completed\":false,\"skipped\":true,\"skip_reason\":\"context-aware skip: replay 0 failed or path marked investigation-only\"}"));
 	}
 
 	const FString MetricsPath = FPaths::Combine(OutputRoot, TEXT("metrics.jsonl"));
@@ -1128,7 +1269,7 @@ int32 UCarrierLabPhaseIIID8Commandlet::Main(const FString& Params)
 		*MetricsPath,
 		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 
-	const FString Report = BuildReport(OutputRoot, BypassA, BypassB, IIIBA, IIIBB, BaselineA, BaselineB, ActiveA, ActiveB, bRunActiveReplay1);
+	const FString Report = BuildReport(OutputRoot, Tier, BypassA, BypassB, IIIBA, IIIBB, BaselineA, BaselineB, ActiveA, ActiveB, bRunActiveReplay1);
 	const FString ReportPath = ResolveReportPath(Params);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
 	FFileHelper::SaveStringToFile(Report, *ReportPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);

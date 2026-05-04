@@ -31,6 +31,34 @@ Consequence for future slices: centroid, random, synthetic, or prior-owner
 fallback policies are allowed only as comparison diagnostics. They must not be
 promoted to the primary remesh path once IIIE lands.
 
+## Validation Tiers And Performance Containment
+
+Phase III commandlets must report their validation tier once they touch
+collision/remesh-scale integrated paths:
+
+- `Tiny`: focused deterministic semantic fixtures, target under 15 seconds.
+- `Slice`: default per-slice validation tier, target under 120 seconds.
+- `Integrated`: default sub-phase consolidation tier. Sub-phase consolidation
+  integrated runs are mandatory; no soft-skip at consolidation.
+- `Benchmark`: optional scaling/repeat runs for cost diagnosis.
+
+If a commandlet emits a stop-and-investigate note, that note becomes a yellow
+flag. Before a sub-phase consolidation can close, each yellow flag must be
+dispatched by running the integrated test, deferring to a named future slice
+with rationale, or closing it with explicit reasoning in the consolidation
+report. Replay 1 is context-aware: default-on for consolidation gates expected
+to pass; opt-in or skipped only when replay 0 already failed, the path is
+investigation-only, or the report records the yellow flag/deferral.
+
+Paper Table 2 is the cost baseline for timing reports. At 60k samples / 40
+plates, Table 2 reports total tectonic-process cost of 0.19 seconds per
+timestep. Timing reports should include measured cost, paper baseline, ratio,
+and the soft `<=10x` target. Exceeding the target is a tracked finding, not a
+gate failure by itself. Long collision+remesh replays currently exceed paper
+Table 2 baseline by about 189x and are tiered to opt-in for routine slice work
+pending cost-driver investigation. They remain mandatory at sub-phase
+consolidation.
+
 ## Sub-Phase IIIA: Paper Crust State Schema
 
 Goal: add the paper's crust-state fields to the carrier vertex/sample without changing tectonic behavior. Storage and rotation only; no consumers, no mutation outside rotation.
@@ -435,17 +463,34 @@ Work:
 
 - Re-run the Slice 5.5 source-triangle-uniformity ledger subdivision with IIID active.
 - Specifically measure: net continental delta from single-hit transfer to uniform-oceanic source triangles.
+- IIID.8 runs at `Integrated` tier when invoked for sub-phase consolidation. Per-slice or hardening review may use `Slice` tier fast fixtures, but the consolidation invocation runs the integrated path and records pass/fail/stop explicitly.
 
 Exit gate:
 
 - Continental loss attributed to single-hit transfer to uniform-oceanic source triangles drops by ≥ 80% relative to the Phase II Slice 5.5 baseline, or the slice pauses for an investigation checkpoint that audits the collision implementation against the paper/thesis before the target is reconsidered.
 - Continental mass transferred via collision events accounts for at least 50% of the loss eliminated by collision handling.
+- The integrated consolidation run reports paper Table 2 cost ratio. Skipped, failed, or interrupted integrated runs become yellow flags that block consolidation until dispatched.
 
 Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiid8-report.md`.
 
 ### IIID Consolidation
 
 Work: `docs/checkpoints/phase-iii-iiid-consolidated.md` summarizing collision implementation, with the IIID.8 quantification as the headline result.
+
+### Pre-IIIE.2: Cost Driver Identification
+
+Work:
+
+- Run existing timing-instrumented fixtures only; add no new simulation behavior.
+- Separate setup, detection, grouping, event selection, slab-break plan, suture plan, topology mutation, uplift plan/apply, and total timing.
+- Report each measured row against paper Table 2 baseline and the `<=10x` soft target.
+- Identify the dominant per-step cost source before optimizing. Specific suspects: IIIB.3 matrix construction, IIIB.6 neighbor propagation expansion, full audit struct construction every step, per-step BVH rebuilds for all plates, and one-time setup costs amortized over only 32 IIID.8 steps.
+
+Exit gate:
+
+- A one-page cost-driver table exists in `docs/checkpoints/phase-iii-pre-iiie-cost-driver-identification.md`.
+- No optimization lands in this slice.
+- If the dominant cost driver cannot be isolated, write an investigation note instead of normalizing the 189x integrated ratio.
 
 ## Sub-Phase IIIE: Paper Remesh / Divergent Zone Oceanic Crust Generation
 
