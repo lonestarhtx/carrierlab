@@ -62,6 +62,26 @@ namespace
 		TMap<int32, TArray<int32>> Bins;
 	};
 
+	struct FCarrierLabContinuousBoundaryEdge
+	{
+		int32 EdgeId = INDEX_NONE;
+		int32 PlateId = INDEX_NONE;
+		FVector3d StartUnitPosition = FVector3d::UnitX();
+		FVector3d EndUnitPosition = FVector3d::UnitY();
+		double StartContinentalFraction = 0.0;
+		double EndContinentalFraction = 0.0;
+	};
+
+	struct FCarrierLabContinuousBoundaryCandidate
+	{
+		int32 EdgeId = INDEX_NONE;
+		int32 PlateId = INDEX_NONE;
+		FVector3d UnitPosition = FVector3d::UnitZ();
+		double DistanceKm = 0.0;
+		double EdgeT = 0.0;
+		double ContinentalFraction = 0.0;
+	};
+
 	struct FCarrierLabCrustFields
 	{
 		double Elevation = 0.0;
@@ -1860,6 +1880,227 @@ namespace
 			ConsiderPoint(PointIndex);
 		}
 		return OutQ1.PlateId != INDEX_NONE && OutQ2.PlateId != INDEX_NONE;
+	}
+
+	double UnitAngularDistanceRadians(const FVector3d& A, const FVector3d& B)
+	{
+		return FMath::Acos(FMath::Clamp(FVector3d::DotProduct(A, B), -1.0, 1.0));
+	}
+
+	bool IsOnMinorArc(const FVector3d& A, const FVector3d& B, const FVector3d& Candidate, const double EdgeAngle)
+	{
+		if (EdgeAngle <= 1.0e-12)
+		{
+			return false;
+		}
+		const double CandidateAngle =
+			UnitAngularDistanceRadians(A, Candidate) +
+			UnitAngularDistanceRadians(Candidate, B);
+		return FMath::Abs(CandidateAngle - EdgeAngle) <= 1.0e-7;
+	}
+
+	bool ComputeClosestContinuousBoundaryCandidate(
+		const FCarrierLabContinuousBoundaryEdge& Edge,
+		const FVector3d& SamplePosition,
+		FCarrierLabContinuousBoundaryCandidate& OutCandidate)
+	{
+		if (Edge.PlateId == INDEX_NONE)
+		{
+			return false;
+		}
+
+		const FVector3d A = NormalizeOrFallback(Edge.StartUnitPosition, FVector3d::UnitX());
+		const FVector3d B = NormalizeOrFallback(Edge.EndUnitPosition, FVector3d::UnitY());
+		const FVector3d P = NormalizeOrFallback(SamplePosition, FVector3d::UnitZ());
+		const double EdgeAngle = UnitAngularDistanceRadians(A, B);
+		if (EdgeAngle <= 1.0e-12)
+		{
+			OutCandidate.EdgeId = Edge.EdgeId;
+			OutCandidate.PlateId = Edge.PlateId;
+			OutCandidate.UnitPosition = A;
+			OutCandidate.DistanceKm = EarthRadiusKm * UnitAngularDistanceRadians(P, A);
+			OutCandidate.EdgeT = 0.0;
+			OutCandidate.ContinentalFraction = FMath::Clamp(Edge.StartContinentalFraction, 0.0, 1.0);
+			return true;
+		}
+
+		const FVector3d EdgeNormal = FVector3d::CrossProduct(A, B);
+		const double EdgeNormalSize = EdgeNormal.Size();
+		FVector3d Closest = A;
+		double EdgeT = 0.0;
+		if (EdgeNormalSize > UE_DOUBLE_SMALL_NUMBER)
+		{
+			const FVector3d UnitNormal = EdgeNormal / EdgeNormalSize;
+			const FVector3d Projected = P - FVector3d::DotProduct(P, UnitNormal) * UnitNormal;
+			FVector3d ProjectedUnit = NormalizeOrFallback(Projected, A);
+			if (FVector3d::DotProduct(ProjectedUnit, P) < FVector3d::DotProduct(-ProjectedUnit, P))
+			{
+				ProjectedUnit = -ProjectedUnit;
+			}
+
+			if (IsOnMinorArc(A, B, ProjectedUnit, EdgeAngle))
+			{
+				Closest = ProjectedUnit;
+				EdgeT = FMath::Clamp(UnitAngularDistanceRadians(A, Closest) / EdgeAngle, 0.0, 1.0);
+			}
+			else
+			{
+				const double DotA = FVector3d::DotProduct(P, A);
+				const double DotB = FVector3d::DotProduct(P, B);
+				if (DotB > DotA)
+				{
+					Closest = B;
+					EdgeT = 1.0;
+				}
+			}
+		}
+
+		OutCandidate.EdgeId = Edge.EdgeId;
+		OutCandidate.PlateId = Edge.PlateId;
+		OutCandidate.UnitPosition = NormalizeOrFallback(Closest, A);
+		OutCandidate.DistanceKm = EarthRadiusKm * UnitAngularDistanceRadians(P, OutCandidate.UnitPosition);
+		OutCandidate.EdgeT = EdgeT;
+		OutCandidate.ContinentalFraction = FMath::Clamp(
+			FMath::Lerp(Edge.StartContinentalFraction, Edge.EndContinentalFraction, EdgeT),
+			0.0,
+			1.0);
+		return true;
+	}
+
+	bool IsBetterContinuousBoundaryCandidate(
+		const FCarrierLabContinuousBoundaryCandidate& Candidate,
+		const FCarrierLabContinuousBoundaryCandidate& Best)
+	{
+		if (Best.PlateId == INDEX_NONE)
+		{
+			return true;
+		}
+		if (Candidate.DistanceKm < Best.DistanceKm - 1.0e-9)
+		{
+			return true;
+		}
+		if (!FMath::IsNearlyEqual(Candidate.DistanceKm, Best.DistanceKm, 1.0e-9))
+		{
+			return false;
+		}
+		if (Candidate.PlateId != Best.PlateId)
+		{
+			return Candidate.PlateId < Best.PlateId;
+		}
+		return Candidate.EdgeId < Best.EdgeId;
+	}
+
+	bool QueryContinuousBoundaryPair(
+		const TArray<FCarrierLabContinuousBoundaryEdge>& Edges,
+		const FVector3d& SamplePosition,
+		FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit)
+	{
+		OutAudit = FCarrierLabPhaseIIIE2BoundaryQueryAudit();
+		OutAudit.SampleUnitPosition = NormalizeOrFallback(SamplePosition, FVector3d::UnitZ());
+		OutAudit.BoundaryEdgeCount = Edges.Num();
+
+		TSet<int32> DistinctPlates;
+		TArray<FCarrierLabContinuousBoundaryCandidate> Candidates;
+		Candidates.Reserve(Edges.Num());
+		for (const FCarrierLabContinuousBoundaryEdge& Edge : Edges)
+		{
+			if (Edge.PlateId == INDEX_NONE)
+			{
+				continue;
+			}
+			DistinctPlates.Add(Edge.PlateId);
+			FCarrierLabContinuousBoundaryCandidate Candidate;
+			if (ComputeClosestContinuousBoundaryCandidate(Edge, OutAudit.SampleUnitPosition, Candidate))
+			{
+				Candidates.Add(Candidate);
+			}
+		}
+		OutAudit.DistinctPlateCount = DistinctPlates.Num();
+
+		FCarrierLabContinuousBoundaryCandidate Q1;
+		for (const FCarrierLabContinuousBoundaryCandidate& Candidate : Candidates)
+		{
+			if (IsBetterContinuousBoundaryCandidate(Candidate, Q1))
+			{
+				Q1 = Candidate;
+			}
+		}
+		if (Q1.PlateId == INDEX_NONE)
+		{
+			return false;
+		}
+
+		FCarrierLabContinuousBoundaryCandidate Q2;
+		for (const FCarrierLabContinuousBoundaryCandidate& Candidate : Candidates)
+		{
+			if (Candidate.PlateId == Q1.PlateId)
+			{
+				continue;
+			}
+			if (IsBetterContinuousBoundaryCandidate(Candidate, Q2))
+			{
+				Q2 = Candidate;
+			}
+		}
+		if (Q2.PlateId == INDEX_NONE)
+		{
+			return false;
+		}
+
+		const FVector3d QGammaInput = Q1.UnitPosition + Q2.UnitPosition;
+		OutAudit.bFound = true;
+		OutAudit.Q1PlateId = Q1.PlateId;
+		OutAudit.Q2PlateId = Q2.PlateId;
+		OutAudit.Q1EdgeId = Q1.EdgeId;
+		OutAudit.Q2EdgeId = Q2.EdgeId;
+		OutAudit.Q1DistanceKm = Q1.DistanceKm;
+		OutAudit.Q2DistanceKm = Q2.DistanceKm;
+		OutAudit.Q1EdgeT = Q1.EdgeT;
+		OutAudit.Q2EdgeT = Q2.EdgeT;
+		OutAudit.Q1ContinentalFraction = Q1.ContinentalFraction;
+		OutAudit.Q2ContinentalFraction = Q2.ContinentalFraction;
+		OutAudit.Q1UnitPosition = Q1.UnitPosition;
+		OutAudit.Q2UnitPosition = Q2.UnitPosition;
+		OutAudit.QGammaInputNorm = QGammaInput.Size();
+		OutAudit.QGammaUnitPosition = NormalizeOrFallback(QGammaInput, OutAudit.SampleUnitPosition);
+		OutAudit.QGammaUnitResidual = FMath::Abs(OutAudit.QGammaUnitPosition.Size() - 1.0);
+		return true;
+	}
+
+	TArray<FCarrierLabContinuousBoundaryEdge> BuildContinuousBoundaryEdges(const CarrierLab::FCarrierState& State)
+	{
+		TArray<FCarrierLabContinuousBoundaryEdge> Edges;
+		int32 EdgeId = 0;
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			for (const CarrierLab::FCarrierPlateTriangle& Triangle : Plate.LocalTriangles)
+			{
+				if (!Plate.Vertices.IsValidIndex(Triangle.A) || !Plate.Vertices.IsValidIndex(Triangle.B) || !Plate.Vertices.IsValidIndex(Triangle.C))
+				{
+					continue;
+				}
+				const int32 Vertices[3] = {Triangle.A, Triangle.B, Triangle.C};
+				for (int32 EdgeIndex = 0; EdgeIndex < 3; ++EdgeIndex)
+				{
+					const CarrierLab::FCarrierVertex& A = Plate.Vertices[Vertices[EdgeIndex]];
+					const CarrierLab::FCarrierVertex& B = Plate.Vertices[Vertices[(EdgeIndex + 1) % 3]];
+					if (State.Samples.IsValidIndex(A.GlobalSampleId) &&
+						State.Samples.IsValidIndex(B.GlobalSampleId) &&
+						State.Samples[A.GlobalSampleId].PlateId != State.Samples[B.GlobalSampleId].PlateId)
+					{
+						FCarrierLabContinuousBoundaryEdge Edge;
+						Edge.EdgeId = EdgeId++;
+						Edge.PlateId = Plate.PlateId;
+						Edge.StartUnitPosition = A.UnitPosition;
+						Edge.EndUnitPosition = B.UnitPosition;
+						Edge.StartContinentalFraction = A.ContinentalFraction;
+						Edge.EndContinentalFraction = B.ContinentalFraction;
+						Edges.Add(Edge);
+					}
+				}
+			}
+		}
+		return Edges;
 	}
 
 	double SignedPairSeparationVelocityForPlatePair(
@@ -4012,6 +4253,41 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIA4FieldAuditForSamples(
 		? PositiveElevationSum / static_cast<double>(PositiveElevationCount)
 		: 0.0;
 	return true;
+}
+
+bool ACarrierLabVisualizationActor::QueryPhaseIIIE2ContinuousBoundaryPairForTest(
+	const FVector3d& SamplePosition,
+	const TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe>& BoundaryEdges,
+	FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const
+{
+	TArray<FCarrierLabContinuousBoundaryEdge> Edges;
+	Edges.Reserve(BoundaryEdges.Num());
+	for (int32 EdgeIndex = 0; EdgeIndex < BoundaryEdges.Num(); ++EdgeIndex)
+	{
+		const FCarrierLabPhaseIIIE2BoundaryEdgeProbe& Probe = BoundaryEdges[EdgeIndex];
+		FCarrierLabContinuousBoundaryEdge Edge;
+		Edge.EdgeId = EdgeIndex;
+		Edge.PlateId = Probe.PlateId;
+		Edge.StartUnitPosition = Probe.StartUnitPosition;
+		Edge.EndUnitPosition = Probe.EndUnitPosition;
+		Edge.StartContinentalFraction = Probe.StartContinentalFraction;
+		Edge.EndContinentalFraction = Probe.EndContinentalFraction;
+		Edges.Add(Edge);
+	}
+	return QueryContinuousBoundaryPair(Edges, SamplePosition, OutAudit);
+}
+
+bool ACarrierLabVisualizationActor::QueryPhaseIIIE2ContinuousBoundaryPairFromCurrentStateForTest(
+	const FVector3d& SamplePosition,
+	FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const
+{
+	if (!bInitialized)
+	{
+		OutAudit = FCarrierLabPhaseIIIE2BoundaryQueryAudit();
+		return false;
+	}
+	const TArray<FCarrierLabContinuousBoundaryEdge> Edges = BuildContinuousBoundaryEdges(State);
+	return QueryContinuousBoundaryPair(Edges, SamplePosition, OutAudit);
 }
 
 bool ACarrierLabVisualizationActor::GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const

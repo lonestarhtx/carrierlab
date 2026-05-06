@@ -589,6 +589,38 @@ struct FCarrierLabPhaseIIIA4SeedMetrics
 	double SeedOceanicAge = 64.0;
 };
 
+struct FCarrierLabPhaseIIIE2BoundaryEdgeProbe
+{
+	int32 PlateId = INDEX_NONE;
+	FVector3d StartUnitPosition = FVector3d::UnitX();
+	FVector3d EndUnitPosition = FVector3d::UnitY();
+	double StartContinentalFraction = 0.0;
+	double EndContinentalFraction = 0.0;
+};
+
+struct FCarrierLabPhaseIIIE2BoundaryQueryAudit
+{
+	bool bFound = false;
+	int32 BoundaryEdgeCount = 0;
+	int32 DistinctPlateCount = 0;
+	int32 Q1PlateId = INDEX_NONE;
+	int32 Q2PlateId = INDEX_NONE;
+	int32 Q1EdgeId = INDEX_NONE;
+	int32 Q2EdgeId = INDEX_NONE;
+	double Q1DistanceKm = 0.0;
+	double Q2DistanceKm = 0.0;
+	double Q1EdgeT = 0.0;
+	double Q2EdgeT = 0.0;
+	double Q1ContinentalFraction = 0.0;
+	double Q2ContinentalFraction = 0.0;
+	double QGammaInputNorm = 0.0;
+	double QGammaUnitResidual = 0.0;
+	FVector3d SampleUnitPosition = FVector3d::UnitZ();
+	FVector3d Q1UnitPosition = FVector3d::UnitZ();
+	FVector3d Q2UnitPosition = FVector3d::UnitZ();
+	FVector3d QGammaUnitPosition = FVector3d::UnitZ();
+};
+
 struct FCarrierLabPhaseIIIB1TrackingAudit
 {
 	int32 Step = 0;
@@ -1738,6 +1770,13 @@ public:
 		const TArray<int32>& SampleIds,
 		double SeedElevation,
 		FCarrierLabPhaseIIIA4FieldAudit& OutAudit) const;
+	bool QueryPhaseIIIE2ContinuousBoundaryPairForTest(
+		const FVector3d& SamplePosition,
+		const TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe>& BoundaryEdges,
+		FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const;
+	bool QueryPhaseIIIE2ContinuousBoundaryPairFromCurrentStateForTest(
+		const FVector3d& SamplePosition,
+		FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const;
 	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
