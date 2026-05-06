@@ -4498,6 +4498,29 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE2ContinuousBoundaryPairForTest
 	return QueryContinuousBoundaryPair(Edges, SamplePosition, OutAudit);
 }
 
+bool ACarrierLabVisualizationActor::BuildPhaseIIIE2BoundaryEdgesFromCurrentStateForTest(
+	TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe>& OutBoundaryEdges) const
+{
+	OutBoundaryEdges.Reset();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	const TArray<FCarrierLabContinuousBoundaryEdge> Edges = BuildContinuousBoundaryEdges(State);
+	OutBoundaryEdges.Reserve(Edges.Num());
+	for (const FCarrierLabContinuousBoundaryEdge& Edge : Edges)
+	{
+		FCarrierLabPhaseIIIE2BoundaryEdgeProbe& Probe = OutBoundaryEdges.AddDefaulted_GetRef();
+		Probe.PlateId = Edge.PlateId;
+		Probe.StartUnitPosition = Edge.StartUnitPosition;
+		Probe.EndUnitPosition = Edge.EndUnitPosition;
+		Probe.StartContinentalFraction = Edge.StartContinentalFraction;
+		Probe.EndContinentalFraction = Edge.EndContinentalFraction;
+	}
+	return !OutBoundaryEdges.IsEmpty();
+}
+
 bool ACarrierLabVisualizationActor::QueryPhaseIIIE2ContinuousBoundaryPairFromCurrentStateForTest(
 	const FVector3d& SamplePosition,
 	FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const

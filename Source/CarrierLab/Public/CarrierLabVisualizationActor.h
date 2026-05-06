@@ -1859,6 +1859,8 @@ public:
 		const FVector3d& SamplePosition,
 		const TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe>& BoundaryEdges,
 		FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const;
+	bool BuildPhaseIIIE2BoundaryEdgesFromCurrentStateForTest(
+		TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe>& OutBoundaryEdges) const;
 	bool QueryPhaseIIIE2ContinuousBoundaryPairFromCurrentStateForTest(
 		const FVector3d& SamplePosition,
 		FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const;

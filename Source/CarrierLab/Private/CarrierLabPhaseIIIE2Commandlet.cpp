@@ -181,6 +181,7 @@ namespace
 		double ExpectedQ2EdgeT = 0.0;
 		FVector3d ExpectedQ1 = FVector3d::UnitX();
 		FVector3d ExpectedQ2 = FVector3d::UnitY();
+		bool bExpectDegenerateQGamma = false;
 	};
 
 	struct FFixtureResult
@@ -197,9 +198,26 @@ namespace
 		double Q2DistanceResidualKm = 0.0;
 		double Q1EdgeTResidual = 0.0;
 		double Q2EdgeTResidual = 0.0;
+		double QGammaInputNormResidual = 0.0;
 		double DiscreteQ1ExtraDistanceKm = 0.0;
 		FString AuditHash;
 		FCarrierLabPhaseIIIE2BoundaryQueryAudit Audit;
+	};
+
+	struct FStatePathResult
+	{
+		bool bBuiltEdges = false;
+		bool bExplicitReturned = false;
+		bool bStateReturned = false;
+		bool bPass = false;
+		int32 BoundaryEdgeCount = 0;
+		double Q1VectorResidual = 0.0;
+		double Q2VectorResidual = 0.0;
+		double QGammaVectorResidual = 0.0;
+		FString ExplicitHash;
+		FString StateHash;
+		FCarrierLabPhaseIIIE2BoundaryQueryAudit ExplicitAudit;
+		FCarrierLabPhaseIIIE2BoundaryQueryAudit StateAudit;
 	};
 
 	void AddEdge(
@@ -244,6 +262,7 @@ namespace
 		HashMixDouble(Hash, Audit.QGammaUnitPosition.X);
 		HashMixDouble(Hash, Audit.QGammaUnitPosition.Y);
 		HashMixDouble(Hash, Audit.QGammaUnitPosition.Z);
+		HashMixDouble(Hash, Audit.QGammaInputNorm);
 		HashMixDouble(Hash, Audit.QGammaUnitResidual);
 		return HashToString(Hash);
 	}
@@ -331,6 +350,9 @@ namespace
 		OutResult.Q2DistanceResidualKm = FMath::Abs(OutResult.Audit.Q2DistanceKm - DistanceKm(Fixture.Sample, Fixture.ExpectedQ2));
 		OutResult.Q1EdgeTResidual = FMath::Abs(OutResult.Audit.Q1EdgeT - Fixture.ExpectedQ1EdgeT);
 		OutResult.Q2EdgeTResidual = FMath::Abs(OutResult.Audit.Q2EdgeT - Fixture.ExpectedQ2EdgeT);
+		OutResult.QGammaInputNormResidual = Fixture.bExpectDegenerateQGamma
+			? OutResult.Audit.QGammaInputNorm
+			: FMath::Abs(OutResult.Audit.QGammaInputNorm - (Fixture.ExpectedQ1 + Fixture.ExpectedQ2).Size());
 
 		FDiscreteBoundaryPoint DiscreteQ1;
 		double DiscreteQ1DistanceKm = 0.0;
@@ -354,14 +376,58 @@ namespace
 			OutResult.Q2DistanceResidualKm <= DistanceToleranceKm &&
 			OutResult.Q1EdgeTResidual <= EdgeTTolerance &&
 			OutResult.Q2EdgeTResidual <= EdgeTTolerance &&
+			(!Fixture.bExpectDegenerateQGamma || OutResult.Audit.QGammaInputNorm <= VectorTolerance) &&
 			OutResult.Audit.QGammaUnitResidual <= VectorTolerance;
+		return OutResult.bPass;
+	}
+
+	bool RunStatePathFixture(ACarrierLabVisualizationActor& Actor, FStatePathResult& OutResult)
+	{
+		OutResult = FStatePathResult();
+		Actor.SampleCount = 512;
+		Actor.PlateCount = 4;
+		Actor.Seed = 42;
+		Actor.ContinentalPlateFraction = 0.50;
+		if (!Actor.InitializeCarrier())
+		{
+			return false;
+		}
+
+		TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe> CurrentStateEdges;
+		OutResult.bBuiltEdges = Actor.BuildPhaseIIIE2BoundaryEdgesFromCurrentStateForTest(CurrentStateEdges);
+		OutResult.BoundaryEdgeCount = CurrentStateEdges.Num();
+		const FVector3d Sample = UnitFromLonLat(10.0, 10.0);
+		OutResult.bExplicitReturned = Actor.QueryPhaseIIIE2ContinuousBoundaryPairForTest(Sample, CurrentStateEdges, OutResult.ExplicitAudit);
+		OutResult.bStateReturned = Actor.QueryPhaseIIIE2ContinuousBoundaryPairFromCurrentStateForTest(Sample, OutResult.StateAudit);
+		OutResult.ExplicitHash = ComputeAuditHash(OutResult.ExplicitAudit);
+		OutResult.StateHash = ComputeAuditHash(OutResult.StateAudit);
+		OutResult.Q1VectorResidual = (OutResult.ExplicitAudit.Q1UnitPosition - OutResult.StateAudit.Q1UnitPosition).Size();
+		OutResult.Q2VectorResidual = (OutResult.ExplicitAudit.Q2UnitPosition - OutResult.StateAudit.Q2UnitPosition).Size();
+		OutResult.QGammaVectorResidual = (OutResult.ExplicitAudit.QGammaUnitPosition - OutResult.StateAudit.QGammaUnitPosition).Size();
+		OutResult.bPass =
+			OutResult.bBuiltEdges &&
+			OutResult.BoundaryEdgeCount > 0 &&
+			OutResult.bExplicitReturned &&
+			OutResult.bStateReturned &&
+			OutResult.ExplicitAudit.bFound &&
+			OutResult.StateAudit.bFound &&
+			OutResult.ExplicitAudit.DistinctPlateCount >= 2 &&
+			OutResult.StateAudit.DistinctPlateCount >= 2 &&
+			OutResult.ExplicitAudit.Q1PlateId == OutResult.StateAudit.Q1PlateId &&
+			OutResult.ExplicitAudit.Q2PlateId == OutResult.StateAudit.Q2PlateId &&
+			OutResult.ExplicitAudit.Q1EdgeId == OutResult.StateAudit.Q1EdgeId &&
+			OutResult.ExplicitAudit.Q2EdgeId == OutResult.StateAudit.Q2EdgeId &&
+			OutResult.Q1VectorResidual <= VectorTolerance &&
+			OutResult.Q2VectorResidual <= VectorTolerance &&
+			OutResult.QGammaVectorResidual <= VectorTolerance &&
+			OutResult.ExplicitHash == OutResult.StateHash;
 		return OutResult.bPass;
 	}
 
 	FString BuildJsonLine(const FFixtureResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"purpose\":%s,\"pass\":%s,\"query_returned\":%s,\"found\":%s,\"seconds\":%.9f,\"edge_count\":%d,\"distinct_plate_count\":%d,\"q1_plate\":%d,\"q2_plate\":%d,\"q1_edge\":%d,\"q2_edge\":%d,\"q1_distance_km\":%.12f,\"q2_distance_km\":%.12f,\"q1_t\":%.12f,\"q2_t\":%.12f,\"qgamma_residual\":%.12g,\"q1_vector_residual\":%.12g,\"q2_vector_residual\":%.12g,\"qgamma_vector_residual\":%.12g,\"discrete_q1_extra_distance_km\":%.12f,\"audit_hash\":%s}"),
+			TEXT("{\"fixture\":%s,\"purpose\":%s,\"pass\":%s,\"query_returned\":%s,\"found\":%s,\"seconds\":%.9f,\"edge_count\":%d,\"distinct_plate_count\":%d,\"q1_plate\":%d,\"q2_plate\":%d,\"q1_edge\":%d,\"q2_edge\":%d,\"q1_distance_km\":%.12f,\"q2_distance_km\":%.12f,\"q1_t\":%.12f,\"q2_t\":%.12f,\"qgamma_input_norm\":%.12g,\"qgamma_residual\":%.12g,\"q1_vector_residual\":%.12g,\"q2_vector_residual\":%.12g,\"qgamma_vector_residual\":%.12g,\"discrete_q1_extra_distance_km\":%.12f,\"audit_hash\":%s}"),
 			*JsonString(Result.Name),
 			*JsonString(Result.Purpose),
 			Result.bPass ? TEXT("true") : TEXT("false"),
@@ -378,6 +444,7 @@ namespace
 			Result.Audit.Q2DistanceKm,
 			Result.Audit.Q1EdgeT,
 			Result.Audit.Q2EdgeT,
+			Result.Audit.QGammaInputNorm,
 			Result.Audit.QGammaUnitResidual,
 			Result.Q1VectorResidual,
 			Result.Q2VectorResidual,
@@ -386,11 +453,30 @@ namespace
 			*JsonString(Result.AuditHash));
 	}
 
+	FString BuildStatePathJsonLine(const FStatePathResult& Result)
+	{
+		return FString::Printf(
+			TEXT("{\"fixture\":\"actor-state boundary path\",\"pass\":%s,\"built_edges\":%s,\"explicit_returned\":%s,\"state_returned\":%s,\"edge_count\":%d,\"q1_plate\":%d,\"q2_plate\":%d,\"q1_vector_residual\":%.12g,\"q2_vector_residual\":%.12g,\"qgamma_vector_residual\":%.12g,\"explicit_hash\":%s,\"state_hash\":%s}"),
+			Result.bPass ? TEXT("true") : TEXT("false"),
+			Result.bBuiltEdges ? TEXT("true") : TEXT("false"),
+			Result.bExplicitReturned ? TEXT("true") : TEXT("false"),
+			Result.bStateReturned ? TEXT("true") : TEXT("false"),
+			Result.BoundaryEdgeCount,
+			Result.StateAudit.Q1PlateId,
+			Result.StateAudit.Q2PlateId,
+			Result.Q1VectorResidual,
+			Result.Q2VectorResidual,
+			Result.QGammaVectorResidual,
+			*JsonString(Result.ExplicitHash),
+			*JsonString(Result.StateHash));
+	}
+
 	FString BuildReport(
 		const TArray<FFixtureResult>& Results,
 		const bool bReplayPass,
 		const FString& ReplayHashA,
 		const FString& ReplayHashB,
+		const FStatePathResult& StatePath,
 		const FString& MetricsPath)
 	{
 		bool bFixturePass = true;
@@ -398,7 +484,7 @@ namespace
 		{
 			bFixturePass = bFixturePass && Result.bPass;
 		}
-		const bool bPass = bFixturePass && bReplayPass;
+		const bool bPass = bFixturePass && bReplayPass && StatePath.bPass;
 
 		FString Report;
 		Report += TEXT("# Phase IIIE.2 Continuous q1/q2/qGamma Contract\n\n");
@@ -409,8 +495,11 @@ namespace
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- Primary IIIE gap-fill provenance now has a continuous closest-point-on-boundary-edge query surface for q1 and q2, with q2 required to come from a different plate than q1.\n");
 		Report += TEXT("- qGamma is computed as the normalized spherical midpoint provenance `normalize(q1 + q2)`.\n");
+		Report += TEXT("- Degenerate qGamma input is observable through `QGammaInputNorm`; the query falls back to the sample direction only when q1 + q2 has zero usable length.\n");
+		Report += TEXT("- Exact equal-distance q1 ties use deterministic `(plate id, edge id)` ordering as a named lab convention for stable diagnostics; this is not an ownership or remesh-winner rule.\n");
 		Report += TEXT("- Endpoint/midpoint boundary sampling remains diagnostic-only in this checkpoint; it is not used by the primary IIIE.2 query.\n");
 		Report += TEXT("- The Stage 1.5 resampling path remains lab-policy code and is not promoted into primary Phase IIIE remesh.\n\n");
+		Report += TEXT("- IIIB independent-signature regression is intentionally absent here because IIIE.2 is state-free provenance math; it returns in IIIE.3 when the slice consumes plate-local BVHs and process state.\n\n");
 
 		Report += TEXT("## Gates\n\n");
 		Report += TEXT("| Gate | Result | Evidence |\n");
@@ -418,7 +507,7 @@ namespace
 		for (const FFixtureResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %s | q1 plate/edge `%d/%d`, q2 plate/edge `%d/%d`, q1 residual `%.3g`, q2 residual `%.3g`, qGamma residual `%.3g`, qGamma unit residual `%.3g`, hash `%s`. |\n"),
+				TEXT("| %s | %s | q1 plate/edge `%d/%d`, q2 plate/edge `%d/%d`, q1 residual `%.3g`, q2 residual `%.3g`, qGamma residual `%.3g`, qGamma input norm `%.3g`, qGamma unit residual `%.3g`, hash `%s`. |\n"),
 				*Result.Name,
 				*PassFail(Result.bPass),
 				Result.Audit.Q1PlateId,
@@ -428,9 +517,19 @@ namespace
 				Result.Q1VectorResidual,
 				Result.Q2VectorResidual,
 				Result.QGammaVectorResidual,
+				Result.Audit.QGammaInputNorm,
 				Result.Audit.QGammaUnitResidual,
 				*Result.AuditHash);
 		}
+		Report += FString::Printf(
+			TEXT("| Actor-state boundary path | %s | built `%d` current-state boundary edges; explicit hash `%s`, state hash `%s`, q1/q2/qGamma residuals `%.3g` / `%.3g` / `%.3g`. |\n"),
+			*PassFail(StatePath.bPass),
+			StatePath.BoundaryEdgeCount,
+			*StatePath.ExplicitHash,
+			*StatePath.StateHash,
+			StatePath.Q1VectorResidual,
+			StatePath.Q2VectorResidual,
+			StatePath.QGammaVectorResidual);
 		Report += FString::Printf(
 			TEXT("| Same-seed provenance replay | %s | Replay hashes `%s` and `%s`. |\n"),
 			*PassFail(bReplayPass),
@@ -455,7 +554,7 @@ namespace
 		Report += TEXT("\n## Stop Conditions\n\n");
 		Report += TEXT("- Hold IIIE.3 if any primary query result uses an endpoint/midpoint approximation as authority.\n");
 		Report += TEXT("- Hold IIIE.3 if q2 can come from the same plate as q1.\n");
-		Report += TEXT("- Hold IIIE.3 if zero two-plate boundary candidates trigger prior-owner fallback, centroid/random/synthetic ownership, recovery, repair, retention, hysteresis, or anchoring.\n");
+		Report += TEXT("- Hold IIIE.3 if zero two-plate boundary candidates trigger any IIIE.1-forbidden remesh winner, recovery, or ownership-retention policy.\n");
 		Report += TEXT("- Hold IIIE.3 if qGamma is not a normalized spherical midpoint of q1 and q2.\n\n");
 
 		Report += TEXT("## Next Slice Boundary\n\n");
@@ -523,6 +622,45 @@ namespace
 		return Fixture;
 	}
 
+	FFixtureSpec MakeDegenerateQGammaFixture()
+	{
+		FFixtureSpec Fixture;
+		Fixture.Name = TEXT("degenerate qGamma fallback is observable");
+		Fixture.Purpose = TEXT("antipodal q1/q2 provenance records near-zero qGamma input norm and falls back to the sample direction");
+		Fixture.Sample = UnitFromLonLat(0.0, 0.0);
+		AddEdge(Fixture, 0, 0.0, 0.0, 0.0, 0.0);
+		AddEdge(Fixture, 1, 180.0, 0.0, 180.0, 0.0);
+		Fixture.ExpectedQ1PlateId = 0;
+		Fixture.ExpectedQ2PlateId = 1;
+		Fixture.ExpectedQ1EdgeId = 0;
+		Fixture.ExpectedQ2EdgeId = 1;
+		Fixture.ExpectedQ1EdgeT = 0.0;
+		Fixture.ExpectedQ2EdgeT = 0.0;
+		Fixture.ExpectedQ1 = UnitFromLonLat(0.0, 0.0);
+		Fixture.ExpectedQ2 = UnitFromLonLat(180.0, 0.0);
+		Fixture.bExpectDegenerateQGamma = true;
+		return Fixture;
+	}
+
+	FFixtureSpec MakeTieBreakFixture()
+	{
+		FFixtureSpec Fixture;
+		Fixture.Name = TEXT("deterministic equal-distance tie convention");
+		Fixture.Purpose = TEXT("exact q1 ties are stable by plate id then edge id, and are recorded as a diagnostic convention rather than ownership authority");
+		Fixture.Sample = UnitFromLonLat(0.0, 0.0);
+		AddEdge(Fixture, 1, 20.0, 0.0, 20.0, 0.0);
+		AddEdge(Fixture, 0, 20.0, 0.0, 20.0, 0.0);
+		Fixture.ExpectedQ1PlateId = 0;
+		Fixture.ExpectedQ2PlateId = 1;
+		Fixture.ExpectedQ1EdgeId = 1;
+		Fixture.ExpectedQ2EdgeId = 0;
+		Fixture.ExpectedQ1EdgeT = 0.0;
+		Fixture.ExpectedQ2EdgeT = 0.0;
+		Fixture.ExpectedQ1 = UnitFromLonLat(20.0, 0.0);
+		Fixture.ExpectedQ2 = UnitFromLonLat(20.0, 0.0);
+		return Fixture;
+	}
+
 	FFixtureSpec MakeNoTwoPlateFixture()
 	{
 		FFixtureSpec Fixture;
@@ -563,6 +701,8 @@ int32 UCarrierLabPhaseIIIE2Commandlet::Main(const FString& Params)
 	Fixtures.Add(MakeInteriorFixture());
 	Fixtures.Add(MakeEndpointFixture());
 	Fixtures.Add(MakeDifferentPlateFixture());
+	Fixtures.Add(MakeDegenerateQGammaFixture());
+	Fixtures.Add(MakeTieBreakFixture());
 	Fixtures.Add(MakeNoTwoPlateFixture());
 
 	TArray<FFixtureResult> Results;
@@ -579,6 +719,9 @@ int32 UCarrierLabPhaseIIIE2Commandlet::Main(const FString& Params)
 	RunFixture(*Actor, MakeInteriorFixture(), ReplayA);
 	RunFixture(*Actor, MakeInteriorFixture(), ReplayB);
 	const bool bReplayPass = ReplayA.bPass && ReplayB.bPass && ReplayA.AuditHash == ReplayB.AuditHash;
+
+	FStatePathResult StatePath;
+	RunStatePathFixture(*Actor, StatePath);
 
 	Actor->Destroy();
 	CollectGarbage(RF_NoFlags);
@@ -601,14 +744,16 @@ int32 UCarrierLabPhaseIIIE2Commandlet::Main(const FString& Params)
 		bReplayPass ? TEXT("true") : TEXT("false"),
 		*JsonString(ReplayA.AuditHash),
 		*JsonString(ReplayB.AuditHash));
+	JsonLines += BuildStatePathJsonLine(StatePath);
+	JsonLines += TEXT("\n");
 
 	const FString ReportPath = GetReportPath(Params);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
-	const FString Report = BuildReport(Results, bReplayPass, ReplayA.AuditHash, ReplayB.AuditHash, MetricsPath);
+	const FString Report = BuildReport(Results, bReplayPass, ReplayA.AuditHash, ReplayB.AuditHash, StatePath, MetricsPath);
 	const bool bMetricsWritten = FFileHelper::SaveStringToFile(JsonLines, *MetricsPath);
 	const bool bReportWritten = FFileHelper::SaveStringToFile(Report, *ReportPath);
 
-	bool bPass = bReplayPass && bMetricsWritten && bReportWritten;
+	bool bPass = bReplayPass && StatePath.bPass && bMetricsWritten && bReportWritten;
 	for (const FFixtureResult& Result : Results)
 	{
 		bPass = bPass && Result.bPass;
