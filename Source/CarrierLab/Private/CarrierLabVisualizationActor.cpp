@@ -7052,20 +7052,27 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio)
 {
+	const double ApplyStartSeconds = FPlatformTime::Seconds();
 	++PhaseIIIDiagnosticCallCounts.UpliftApply;
 	if (!bInitialized && !InitializeCarrier())
 	{
+		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
 
+	const double InputPipelineStartSeconds = FPlatformTime::Seconds();
 	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
 	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
 	{
+		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
+		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
 	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
 	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
 	{
+		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
+		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
 	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
@@ -7076,6 +7083,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
+		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
 	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
@@ -7086,6 +7095,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
+		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
 	FCarrierLabPhaseIIID5SuturePlanAudit SutureAudit;
@@ -7095,9 +7106,14 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
+		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
+	PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
+
 	FCarrierLabPhaseIIID7CollisionUpliftAudit PlannedAudit;
+	const double UpliftPlanStartSeconds = FPlatformTime::Seconds();
 	if (!BuildPhaseIIID7CollisionUpliftFromPlans(
 		GroupingAudit,
 		SutureAudit,
@@ -7105,15 +7121,22 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7UpliftPlanSeconds += FPlatformTime::Seconds() - UpliftPlanStartSeconds;
+		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
-	return ApplyPhaseIIID7CollisionUpliftFromPlan(
+	PhaseIIIDiagnosticCallCounts.D7UpliftPlanSeconds += FPlatformTime::Seconds() - UpliftPlanStartSeconds;
+	PhaseIIIDiagnosticCallCounts.D7PlannedRecordCount += PlannedAudit.Records.Num();
+
+	const bool bApplied = ApplyPhaseIIID7CollisionUpliftFromPlan(
 		PlannedAudit,
 		SlabBreakAudit,
 		SutureAudit,
 		OutAudit,
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio);
+	PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
+	return bApplied;
 }
 
 bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUpliftFromPlan(
@@ -7124,14 +7147,18 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUpliftFromPlan(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio)
 {
+	const double ApplyFromPlanStartSeconds = FPlatformTime::Seconds();
 	OutAudit = PlannedAudit;
 	OutAudit.bPlannedOnly = false;
 	if (PlannedAudit.bNoUpliftAvailable || PlannedAudit.Records.IsEmpty())
 	{
+		++PhaseIIIDiagnosticCallCounts.D7NoUpliftAvailableCount;
+		PhaseIIIDiagnosticCallCounts.D7ApplyFromPlanSeconds += FPlatformTime::Seconds() - ApplyFromPlanStartSeconds;
 		return true;
 	}
 
 	FCarrierLabPhaseIIID6TopologyMutationAudit TopologyAudit;
+	const double TopologyStartSeconds = FPlatformTime::Seconds();
 	if (!ApplyPhaseIIID6DetachAndSutureFromPlans(
 		SlabBreakAudit,
 		SutureAudit,
@@ -7139,30 +7166,41 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUpliftFromPlan(
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7TopologyMutationSeconds += FPlatformTime::Seconds() - TopologyStartSeconds;
+		PhaseIIIDiagnosticCallCounts.D7ApplyFromPlanSeconds += FPlatformTime::Seconds() - ApplyFromPlanStartSeconds;
 		return false;
 	}
+	PhaseIIIDiagnosticCallCounts.D7TopologyMutationSeconds += FPlatformTime::Seconds() - TopologyStartSeconds;
 	OutAudit.TopologyAudit = TopologyAudit;
 	OutAudit.SourceTopologyMutationHash = TopologyAudit.TopologyMutationHash;
 	OutAudit.EventCountAfter = CurrentMetrics.EventCount;
 	OutAudit.ResetSerialAfter = State.ConvergenceTrackingResetSerial;
 	OutAudit.bTopologyMutationApplied = TopologyAudit.bMutationApplied && TopologyAudit.AppliedMutationCount == 1;
+	if (OutAudit.bTopologyMutationApplied)
+	{
+		++PhaseIIIDiagnosticCallCounts.D7TopologyMutationAppliedCount;
+	}
 
 	if (!OutAudit.bTopologyMutationApplied ||
 		TopologyAudit.Records.IsEmpty() ||
 		TopologyAudit.Records[0].SuturePlanHash != PlannedAudit.SourceSuturePlanHash)
 	{
 		++OutAudit.InvalidInputCount;
+		PhaseIIIDiagnosticCallCounts.D7ApplyFromPlanSeconds += FPlatformTime::Seconds() - ApplyFromPlanStartSeconds;
 		return true;
 	}
 
 	if (!State.Plates.IsValidIndex(TopologyAudit.Records[0].DestinationPlateId))
 	{
 		++OutAudit.InvalidInputCount;
+		PhaseIIIDiagnosticCallCounts.D7ApplyFromPlanSeconds += FPlatformTime::Seconds() - ApplyFromPlanStartSeconds;
 		return true;
 	}
 	CarrierLab::FCarrierPlate& DestinationPlate = State.Plates[TopologyAudit.Records[0].DestinationPlateId];
 	double AppliedDeltaSum = 0.0;
 	double MaxRecordResidual = 0.0;
+	int32 AppliedRecordCount = 0;
+	const double RecordApplyStartSeconds = FPlatformTime::Seconds();
 	for (FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : OutAudit.Records)
 	{
 		if (!DestinationPlate.Vertices.IsValidIndex(Record.DestinationLocalVertexId))
@@ -7180,21 +7218,27 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUpliftFromPlan(
 		Record.PreviousFoldMagnitude = PreviousFoldMagnitude;
 		Record.NewFoldMagnitude = Vertex.FoldDirection.Size();
 		Record.bApplied = true;
+		++AppliedRecordCount;
 		AppliedDeltaSum += Record.AppliedDeltaKm;
 		MaxRecordResidual = FMath::Max(
 			MaxRecordResidual,
 			FMath::Abs((Record.NewElevationKm - Record.PreviousElevationKm) - Record.AppliedDeltaKm));
 	}
+	PhaseIIIDiagnosticCallCounts.D7RecordApplySeconds += FPlatformTime::Seconds() - RecordApplyStartSeconds;
+	PhaseIIIDiagnosticCallCounts.D7AppliedRecordCount += AppliedRecordCount;
 
 	OutAudit.TotalAppliedDeltaKm = AppliedDeltaSum;
 	OutAudit.FormulaResidualKm = MaxRecordResidual;
 	OutAudit.bUpliftApplied = OutAudit.bTopologyMutationApplied && OutAudit.UpliftRecordCount > 0 && MaxRecordResidual <= 1.0e-9;
 	bProjectionRayMeshTopologyDirty = true;
 	bRenderMeshTopologyDirty = true;
+	const double ProjectionStartSeconds = FPlatformTime::Seconds();
 	ProjectCurrentCarrier();
+	PhaseIIIDiagnosticCallCounts.D7ProjectionRefreshSeconds += FPlatformTime::Seconds() - ProjectionStartSeconds;
 	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
 	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
 
+	const double HashStartSeconds = FPlatformTime::Seconds();
 	uint64 UpliftHash = 1469598103934665603ull;
 	HashMixString(UpliftHash, TEXT("CarrierLab-IIID7-collision-uplift-applied-v1"));
 	HashMixString(UpliftHash, PlannedAudit.UpliftHash);
@@ -7216,6 +7260,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUpliftFromPlan(
 		HashMix(UpliftHash, Record.bApplied ? 1ull : 0ull);
 	}
 	OutAudit.UpliftHash = HashToString(UpliftHash);
+	PhaseIIIDiagnosticCallCounts.D7ApplyHashSeconds += FPlatformTime::Seconds() - HashStartSeconds;
+	PhaseIIIDiagnosticCallCounts.D7ApplyFromPlanSeconds += FPlatformTime::Seconds() - ApplyFromPlanStartSeconds;
 	return true;
 }
 

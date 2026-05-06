@@ -184,6 +184,10 @@ namespace
 		Accumulator.D1ScannedOceanicTriangleCount += Value.D1ScannedOceanicTriangleCount;
 		Accumulator.D1InnerSeaTriangleCount += Value.D1InnerSeaTriangleCount;
 		Accumulator.D1RecordCount += Value.D1RecordCount;
+		Accumulator.D7PlannedRecordCount += Value.D7PlannedRecordCount;
+		Accumulator.D7AppliedRecordCount += Value.D7AppliedRecordCount;
+		Accumulator.D7TopologyMutationAppliedCount += Value.D7TopologyMutationAppliedCount;
+		Accumulator.D7NoUpliftAvailableCount += Value.D7NoUpliftAvailableCount;
 		Accumulator.D1DecisionIndexSeconds += Value.D1DecisionIndexSeconds;
 		Accumulator.D1HitSortSeconds += Value.D1HitSortSeconds;
 		Accumulator.D1HitClassificationSeconds += Value.D1HitClassificationSeconds;
@@ -191,6 +195,14 @@ namespace
 		Accumulator.D1InnerSeaScanSeconds += Value.D1InnerSeaScanSeconds;
 		Accumulator.D1RecordConstructionSeconds += Value.D1RecordConstructionSeconds;
 		Accumulator.D1AuditHashSeconds += Value.D1AuditHashSeconds;
+		Accumulator.D7ApplyTotalSeconds += Value.D7ApplyTotalSeconds;
+		Accumulator.D7InputPipelineSeconds += Value.D7InputPipelineSeconds;
+		Accumulator.D7UpliftPlanSeconds += Value.D7UpliftPlanSeconds;
+		Accumulator.D7ApplyFromPlanSeconds += Value.D7ApplyFromPlanSeconds;
+		Accumulator.D7TopologyMutationSeconds += Value.D7TopologyMutationSeconds;
+		Accumulator.D7RecordApplySeconds += Value.D7RecordApplySeconds;
+		Accumulator.D7ProjectionRefreshSeconds += Value.D7ProjectionRefreshSeconds;
+		Accumulator.D7ApplyHashSeconds += Value.D7ApplyHashSeconds;
 	}
 
 	FString FormatCallCounts(const FCarrierLabPhaseIIIDiagnosticCallCounts& Calls)
@@ -216,6 +228,13 @@ namespace
 			Calls.D1InnerSeaScanSeconds +
 			Calls.D1RecordConstructionSeconds +
 			Calls.D1AuditHashSeconds;
+	}
+
+	double D7MeasuredSubSplitSeconds(const FCarrierLabPhaseIIIDiagnosticCallCounts& Calls)
+	{
+		return Calls.D7InputPipelineSeconds +
+			Calls.D7UpliftPlanSeconds +
+			Calls.D7ApplyFromPlanSeconds;
 	}
 
 	FString GetOutputRoot(const FString& Params)
@@ -1080,6 +1099,24 @@ namespace
 				Result.CollisionCallCounts.D1ScannedOceanicTriangleCount,
 				Result.CollisionCallCounts.D1InnerSeaTriangleCount,
 				Result.CollisionCallCounts.D1RecordCount));
+			Lines.Add(FString::Printf(
+				TEXT("{\"kind\":\"iiid_d7_apply_split\",\"fixture\":%s,\"replay\":%d,\"calls\":%d,\"measured_total_seconds\":%.6f,\"measured_subsplit_seconds\":%.6f,\"input_pipeline_seconds\":%.6f,\"uplift_plan_seconds\":%.6f,\"apply_from_plan_seconds\":%.6f,\"topology_mutation_seconds\":%.6f,\"record_apply_seconds\":%.6f,\"projection_refresh_seconds\":%.6f,\"apply_hash_seconds\":%.6f,\"planned_records\":%d,\"applied_records\":%d,\"topology_mutations_applied\":%d,\"no_uplift_available\":%d}"),
+				*JsonString(Result.FixtureName),
+				Result.Replay,
+				Result.CollisionCallCounts.UpliftApply,
+				Result.CollisionCallCounts.D7ApplyTotalSeconds,
+				D7MeasuredSubSplitSeconds(Result.CollisionCallCounts),
+				Result.CollisionCallCounts.D7InputPipelineSeconds,
+				Result.CollisionCallCounts.D7UpliftPlanSeconds,
+				Result.CollisionCallCounts.D7ApplyFromPlanSeconds,
+				Result.CollisionCallCounts.D7TopologyMutationSeconds,
+				Result.CollisionCallCounts.D7RecordApplySeconds,
+				Result.CollisionCallCounts.D7ProjectionRefreshSeconds,
+				Result.CollisionCallCounts.D7ApplyHashSeconds,
+				Result.CollisionCallCounts.D7PlannedRecordCount,
+				Result.CollisionCallCounts.D7AppliedRecordCount,
+				Result.CollisionCallCounts.D7TopologyMutationAppliedCount,
+				Result.CollisionCallCounts.D7NoUpliftAvailableCount));
 		}
 	}
 
@@ -1309,6 +1346,59 @@ namespace
 		else
 		{
 			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
+		}
+
+		Report += TEXT("\n## D7 Apply Split\n\n");
+		Report += TEXT("| Fixture | Replay | D7 apply calls | Total seconds | Input pipeline | Uplift plan | Apply-from-plan | Topology mutation | Record apply | Projection refresh | Hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		auto AppendD7TimingRow = [&Report](const FPrimaryReplayResult& Result)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %d | %d | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f |\n"),
+				*Result.FixtureName,
+				Result.Replay,
+				Result.CollisionCallCounts.UpliftApply,
+				Result.CollisionCallCounts.D7ApplyTotalSeconds,
+				Result.CollisionCallCounts.D7InputPipelineSeconds,
+				Result.CollisionCallCounts.D7UpliftPlanSeconds,
+				Result.CollisionCallCounts.D7ApplyFromPlanSeconds,
+				Result.CollisionCallCounts.D7TopologyMutationSeconds,
+				Result.CollisionCallCounts.D7RecordApplySeconds,
+				Result.CollisionCallCounts.D7ProjectionRefreshSeconds,
+				Result.CollisionCallCounts.D7ApplyHashSeconds);
+		};
+		AppendD7TimingRow(ActiveA);
+		if (bActiveReplay1Requested)
+		{
+			AppendD7TimingRow(ActiveB);
+		}
+		else
+		{
+			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
+		}
+
+		Report += TEXT("\n## D7 Apply Counts\n\n");
+		Report += TEXT("| Fixture | Replay | Planned records | Applied records | Applied topology mutations | No-uplift attempts |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|\n");
+		auto AppendD7CountRow = [&Report](const FPrimaryReplayResult& Result)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %d | %d | %d | %d | %d |\n"),
+				*Result.FixtureName,
+				Result.Replay,
+				Result.CollisionCallCounts.D7PlannedRecordCount,
+				Result.CollisionCallCounts.D7AppliedRecordCount,
+				Result.CollisionCallCounts.D7TopologyMutationAppliedCount,
+				Result.CollisionCallCounts.D7NoUpliftAvailableCount);
+		};
+		AppendD7CountRow(ActiveA);
+		if (bActiveReplay1Requested)
+		{
+			AppendD7CountRow(ActiveB);
+		}
+		else
+		{
+			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP |\n");
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
