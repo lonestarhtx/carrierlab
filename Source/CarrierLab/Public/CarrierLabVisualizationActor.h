@@ -596,6 +596,8 @@ struct FCarrierLabPhaseIIIE2BoundaryEdgeProbe
 	FVector3d EndUnitPosition = FVector3d::UnitY();
 	double StartContinentalFraction = 0.0;
 	double EndContinentalFraction = 0.0;
+	double StartElevation = 0.0;
+	double EndElevation = 0.0;
 };
 
 struct FCarrierLabPhaseIIIE2BoundaryQueryAudit
@@ -613,6 +615,8 @@ struct FCarrierLabPhaseIIIE2BoundaryQueryAudit
 	double Q2EdgeT = 0.0;
 	double Q1ContinentalFraction = 0.0;
 	double Q2ContinentalFraction = 0.0;
+	double Q1Elevation = 0.0;
+	double Q2Elevation = 0.0;
 	double QGammaInputNorm = 0.0;
 	double QGammaUnitResidual = 0.0;
 	FVector3d SampleUnitPosition = FVector3d::UnitZ();
@@ -704,6 +708,45 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 PolicyWinnerCount = 0;
 	FString SelectionHash;
 	TArray<FCarrierLabPhaseIIIE3SelectionRecord> Records;
+};
+
+struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
+{
+	int32 SampleId = INDEX_NONE;
+	FVector3d SampleUnitPosition = FVector3d::UnitZ();
+	ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
+	bool bGeneratedOceanicCrust = false;
+	bool bRejectedNonDivergentRoute = false;
+	bool bRejectedUnresolvedMultiHit = false;
+	bool bBoundaryPairFound = false;
+	bool bNonSeparatingAnomaly = false;
+	bool bUsedPolicyWinner = false;
+	bool bUsedPriorOwnerFallback = false;
+	int32 Q1PlateId = INDEX_NONE;
+	int32 Q2PlateId = INDEX_NONE;
+	int32 Q1EdgeId = INDEX_NONE;
+	int32 Q2EdgeId = INDEX_NONE;
+	int32 AssignedPlateId = INDEX_NONE;
+	double SignedSeparationVelocity = 0.0;
+	double Q1DistanceKm = 0.0;
+	double Q2DistanceKm = 0.0;
+	double RidgeDistanceKm = 0.0;
+	double NearestBoundaryDistanceKm = 0.0;
+	double Alpha = 0.0;
+	double Q1Elevation = 0.0;
+	double Q2Elevation = 0.0;
+	double ZBarElevation = 0.0;
+	double ZGammaElevation = 0.0;
+	double Elevation = 0.0;
+	double OceanicAge = 0.0;
+	double RidgeDirectionMagnitude = 0.0;
+	double RidgeDirectionRadialDot = 0.0;
+	double QGammaInputNorm = 0.0;
+	double QGammaUnitResidual = 0.0;
+	FVector3d Q1UnitPosition = FVector3d::UnitZ();
+	FVector3d Q2UnitPosition = FVector3d::UnitZ();
+	FVector3d QGammaUnitPosition = FVector3d::UnitZ();
+	FVector3d RidgeDirection = FVector3d::ZeroVector;
 };
 
 struct FCarrierLabPhaseIIIB1TrackingAudit
@@ -1868,6 +1911,16 @@ public:
 		const FVector3d& SamplePosition,
 		const TArray<FCarrierLabPhaseIIIE3CandidateProbe>& CandidateProbes,
 		FCarrierLabPhaseIIIE3SelectionRecord& OutRecord) const;
+	bool QueryPhaseIIIE4DivergentOceanicFieldsForTest(
+		const FVector3d& SamplePosition,
+		ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass,
+		const TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe>& BoundaryEdges,
+		double SignedSeparationVelocity,
+		FCarrierLabPhaseIIIE4OceanicGenerationRecord& OutRecord) const;
+	bool QueryPhaseIIIE4DivergentOceanicFieldsFromCurrentStateForTest(
+		const FVector3d& SamplePosition,
+		ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass,
+		FCarrierLabPhaseIIIE4OceanicGenerationRecord& OutRecord) const;
 	bool RunPhaseIIIE3FilteredRemeshSelectionAudit(FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit);
 	bool RunPhaseIIIE3FilteredRemeshSelectionAuditForSamples(
 		const TArray<int32>& SampleIds,

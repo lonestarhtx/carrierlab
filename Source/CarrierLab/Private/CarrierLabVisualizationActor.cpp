@@ -39,6 +39,8 @@ namespace
 	constexpr int32 BoundaryLonBins = 72;
 	constexpr int32 BoundaryLatBins = 36;
 	constexpr int32 BoundarySearchRadiusBins = 2;
+	constexpr double PhaseIIIE4RidgePeakElevationKm = -1.0;
+	constexpr double PhaseIIIE4AbyssalElevationKm = -6.0;
 
 	struct FCarrierLabVizCandidate
 	{
@@ -70,6 +72,8 @@ namespace
 		FVector3d EndUnitPosition = FVector3d::UnitY();
 		double StartContinentalFraction = 0.0;
 		double EndContinentalFraction = 0.0;
+		double StartElevation = 0.0;
+		double EndElevation = 0.0;
 	};
 
 	struct FCarrierLabContinuousBoundaryCandidate
@@ -80,6 +84,7 @@ namespace
 		double DistanceKm = 0.0;
 		double EdgeT = 0.0;
 		double ContinentalFraction = 0.0;
+		double Elevation = 0.0;
 	};
 
 	struct FCarrierLabCrustFields
@@ -2142,6 +2147,7 @@ namespace
 			OutCandidate.DistanceKm = EarthRadiusKm * UnitAngularDistanceRadians(P, A);
 			OutCandidate.EdgeT = 0.0;
 			OutCandidate.ContinentalFraction = FMath::Clamp(Edge.StartContinentalFraction, 0.0, 1.0);
+			OutCandidate.Elevation = Edge.StartElevation;
 			return true;
 		}
 
@@ -2185,6 +2191,7 @@ namespace
 			FMath::Lerp(Edge.StartContinentalFraction, Edge.EndContinentalFraction, EdgeT),
 			0.0,
 			1.0);
+		OutCandidate.Elevation = FMath::Lerp(Edge.StartElevation, Edge.EndElevation, EdgeT);
 		return true;
 	}
 
@@ -2280,6 +2287,8 @@ namespace
 		OutAudit.Q2EdgeT = Q2.EdgeT;
 		OutAudit.Q1ContinentalFraction = Q1.ContinentalFraction;
 		OutAudit.Q2ContinentalFraction = Q2.ContinentalFraction;
+		OutAudit.Q1Elevation = Q1.Elevation;
+		OutAudit.Q2Elevation = Q2.Elevation;
 		OutAudit.Q1UnitPosition = Q1.UnitPosition;
 		OutAudit.Q2UnitPosition = Q2.UnitPosition;
 		OutAudit.QGammaInputNorm = QGammaInput.Size();
@@ -2316,6 +2325,8 @@ namespace
 						Edge.EndUnitPosition = B.UnitPosition;
 						Edge.StartContinentalFraction = A.ContinentalFraction;
 						Edge.EndContinentalFraction = B.ContinentalFraction;
+						Edge.StartElevation = A.Elevation;
+						Edge.EndElevation = B.Elevation;
 						Edges.Add(Edge);
 					}
 				}
@@ -2340,6 +2351,96 @@ namespace
 		const FVector3d VelocityA = FVector3d::CrossProduct(Motions[A].Axis, Position) * Motions[A].AngularSpeedRadiansPerStep;
 		const FVector3d VelocityB = FVector3d::CrossProduct(Motions[B].Axis, Position) * Motions[B].AngularSpeedRadiansPerStep;
 		return FVector3d::DotProduct(VelocityB - VelocityA, ToB);
+	}
+
+	bool IsPhaseIIIE4DivergentGapRoute(const ECarrierLabPhaseIIIE3SelectionClass SelectionClass)
+	{
+		return SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap ||
+			SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::DivergentGapAfterFiltering;
+	}
+
+	bool IsPhaseIIIE4UnresolvedMultiHitRoute(const ECarrierLabPhaseIIIE3SelectionClass SelectionClass)
+	{
+		return SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::UnresolvedSameMaterialMultiHit ||
+			SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::UnresolvedMixedMaterialMultiHit ||
+			SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::UnresolvedThirdPlateMultiHit;
+	}
+
+	void PopulatePhaseIIIE4OceanicRecord(
+		const FVector3d& SamplePosition,
+		const ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass,
+		const FCarrierLabPhaseIIIE2BoundaryQueryAudit& BoundaryAudit,
+		const double SignedSeparationVelocity,
+		FCarrierLabPhaseIIIE4OceanicGenerationRecord& OutRecord)
+	{
+		OutRecord = FCarrierLabPhaseIIIE4OceanicGenerationRecord();
+		OutRecord.SampleUnitPosition = NormalizeOrFallback(SamplePosition, FVector3d::UnitZ());
+		OutRecord.SourceSelectionClass = SourceSelectionClass;
+		OutRecord.bBoundaryPairFound = BoundaryAudit.bFound;
+		OutRecord.SignedSeparationVelocity = SignedSeparationVelocity;
+		OutRecord.Q1PlateId = BoundaryAudit.Q1PlateId;
+		OutRecord.Q2PlateId = BoundaryAudit.Q2PlateId;
+		OutRecord.Q1EdgeId = BoundaryAudit.Q1EdgeId;
+		OutRecord.Q2EdgeId = BoundaryAudit.Q2EdgeId;
+		OutRecord.Q1DistanceKm = BoundaryAudit.Q1DistanceKm;
+		OutRecord.Q2DistanceKm = BoundaryAudit.Q2DistanceKm;
+		OutRecord.Q1Elevation = BoundaryAudit.Q1Elevation;
+		OutRecord.Q2Elevation = BoundaryAudit.Q2Elevation;
+		OutRecord.QGammaInputNorm = BoundaryAudit.QGammaInputNorm;
+		OutRecord.QGammaUnitResidual = BoundaryAudit.QGammaUnitResidual;
+		OutRecord.Q1UnitPosition = BoundaryAudit.Q1UnitPosition;
+		OutRecord.Q2UnitPosition = BoundaryAudit.Q2UnitPosition;
+		OutRecord.QGammaUnitPosition = BoundaryAudit.QGammaUnitPosition;
+
+		if (!IsPhaseIIIE4DivergentGapRoute(SourceSelectionClass))
+		{
+			OutRecord.bRejectedNonDivergentRoute = true;
+			OutRecord.bRejectedUnresolvedMultiHit = IsPhaseIIIE4UnresolvedMultiHitRoute(SourceSelectionClass);
+			return;
+		}
+
+		if (!BoundaryAudit.bFound)
+		{
+			return;
+		}
+
+		if (!(SignedSeparationVelocity > 0.0))
+		{
+			OutRecord.bNonSeparatingAnomaly = true;
+			return;
+		}
+
+		const double QDistanceDenominator = BoundaryAudit.Q1DistanceKm + BoundaryAudit.Q2DistanceKm;
+		const double QElevationT = QDistanceDenominator > UE_DOUBLE_SMALL_NUMBER
+			? BoundaryAudit.Q1DistanceKm / QDistanceDenominator
+			: 0.5;
+		OutRecord.ZBarElevation = FMath::Lerp(BoundaryAudit.Q1Elevation, BoundaryAudit.Q2Elevation, QElevationT);
+
+		OutRecord.RidgeDistanceKm = EarthRadiusKm * UnitAngularDistanceRadians(
+			OutRecord.SampleUnitPosition,
+			BoundaryAudit.QGammaUnitPosition);
+		OutRecord.NearestBoundaryDistanceKm = FMath::Min(BoundaryAudit.Q1DistanceKm, BoundaryAudit.Q2DistanceKm);
+		const double ElevationDenominator = OutRecord.RidgeDistanceKm + OutRecord.NearestBoundaryDistanceKm;
+		OutRecord.Alpha = ElevationDenominator > UE_DOUBLE_SMALL_NUMBER
+			? FMath::Clamp(OutRecord.RidgeDistanceKm / ElevationDenominator, 0.0, 1.0)
+			: 0.0;
+		OutRecord.ZGammaElevation = FMath::Lerp(
+			PhaseIIIE4RidgePeakElevationKm,
+			PhaseIIIE4AbyssalElevationKm,
+			OutRecord.Alpha);
+		OutRecord.Elevation =
+			OutRecord.Alpha * OutRecord.ZBarElevation +
+			(1.0 - OutRecord.Alpha) * OutRecord.ZGammaElevation;
+		OutRecord.OceanicAge = 0.0;
+		OutRecord.RidgeDirection = RetangentAndNormalizeVectorField(
+			FVector3d::CrossProduct(OutRecord.SampleUnitPosition - BoundaryAudit.QGammaUnitPosition, OutRecord.SampleUnitPosition),
+			OutRecord.SampleUnitPosition);
+		OutRecord.RidgeDirectionMagnitude = OutRecord.RidgeDirection.Size();
+		OutRecord.RidgeDirectionRadialDot = FMath::Abs(FVector3d::DotProduct(OutRecord.RidgeDirection, OutRecord.SampleUnitPosition));
+		OutRecord.AssignedPlateId = BoundaryAudit.Q1DistanceKm <= BoundaryAudit.Q2DistanceKm
+			? BoundaryAudit.Q1PlateId
+			: BoundaryAudit.Q2PlateId;
+		OutRecord.bGeneratedOceanicCrust = true;
 	}
 
 	const FCarrierLabVizCandidate* FindCandidateForPlate(const TArray<FCarrierLabVizCandidate>& Candidates, const int32 PlateId)
@@ -4493,6 +4594,8 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE2ContinuousBoundaryPairForTest
 		Edge.EndUnitPosition = Probe.EndUnitPosition;
 		Edge.StartContinentalFraction = Probe.StartContinentalFraction;
 		Edge.EndContinentalFraction = Probe.EndContinentalFraction;
+		Edge.StartElevation = Probe.StartElevation;
+		Edge.EndElevation = Probe.EndElevation;
 		Edges.Add(Edge);
 	}
 	return QueryContinuousBoundaryPair(Edges, SamplePosition, OutAudit);
@@ -4517,6 +4620,8 @@ bool ACarrierLabVisualizationActor::BuildPhaseIIIE2BoundaryEdgesFromCurrentState
 		Probe.EndUnitPosition = Edge.EndUnitPosition;
 		Probe.StartContinentalFraction = Edge.StartContinentalFraction;
 		Probe.EndContinentalFraction = Edge.EndContinentalFraction;
+		Probe.StartElevation = Edge.StartElevation;
+		Probe.EndElevation = Edge.EndElevation;
 	}
 	return !OutBoundaryEdges.IsEmpty();
 }
@@ -4557,6 +4662,49 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE3FilteredRemeshSelectionForTes
 	}
 
 	return SelectPhaseIIIE3FilteredRemeshSource(INDEX_NONE, SamplePosition, Candidates, OutRecord);
+}
+
+bool ACarrierLabVisualizationActor::QueryPhaseIIIE4DivergentOceanicFieldsForTest(
+	const FVector3d& SamplePosition,
+	const ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass,
+	const TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe>& BoundaryEdges,
+	const double SignedSeparationVelocity,
+	FCarrierLabPhaseIIIE4OceanicGenerationRecord& OutRecord) const
+{
+	FCarrierLabPhaseIIIE2BoundaryQueryAudit BoundaryAudit;
+	if (IsPhaseIIIE4DivergentGapRoute(SourceSelectionClass))
+	{
+		QueryPhaseIIIE2ContinuousBoundaryPairForTest(SamplePosition, BoundaryEdges, BoundaryAudit);
+	}
+	PopulatePhaseIIIE4OceanicRecord(SamplePosition, SourceSelectionClass, BoundaryAudit, SignedSeparationVelocity, OutRecord);
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::QueryPhaseIIIE4DivergentOceanicFieldsFromCurrentStateForTest(
+	const FVector3d& SamplePosition,
+	const ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass,
+	FCarrierLabPhaseIIIE4OceanicGenerationRecord& OutRecord) const
+{
+	if (!bInitialized)
+	{
+		OutRecord = FCarrierLabPhaseIIIE4OceanicGenerationRecord();
+		return false;
+	}
+
+	FCarrierLabPhaseIIIE2BoundaryQueryAudit BoundaryAudit;
+	if (IsPhaseIIIE4DivergentGapRoute(SourceSelectionClass))
+	{
+		QueryPhaseIIIE2ContinuousBoundaryPairFromCurrentStateForTest(SamplePosition, BoundaryAudit);
+	}
+	const double SignedSeparationVelocity = BoundaryAudit.bFound
+		? SignedPairSeparationVelocityForPlatePair(
+			BoundaryAudit.QGammaUnitPosition,
+			Motions,
+			BoundaryAudit.Q1PlateId,
+			BoundaryAudit.Q2PlateId)
+		: 0.0;
+	PopulatePhaseIIIE4OceanicRecord(SamplePosition, SourceSelectionClass, BoundaryAudit, SignedSeparationVelocity, OutRecord);
+	return true;
 }
 
 bool ACarrierLabVisualizationActor::RunPhaseIIIE3FilteredRemeshSelectionAudit(FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit)
