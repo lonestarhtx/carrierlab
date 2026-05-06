@@ -863,6 +863,12 @@ struct FCarrierLabPhaseIIIC3UpliftAuditRecord
 	double DistanceTransfer = 0.0;
 	double SpeedTransfer = 0.0;
 	double ReliefTransfer = 0.0;
+	double FoldInfluenceBeta = 1.0;
+	FVector3d OverUnitPosition = FVector3d::ZeroVector;
+	FVector3d PreviousFoldDirection = FVector3d::ZeroVector;
+	FVector3d RelativeFoldStep = FVector3d::ZeroVector;
+	FVector3d ExpectedFoldDirection = FVector3d::ZeroVector;
+	FVector3d NewFoldDirection = FVector3d::ZeroVector;
 	double FoldDirectionMagnitude = 0.0;
 };
 
@@ -884,6 +890,7 @@ struct FCarrierLabPhaseIIIC3UpliftAudit
 	double EffectRadiusKm = 1800.0;
 	double UpliftRateMmPerYear = 0.6;
 	double ReferenceVelocityMmPerYear = 100.0;
+	double FoldInfluenceBeta = 1.0;
 	double TrenchDepthKm = -10.0;
 	double ContinentalMaxElevationKm = 10.0;
 	double TotalAppliedDeltaKm = 0.0;
@@ -1528,6 +1535,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICReferenceVelocityMmPerYear = 100.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	double PhaseIIICFoldDirectionBeta = 1.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICMaxContinentalElevationKm = 10.0;

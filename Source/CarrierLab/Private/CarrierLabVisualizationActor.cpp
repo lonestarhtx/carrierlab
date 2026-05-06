@@ -438,9 +438,11 @@ namespace
 		{
 			return 0.0;
 		}
-		const double Scale = FMath::Max(0.0, RelativeVelocityMmPerYear / ReferenceVelocityMmPerYear) *
-			(TerraneAreaKm2 / ReferencePlateAreaKm2);
-		return Scale > 0.0 ? CollisionRadiusConstantKm * FMath::Sqrt(Scale) : 0.0;
+		const double SpeedScale = FMath::Max(0.0, RelativeVelocityMmPerYear / ReferenceVelocityMmPerYear);
+		const double AreaScale = TerraneAreaKm2 / ReferencePlateAreaKm2;
+		return (SpeedScale > 0.0 && AreaScale > 0.0)
+			? CollisionRadiusConstantKm * FMath::Sqrt(SpeedScale) * AreaScale
+			: 0.0;
 	}
 
 	void DecodePlatePairKey(const uint64 Key, int32& OutA, int32& OutB)
@@ -9109,6 +9111,7 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 	LastPhaseIIIC3UpliftAudit.EffectRadiusKm = PhaseIIICSubductionEffectRadiusKm;
 	LastPhaseIIIC3UpliftAudit.UpliftRateMmPerYear = PhaseIIICSubductionUpliftMmPerYear;
 	LastPhaseIIIC3UpliftAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	LastPhaseIIIC3UpliftAudit.FoldInfluenceBeta = PhaseIIICFoldDirectionBeta;
 	LastPhaseIIIC3UpliftAudit.TrenchDepthKm = PhaseIIICTrenchDepthKm;
 	LastPhaseIIIC3UpliftAudit.ContinentalMaxElevationKm = PhaseIIICMaxContinentalElevationKm;
 
@@ -9117,6 +9120,7 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 	HashMix(UpliftHash, static_cast<uint64>(State.ConvergenceSubductingTriangleMarks.Num() + 1));
 	HashMixDouble(UpliftHash, PhaseIIICSubductionUpliftMmPerYear);
 	HashMixDouble(UpliftHash, PhaseIIICReferenceVelocityMmPerYear);
+	HashMixDouble(UpliftHash, PhaseIIICFoldDirectionBeta);
 	HashMixDouble(UpliftHash, PhaseIIICTrenchDepthKm);
 	HashMixDouble(UpliftHash, PhaseIIICMaxContinentalElevationKm);
 	HashMixDouble(UpliftHash, PhaseIIICSubductionEffectRadiusKm);
@@ -9228,18 +9232,24 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 				OverVertex.Elevation,
 				Mark.SignedConvergenceVelocity);
 
+			const FVector3d PreviousFoldDirection = OverVertex.FoldDirection;
+			FVector3d RelativeFoldStep = FVector3d::ZeroVector;
+			FVector3d ExpectedFoldDirection = OverVertex.FoldDirection;
 			if (Motions.IsValidIndex(Mark.PlateId) && Motions.IsValidIndex(Mark.OtherPlateId))
 			{
 				const FVector3d UnderVelocity = FVector3d::CrossProduct(Motions[Mark.PlateId].Axis, OverVertex.UnitPosition) *
 					Motions[Mark.PlateId].AngularSpeedRadiansPerStep;
 				const FVector3d OverVelocity = FVector3d::CrossProduct(Motions[Mark.OtherPlateId].Axis, OverVertex.UnitPosition) *
 					Motions[Mark.OtherPlateId].AngularSpeedRadiansPerStep;
-				const FVector3d RelativeConvergence = RetangentAndNormalizeVectorField(UnderVelocity - OverVelocity, OverVertex.UnitPosition);
-				if (RelativeConvergence.SquaredLength() > UE_DOUBLE_SMALL_NUMBER)
+				const FVector3d RawRelativeFoldStep = UnderVelocity - OverVelocity;
+				RelativeFoldStep = RawRelativeFoldStep -
+					OverVertex.UnitPosition * FVector3d::DotProduct(RawRelativeFoldStep, OverVertex.UnitPosition);
+				if (RelativeFoldStep.SquaredLength() > UE_DOUBLE_SMALL_NUMBER)
 				{
-					OverVertex.FoldDirection = RetangentAndNormalizeVectorField(
-						OverVertex.FoldDirection + RelativeConvergence * DeltaKm,
+					ExpectedFoldDirection = RetangentAndNormalizeVectorField(
+						PreviousFoldDirection + RelativeFoldStep * PhaseIIICFoldDirectionBeta,
 						OverVertex.UnitPosition);
+					OverVertex.FoldDirection = ExpectedFoldDirection;
 				}
 			}
 
@@ -9263,6 +9273,19 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 			HashMixDouble(UpliftHash, PreviousElevationKm);
 			HashMixDouble(UpliftHash, DeltaKm);
 			HashMixDouble(UpliftHash, OverVertex.Elevation);
+			HashMixDouble(UpliftHash, PhaseIIICFoldDirectionBeta);
+			HashMixDouble(UpliftHash, PreviousFoldDirection.X);
+			HashMixDouble(UpliftHash, PreviousFoldDirection.Y);
+			HashMixDouble(UpliftHash, PreviousFoldDirection.Z);
+			HashMixDouble(UpliftHash, RelativeFoldStep.X);
+			HashMixDouble(UpliftHash, RelativeFoldStep.Y);
+			HashMixDouble(UpliftHash, RelativeFoldStep.Z);
+			HashMixDouble(UpliftHash, ExpectedFoldDirection.X);
+			HashMixDouble(UpliftHash, ExpectedFoldDirection.Y);
+			HashMixDouble(UpliftHash, ExpectedFoldDirection.Z);
+			HashMixDouble(UpliftHash, OverVertex.FoldDirection.X);
+			HashMixDouble(UpliftHash, OverVertex.FoldDirection.Y);
+			HashMixDouble(UpliftHash, OverVertex.FoldDirection.Z);
 
 			FCarrierLabPhaseIIIC3UpliftAuditRecord& Record = LastPhaseIIIC3UpliftAudit.Records.AddDefaulted_GetRef();
 			Record.MarkId = Mark.MarkId;
@@ -9280,6 +9303,12 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 			Record.DistanceTransfer = DistanceTransfer;
 			Record.SpeedTransfer = SpeedTransfer;
 			Record.ReliefTransfer = ReliefTransfer;
+			Record.FoldInfluenceBeta = PhaseIIICFoldDirectionBeta;
+			Record.OverUnitPosition = OverVertex.UnitPosition;
+			Record.PreviousFoldDirection = PreviousFoldDirection;
+			Record.RelativeFoldStep = RelativeFoldStep;
+			Record.ExpectedFoldDirection = ExpectedFoldDirection;
+			Record.NewFoldDirection = OverVertex.FoldDirection;
 			Record.FoldDirectionMagnitude = OverVertex.FoldDirection.Size();
 		}
 	}

@@ -92,6 +92,40 @@ namespace
 			OracleReliefTransfer(Record.HistoricalElevationKm);
 	}
 
+	FVector3d RetangentAndNormalize(const FVector3d& Vector, const FVector3d& UnitPosition)
+	{
+		const FVector3d Tangent = Vector - UnitPosition * FVector3d::DotProduct(Vector, UnitPosition);
+		const double TangentSize = Tangent.Size();
+		return TangentSize > UE_DOUBLE_SMALL_NUMBER ? Tangent / TangentSize : FVector3d::ZeroVector;
+	}
+
+	FVector3d OracleFoldDirection(const FCarrierLabPhaseIIIC3UpliftAuditRecord& Record)
+	{
+		if (Record.RelativeFoldStep.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			return Record.PreviousFoldDirection;
+		}
+		return RetangentAndNormalize(
+			Record.PreviousFoldDirection + Record.RelativeFoldStep * Record.FoldInfluenceBeta,
+			Record.OverUnitPosition);
+	}
+
+	double OracleFoldResidual(const FCarrierLabPhaseIIIC3UpliftAuditRecord& Record)
+	{
+		const FVector3d Expected = OracleFoldDirection(Record);
+		const double ExpectedResidual = FMath::Max(
+			FMath::Abs(Expected.X - Record.ExpectedFoldDirection.X),
+			FMath::Max(
+				FMath::Abs(Expected.Y - Record.ExpectedFoldDirection.Y),
+				FMath::Abs(Expected.Z - Record.ExpectedFoldDirection.Z)));
+		const double AppliedResidual = FMath::Max(
+			FMath::Abs(Expected.X - Record.NewFoldDirection.X),
+			FMath::Max(
+				FMath::Abs(Expected.Y - Record.NewFoldDirection.Y),
+				FMath::Abs(Expected.Z - Record.NewFoldDirection.Z)));
+		return FMath::Max(ExpectedResidual, AppliedResidual);
+	}
+
 	FString GetOutputRoot(const FString& Params)
 	{
 		FString OutputRoot;
@@ -251,6 +285,7 @@ namespace
 		FCarrierLabPhaseIIIC3UpliftAudit UpliftAudit;
 		double OracleDeltaSumKm = 0.0;
 		double OracleMaxRecordResidualKm = 0.0;
+		double FoldOracleMaxRecordResidual = 0.0;
 		double MinFoldMagnitude = 0.0;
 	};
 
@@ -303,6 +338,9 @@ namespace
 			OutResult.OracleMaxRecordResidualKm = FMath::Max(
 				OutResult.OracleMaxRecordResidualKm,
 				FMath::Abs(Expected - Record.AppliedDeltaKm));
+			OutResult.FoldOracleMaxRecordResidual = FMath::Max(
+				OutResult.FoldOracleMaxRecordResidual,
+				OracleFoldResidual(Record));
 			if (!bInitializedFold)
 			{
 				OutResult.MinFoldMagnitude = Record.FoldDirectionMagnitude;
@@ -331,6 +369,7 @@ namespace
 			Result.UpliftAudit.TotalAppliedDeltaKm > 0.0 &&
 			FMath::Abs(Result.OracleDeltaSumKm - Result.UpliftAudit.TotalAppliedDeltaKm) <= GateToleranceKm &&
 			Result.OracleMaxRecordResidualKm <= GateToleranceKm &&
+			Result.FoldOracleMaxRecordResidual <= GateToleranceKm &&
 			Result.MinFoldMagnitude > 0.0;
 	}
 
@@ -345,7 +384,7 @@ namespace
 	FString UpliftJson(const FUpliftReplayResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"kind\":\"uplift\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"marks\":%d,\"snapshots\":%d,\"uplift_records\":%d,\"unique_vertices\":%d,\"skipped_non_continental\":%d,\"skipped_outside_radius\":%d,\"invalid_inputs\":%d,\"total_delta_km\":%.15f,\"oracle_delta_sum_km\":%.15f,\"oracle_residual_km\":%.15f,\"max_delta_km\":%.15f,\"min_fold_magnitude\":%.15f,\"uplift_hash\":%s,\"visible_hash\":%s,\"historical_hash\":%s,\"crust_hash\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"uplift\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"marks\":%d,\"snapshots\":%d,\"uplift_records\":%d,\"unique_vertices\":%d,\"skipped_non_continental\":%d,\"skipped_outside_radius\":%d,\"invalid_inputs\":%d,\"total_delta_km\":%.15f,\"oracle_delta_sum_km\":%.15f,\"oracle_residual_km\":%.15f,\"fold_oracle_residual\":%.15f,\"fold_beta\":%.12f,\"max_delta_km\":%.15f,\"min_fold_magnitude\":%.15f,\"uplift_hash\":%s,\"visible_hash\":%s,\"historical_hash\":%s,\"crust_hash\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Fixture),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -359,6 +398,8 @@ namespace
 			Result.UpliftAudit.TotalAppliedDeltaKm,
 			Result.OracleDeltaSumKm,
 			FMath::Abs(Result.OracleDeltaSumKm - Result.UpliftAudit.TotalAppliedDeltaKm),
+			Result.FoldOracleMaxRecordResidual,
+			Result.UpliftAudit.FoldInfluenceBeta,
 			Result.UpliftAudit.MaxAppliedDeltaKm,
 			Result.MinFoldMagnitude,
 			*JsonString(Result.UpliftAudit.UpliftHash),
@@ -445,6 +486,13 @@ namespace
 			UpliftA.OracleMaxRecordResidualKm,
 			UpliftB.OracleMaxRecordResidualKm);
 		Report += FString::Printf(
+			TEXT("| Fold-direction oracle | %s | beta %.6f / %.6f, max vector residual %.12e / %.12e |\n"),
+			*PassFail(bUpliftPass),
+			UpliftA.UpliftAudit.FoldInfluenceBeta,
+			UpliftB.UpliftAudit.FoldInfluenceBeta,
+			UpliftA.FoldOracleMaxRecordResidual,
+			UpliftB.FoldOracleMaxRecordResidual);
+		Report += FString::Printf(
 			TEXT("| Same-seed replay | %s | uplift hash `%s` / `%s`, visible hash `%s` / `%s` |\n"),
 			*PassFail(bUpliftPass),
 			*UpliftA.UpliftAudit.UpliftHash,
@@ -465,12 +513,12 @@ namespace
 			ForcedDivergenceNoSubduction.UpliftAudit.UpliftRecordCount);
 
 		Report += TEXT("\n## Primary Forced-Convergence Replay\n\n");
-		Report += TEXT("| Replay | Marks | Snapshots | Uplift records | Unique vertices | Total delta km | Oracle delta km | Max delta km | Min fold | Uplift hash | Visible hash | Crust hash | Seconds |\n");
-		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---:|\n");
+		Report += TEXT("| Replay | Marks | Snapshots | Uplift records | Unique vertices | Total delta km | Oracle delta km | Max delta km | Min fold | Fold residual | Uplift hash | Visible hash | Crust hash | Seconds |\n");
+		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---:|\n");
 		auto AddUpliftRow = [&Report](const FUpliftReplayResult& Result)
 		{
 			Report += FString::Printf(
-				TEXT("| %d | %d | %d | %d | %d | %.12f | %.12f | %.12f | %.12f | `%s` | `%s` | `%s` | %.3f |\n"),
+				TEXT("| %d | %d | %d | %d | %d | %.12f | %.12f | %.12f | %.12f | %.12e | `%s` | `%s` | `%s` | %.3f |\n"),
 				Result.Replay,
 				Result.MarkAudit.MarkCount,
 				Result.ElevationAudit.SnapshotMarkCount,
@@ -480,6 +528,7 @@ namespace
 				Result.OracleDeltaSumKm,
 				Result.UpliftAudit.MaxAppliedDeltaKm,
 				Result.MinFoldMagnitude,
+				Result.FoldOracleMaxRecordResidual,
 				*Result.UpliftAudit.UpliftHash,
 				*Result.UpliftAudit.VisibleElevationHash,
 				*Result.UpliftAudit.CrustStateHash,
@@ -489,13 +538,13 @@ namespace
 		AddUpliftRow(UpliftB);
 
 		Report += TEXT("\n## Representative Uplift Records\n\n");
-		Report += TEXT("| Mark | Under | Over | Under tri | Over vertex | Distance km | Signed velocity | Historical km | Delta km | Distance f | Speed g | Relief h | Fold |\n");
-		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		Report += TEXT("| Mark | Under | Over | Under tri | Over vertex | Distance km | Signed velocity | Historical km | Delta km | Distance f | Speed g | Relief h | Fold beta | Fold residual | Fold |\n");
+		Report += TEXT("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
 		for (int32 Index = 0; Index < FMath::Min(16, UpliftA.UpliftAudit.Records.Num()); ++Index)
 		{
 			const FCarrierLabPhaseIIIC3UpliftAuditRecord& Record = UpliftA.UpliftAudit.Records[Index];
 			Report += FString::Printf(
-				TEXT("| %d | %d | %d | %d | %d | %.3f | %.12f | %.3f | %.12f | %.6f | %.6f | %.6f | %.6f |\n"),
+				TEXT("| %d | %d | %d | %d | %d | %.3f | %.12f | %.3f | %.12f | %.6f | %.6f | %.6f | %.6f | %.12e | %.6f |\n"),
 				Record.MarkId,
 				Record.UnderPlateId,
 				Record.OverPlateId,
@@ -508,6 +557,8 @@ namespace
 				Record.DistanceTransfer,
 				Record.SpeedTransfer,
 				Record.ReliefTransfer,
+				Record.FoldInfluenceBeta,
+				OracleFoldResidual(Record),
 				Record.FoldDirectionMagnitude);
 		}
 
@@ -549,6 +600,7 @@ namespace
 		Report += TEXT("\n## Scope Notes\n\n");
 		Report += TEXT("- Uplift mutates plate-local over-plate vertices only; global TDS samples remain projection/resampling targets, not persistent authority.\n");
 		Report += TEXT("- The independent oracle recomputes the uplift formula from raw record distance, signed convergence velocity, and historical elevation fields.\n");
+		Report += TEXT("- The fold-direction oracle recomputes thesis page 59's `f_j(t+dt)=f_j(t)+beta*(s_i-s_j)*dt` update from the previous fold vector, raw tangent relative step vector, and configured beta; it is not scaled by uplift delta.\n");
 		Report += TEXT("- The speed transfer is clamped to `[0,1]` because thesis Table 3.2 defines `v0` as the maximum authorized plate speed and Figure 37 normalizes `g(v)` at `v0`.\n");
 		Report += TEXT("- This checkpoint may claim only IIIC.3 overriding-plate uplift behavior. It does not claim slab pull, collision, rifting, erosion, Stage 1.5 carrier success, or Slice 5.5 asymmetry resolution.\n\n");
 
@@ -689,7 +741,7 @@ int32 UCarrierLabPhaseIIIC3Commandlet::Main(const FString& Params)
 	const FString Report = BuildReport(OutputRoot, BypassA, BypassB, UpliftA, UpliftB, Disabled, ZeroMotion, SinglePlate, ForcedDivergence, ForcedDivergenceMixedDiagnostic);
 	const FString ReportPath = ResolveReportPath(Params);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
-	FFileHelper::SaveStringToFile(Report, *ReportPath);
+	FFileHelper::SaveStringToFile(Report, *ReportPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 
 	const bool bBypassPass =
 		bBypassA &&

@@ -117,9 +117,12 @@ Names will evolve in code, but the separations are binding.
   - Slab pull is opt-in via a config flag and defaults off until IIIC.4 is explicitly approved. Paper-faithful primary runs turn it on, and the off-state remains a regression target — same-seed runs with slab pull off must produce IIIB hashes.
   - The slab pull magnitude constant `vs` (paper Table 3.2: 8 mm/yr) is hardcoded but exposed as config for sensitivity tests.
   - A separate `motion_with_slab_pull_hash` is computed independently of `motion_no_slab_pull_hash`. Determinism gates check both.
-- Fold direction `f` updates on continental over-plate samples per the relative convergence direction.
+- Fold direction `f` updates on continental over-plate samples per thesis page
+  59: `f_j(t+δt) = normalize(f_j(t) + β · (s_i - s_j) · δt)`. In CarrierLab's
+  per-step actor units, the increment is the raw tangent relative velocity step
+  scaled by `PhaseIIICFoldDirectionBeta`, not by uplift magnitude.
 
-**Non-decisions:** IIIC does not implement continental collision (continental-continental contacts continue to be logged as candidates, not acted on). The distinct obduction uplift profile remains a pre-IIID uplift/event check; IIIC's current uplift path may not be used to claim that obduction has been implemented.
+**Non-decisions:** IIIC does not implement continental collision (continental-continental contacts continue to be logged as candidates, not acted on). The distinct obduction continuous-uplift path is a pre-IIIE bridge item: current IIID collision/suture fixtures must not be used to claim that sub-threshold continental-continental obduction has been implemented.
 
 ### IIID — Continental Collision
 
@@ -132,7 +135,7 @@ Names will evolve in code, but the separations are binding.
 - Opposing continental mass test: enough continental mass must exist on the destination plate to anchor the collision. The threshold is a Phase III config; the paper does not state a hard value beyond the 300 km interpenetration trigger.
 - Slab Break: the terrane is detached from the source plate by removing its triangles via the same duplicate / re-index / re-compact operation used for initial plate construction (§3.2.4). Source plate topology is mutated in place.
 - Suture: the terrane triangles are added to the destination plate's mesh. Destination plate topology is mutated in place. The plate boundary tracking list for both plates is reinitialized.
-- Uplift propagation: a discrete `Δz` is applied to destination plate samples within the collision influence radius `r ∝ √(v(q)/v0 · 𝒜/𝒜₀)` per thesis §3.3.1.2.
+- Uplift propagation: a discrete `Δz` is applied to destination plate samples within the collision influence radius `r = r_c · √(v(q)/v0) · 𝒜/𝒜₀` per thesis §3.3.1.2.
 - One collision per timestep maximum (paper-faithful for performance and topology stability).
 - All collision operations produce a named event record. Topology deltas are auditable. The Slice 5.5 single-hit ledger should show the continental-loss asymmetry decreasing once IIID lands; this is a Phase III gate, not just a Phase III hope.
 

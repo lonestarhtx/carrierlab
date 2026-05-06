@@ -6,7 +6,15 @@ Authority discipline applied here follows the lesson recorded after the 2026-05-
 
 ## Current Disposition
 
-This checkpoint is accepted into the trail as a thesis-faithfulness audit artifact, not as evidence that the listed divergences have been fixed. Pre-IIIE.5 through Pre-IIIE.7 were used for performance containment after this audit was drafted, so references below to a "Pre-IIIE.5 thesis-faithfulness cleanup tranche" are superseded by this disposition. Findings 9, 20, and 33 remain open thesis-faithfulness follow-ups to triage before IIIE implementation work that depends on those surfaces or before IIIH long-horizon validation, whichever comes first. IIIE.1 remains a no-code remesh-contract audit and may use this document as input.
+This checkpoint is accepted into the trail as a thesis-faithfulness audit artifact, not as evidence that every listed divergence has been fixed. Pre-IIIE.5 through Pre-IIIE.7 were used for performance containment after this audit was drafted, so references below to a "Pre-IIIE.5 thesis-faithfulness cleanup tranche" are superseded by this disposition.
+
+**Post-cleanup addendum (2026-05-06):**
+
+- Finding 9 is fixed by the pre-IIIE thesis cleanup tranche: IIIC.3 now updates fold direction from the raw tangent relative velocity step scaled by `PhaseIIICFoldDirectionBeta`, and the IIIC.3 commandlet gates an independent fold-direction oracle.
+- Finding 20 is fixed by the pre-IIIE thesis cleanup tranche: IIID.7 now uses thesis page 60's `r = r_c · sqrt(v(q)/v_0) · A/A_0`, and the IIID.7 commandlet gates an independent influence-radius oracle.
+- Finding 33 remains a real control-flow gap: continental-continental `CollisionCandidate` contacts still need a separate obduction continuous-uplift bridge, or an explicit user-approved deferral, before IIIE.1 starts. The decision is not to overload `ConvergenceSubductingTriangleMarks` with continental collision semantics because IIIE's remesh filter must distinguish true subducting triangles from obduction/collision evidence.
+
+The table below preserves the original audit findings for historical traceability. Where rows 9 and 20 still say DIVERGE, read them as historical findings resolved by the post-cleanup addendum and the regenerated IIIC.3/IIID.7 reports.
 
 ## Sources Used
 
@@ -109,7 +117,10 @@ This checkpoint is accepted into the trail as a thesis-faithfulness audit artifa
 
 ## Summary Of Findings By Severity
 
-### Blocker before IIIH long-horizon validation
+### Historical blockers from the original audit
+
+Findings 9 and 20 are retained here as original-audit evidence but are resolved
+by the post-cleanup addendum above. Finding 33 remains open.
 
 - **Finding 9 (DIVERGE):** fold-direction subduction increment scales by `DeltaKm` (uplift magnitude), not by `β·δt`. Implementation at `CarrierLabVisualizationActor.cpp:8903-8905`. The IIIC.3 commandlet only gates `MinFoldMagnitude > 0`, not the thesis fold-formula content. Should be corrected to `β·(s_i − s_j)·δt` with a documented `β` constant, or explicitly named as a lab heuristic in `carrier-design.md` and `phase-iii-paper-process-design.md`.
 - **Finding 20 (DIVERGE):** influence radius implementation places `A/A_0` inside the sqrt; thesis page 60 bar covers only `v/v_0`. Implementation at `CarrierLabVisualizationActor.cpp:441-443`. Difference is a factor of `√(A/A_0)` vs `(A/A_0)` — for typical small terranes (`A/A_0 << 1`) implementation produces a larger radius than thesis. Correct to `r_c · sqrt(v/v_0) · (A/A_0)` before any quantitative paper-comparison runs.
@@ -150,7 +161,7 @@ This document was reviewed by Codex and returned with three valid pushbacks agai
 
 **Pre-audit confidence:** medium.
 
-**Post-audit confidence (post-Codex-review):** **medium-high on convergence detection and collision topology mechanics** (rows 11–17, 18, 24–32 minus Finding 31, plus row 10 slab pull restored to MATCH after revision). **Medium on the uplift path**, because two real divergences (Findings 9, 20) and one real gap (Finding 33, cont-cont obduction never reaches IIIC.3) all sit on the elevation/orogeny-evolution surface that IIIH long-horizon validation will exercise.
+**Post-audit confidence (post-Codex-review):** **medium-high on convergence detection and collision topology mechanics** (rows 11–17, 18, 24–32 minus Finding 31, plus row 10 slab pull restored to MATCH after revision). After the post-cleanup tranche, confidence in the implemented IIIC.3/IIID.7 formulas is medium-high pending regenerated reports, while confidence in the full obduction/uplift path remains medium because Finding 33 (cont-cont obduction never reaches IIIC.3) still sits on the elevation/orogeny-evolution surface that IIIH long-horizon validation will exercise.
 
 **The remaining medium-confidence area beyond the uplift path is the IIID→IIIE handshake** (rows 34–39). That's not a defect of IIID; it's because the consuming algorithm doesn't exist yet. IIIE.3 will be the first time IIID's outputs (filtered subducting/colliding triangle marks, mass-conserved terrane transfer) get exercised end-to-end against a paper-faithful remesh.
 
@@ -158,9 +169,9 @@ This document was reviewed by Codex and returned with three valid pushbacks agai
 
 ### Before IIIE entry
 
-1. **Resolve Finding 9 (fold-direction divergence).** Either (a) correct implementation to `f_j(t+δt) = f_j(t) + β·(s_i − s_j)·δt` with a chosen and documented `β` constant; or (b) keep the current `DeltaKm`-coupled heuristic but name and justify it explicitly in `carrier-design.md` and the IIIC.3 design doc. Recommend (a).
-2. **Resolve Finding 20 (influence radius sqrt scope).** Correct `CarrierLabVisualizationActor.cpp:441-443` to `r_c · sqrt(v/v_0) · (A/A_0)` to match thesis page 60.
-3. **Resolve Finding 33 (cont-cont obduction never reaches uplift path).** Per thesis page 57, cont-cont obduction should accrue continuous uplift via the §3.3.1.1 formula until/unless 300 km collision threshold triggers IIID.7 instant uplift. Currently `CollisionCandidate` labels are skipped at `CarrierLabVisualizationActor.cpp:2763-2767` and `IsSubductingDecision()` at `:678-682` excludes them. Decision options: (a) extend the subducting-decision filter to also accept `CollisionCandidate` cases for IIIC.3-style continuous uplift while still emitting collision evidence to IIID; (b) add a separate "obducting" mark class that consumes the same IIIC.3 uplift formula; (c) explicitly label as deferred to IIIH/IIIH.1 and accept that pre-collision cont-cont contacts produce no uplift in the current implementation. (a) and (b) are paper-faithful; (c) is a deferred lab choice that should be flagged in `carrier-design.md`.
+1. **Finding 9 (fold-direction divergence): resolved by the pre-IIIE thesis cleanup tranche.** The selected resolution is implementation option (a): `f_j(t+δt) = normalize(f_j(t) + β·(s_i − s_j)·δt)`, with `PhaseIIICFoldDirectionBeta` as the explicit lab constant and an independent commandlet oracle.
+2. **Finding 20 (influence radius sqrt scope): resolved by the pre-IIIE thesis cleanup tranche.** IIID.7 now uses `r_c · sqrt(v/v_0) · (A/A_0)` and gates the radius with an independent oracle.
+3. **Resolve Finding 33 (cont-cont obduction never reaches uplift path) before IIIE.1 or record an explicit user-approved deferral.** Per thesis page 57, cont-cont obduction should accrue continuous uplift via the §3.3.1.1 formula until/unless 300 km collision threshold triggers IIID.7 instant uplift. Current `CollisionCandidate` labels are skipped by the subducting-mark path. The preferred design decision is a separate obduction-pending evidence/mark path, not overloading `ConvergenceSubductingTriangleMarks`, because IIIE remesh filtering needs true subducting marks to stay semantically clean.
 4. **Add fixtures before IIIH** — not before IIIE entry — for: (a) cont-cont collision where source plate is mixed-material (oceanic with embedded continental terrane, the thesis's primary worked example); (b) edge-case suture topologies (terrane creating a hole, non-simply-connected, multi-seam); (c) inner-sea inclusion exercise; (d) triple-junction / multi-plate breakage (Finding 31 — currently classified as audit-flagged gap, not thesis-limited). These were already on the IIID consolidation calibration list.
 
 ### Not blocking
@@ -171,7 +182,7 @@ This document was reviewed by Codex and returned with three valid pushbacks agai
 
 ## Decision
 
-Promote Phase IIID confidence to **medium-high on convergence detection and collision topology mechanics**, and to **medium on the uplift path**, conditional on Findings 9, 20, **and 33** being resolved before IIIE entry. The remaining IIID→IIIE handshake (rows 34–39) cannot be promoted until IIIE lands; that's IIIE's own audit territory.
+Promote Phase IIID confidence to **medium-high on convergence detection and collision topology mechanics**, and to **medium-high on the implemented uplift formulas after Findings 9 and 20 are regenerated and passing**. Keep **medium confidence on the full obduction/uplift path** until Finding 33 has either landed as a separate obduction bridge or been explicitly deferred by the user. The remaining IIID→IIIE handshake (rows 34–39) cannot be promoted until IIIE lands; that's IIIE's own audit territory.
 
 Recommended next move from the original audit draft: address Findings 9, 20, and 33 as a focused thesis-faithfulness cleanup tranche before implementation work depends on those surfaces. This recommendation is preserved as audit context; see the Current Disposition section for the live sequencing note.
 

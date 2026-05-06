@@ -298,7 +298,11 @@ Work:
   `ũ_j(p) = u_0 · f(d(p)) · g(v(p)) · h(z̃_i(p))`
   where `u_0 = 6 × 10⁻¹` mm/yr, `f` is the distance transfer (cubic-piecewise from thesis Figure 6/37), `g(v) = v/v_0`, and `h(z̃) = z̃²` reads `HistoricalElevation` of the subducting triangle.
 - Apply `Δz = ũ_j(p) · δt` to the over-plate samples within `r_s` of the subducting triangle's barycenter.
-- Update `FoldDirection` per the relative convergence direction.
+- Update `FoldDirection` per thesis page 59:
+  `f_j(t+δt) = normalize(f_j(t) + β · (s_i(p) - s_j(p)) · δt)`.
+  In the actor's per-step units, `(s_i - s_j) · δt` is the raw tangent relative
+  velocity step at the over-plate sample, and `β` is exposed as
+  `PhaseIIICFoldDirectionBeta`.
 
 Exit gate:
 
@@ -444,7 +448,7 @@ Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiid6-report.md`.
 
 Work:
 
-- After suture, apply discrete `Δz` to destination plate samples within collision influence radius `r = r_c · √(v(q)/v_0 · 𝒜/𝒜_0)` per thesis §3.3.1.2.
+- After suture, apply discrete `Δz` to destination plate samples within collision influence radius `r = r_c · √(v(q)/v_0) · 𝒜/𝒜_0` per thesis §3.3.1.2.
 - `Δz(p) = Δ_c · 𝒜 · f(d(p, R))` with `f(x) = (1 - (x/r)²)²`.
 - `Δ_c` from Table 3.2 (`1.3 × 10⁻⁵ km⁻¹`).
 - Update `FoldDirection` for affected samples.
@@ -491,6 +495,30 @@ Exit gate:
 - A one-page cost-driver table exists in `docs/checkpoints/phase-iii-pre-iiie-cost-driver-identification.md`.
 - No optimization lands in this slice.
 - If the dominant cost driver cannot be isolated, write an investigation note instead of normalizing the 189x integrated ratio.
+
+### Pre-IIIE.8: Obduction Continuous Uplift Bridge
+
+Work:
+
+- Resolve the thesis-faithfulness gap where continental-continental
+  `CollisionCandidate` contacts are visible to IIID but do not enter the IIIC.3
+  continuous uplift path before the 300 km collision threshold.
+- Do not overload `ConvergenceSubductingTriangleMarks` with continental
+  collision semantics. Add a separate obduction-pending evidence/mark path, or
+  explicitly document a user-approved deferral, before IIIE.1 starts.
+- Reuse the IIIC.3 uplift formula for the continuous obduction phase while
+  preserving IIID's discrete collision/suture event at threshold.
+
+Exit gate:
+
+- A sub-threshold continental-continental fixture produces deterministic
+  continuous uplift evidence without topology mutation.
+- The existing IIID collision fixtures still trigger the discrete collision path
+  at threshold.
+- The primary remesh contract for IIIE can distinguish subducting marks from
+  obduction/collision evidence instead of depending on overloaded labels.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-pre-iiie8-obduction-bridge.md`.
 
 ## Sub-Phase IIIE: Paper Remesh / Divergent Zone Oceanic Crust Generation
 

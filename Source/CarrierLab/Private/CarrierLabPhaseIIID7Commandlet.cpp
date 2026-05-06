@@ -27,6 +27,27 @@ namespace
 	constexpr double CollisionThresholdKm = 300.0;
 	constexpr double DestinationMassThresholdRatio = 0.5;
 	constexpr double GateToleranceKm = 1.0e-9;
+
+	double OracleInfluenceRadiusKm(const FCarrierLabPhaseIIID7CollisionUpliftAudit& Audit)
+	{
+		if (!FMath::IsFinite(Audit.CollisionRadiusConstantKm) ||
+			!FMath::IsFinite(Audit.RelativeVelocityMmPerYear) ||
+			!FMath::IsFinite(Audit.ReferenceVelocityMmPerYear) ||
+			!FMath::IsFinite(Audit.TerraneAreaKm2) ||
+			!FMath::IsFinite(Audit.ReferencePlateAreaKm2) ||
+			Audit.CollisionRadiusConstantKm <= 0.0 ||
+			Audit.ReferenceVelocityMmPerYear <= UE_DOUBLE_SMALL_NUMBER ||
+			Audit.ReferencePlateAreaKm2 <= UE_DOUBLE_SMALL_NUMBER ||
+			Audit.TerraneAreaKm2 <= 0.0)
+		{
+			return 0.0;
+		}
+		const double SpeedScale = FMath::Max(0.0, Audit.RelativeVelocityMmPerYear / Audit.ReferenceVelocityMmPerYear);
+		const double AreaScale = Audit.TerraneAreaKm2 / Audit.ReferencePlateAreaKm2;
+		return (SpeedScale > 0.0 && AreaScale > 0.0)
+			? Audit.CollisionRadiusConstantKm * FMath::Sqrt(SpeedScale) * AreaScale
+			: 0.0;
+	}
 	constexpr TCHAR ExpectedSlice55StateHash[] = TEXT("3b4a85366dab80db");
 	constexpr TCHAR ExpectedSlice55MaterialLedgerHash[] = TEXT("bc3077100ba291b4");
 	constexpr TCHAR ExpectedIIIBIndependentSignature[] = TEXT("bf8818a26ed7b1dc");
@@ -221,6 +242,7 @@ namespace
 		double Seconds = 0.0;
 		double OracleDeltaSumKm = 0.0;
 		double OracleMaxRecordResidualKm = 0.0;
+		double OracleRadiusResidualKm = 0.0;
 		FCarrierLabPhaseIIIB3SubductionMatrixAudit MatrixAudit;
 		FCarrierLabPhaseIIIB4PolarityAudit PolarityAudit;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureBefore;
@@ -677,6 +699,7 @@ namespace
 		HashMixString(Hash, Result.UpliftAudit.UpliftHash);
 		HashMixDouble(Hash, Result.OracleDeltaSumKm);
 		HashMixDouble(Hash, Result.OracleMaxRecordResidualKm);
+		HashMixDouble(Hash, Result.OracleRadiusResidualKm);
 		HashMix(Hash, static_cast<uint64>(Result.PolicyResolvedMultiHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.PatchSeedTriangleId + 1));
 		HashMix(Hash, static_cast<uint64>(Result.PatchTriangleCount + 1));
@@ -687,6 +710,9 @@ namespace
 	{
 		Result.OracleDeltaSumKm = 0.0;
 		Result.OracleMaxRecordResidualKm = 0.0;
+		Result.OracleRadiusResidualKm = FMath::Abs(
+			OracleInfluenceRadiusKm(Result.UpliftAudit) -
+			Result.UpliftAudit.InfluenceRadiusKm);
 		const int32 Count = FMath::Min(Result.PlanAudit.Records.Num(), Result.UpliftAudit.Records.Num());
 		for (int32 Index = 0; Index < Count; ++Index)
 		{
@@ -879,6 +905,8 @@ namespace
 			A.UpliftAudit.TotalAppliedDeltaKm > 0.0 &&
 			FMath::Abs(A.OracleDeltaSumKm - A.UpliftAudit.TotalAppliedDeltaKm) <= GateToleranceKm &&
 			A.OracleMaxRecordResidualKm <= GateToleranceKm &&
+			A.OracleRadiusResidualKm <= GateToleranceKm &&
+			B.OracleRadiusResidualKm <= GateToleranceKm &&
 			A.UpliftAudit.FormulaResidualKm <= GateToleranceKm &&
 			A.UpliftAudit.MaxOutsideRadiusDeltaKm <= GateToleranceKm &&
 			A.InputPipelineEquivalenceAudit.bPassed &&
@@ -905,7 +933,7 @@ namespace
 	void AppendUpliftJson(const FUpliftReplayResult& Result, TArray<FString>& Lines)
 	{
 		Lines.Add(FString::Printf(
-			TEXT("{\"kind\":\"iiid7_collision_uplift_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"step\":%d,\"event_before\":%d,\"event_after\":%d,\"matrix_hits\":%d,\"collision_candidates\":%d,\"topology_applied\":%s,\"uplift_records\":%d,\"unique_vertices\":%d,\"terrane_area_km2\":%.12f,\"influence_radius_km\":%.12f,\"center_expected_delta_km\":%.12f,\"center_applied_delta_km\":%.12f,\"total_delta_km\":%.12f,\"oracle_delta_km\":%.12f,\"oracle_residual_km\":%.15f,\"policy_resolved_multi_hits\":%d,\"plan_hash\":%s,\"uplift_hash\":%s,\"replay_hash\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"kind\":\"iiid7_collision_uplift_replay\",\"fixture\":%s,\"replay\":%d,\"completed\":%s,\"step\":%d,\"event_before\":%d,\"event_after\":%d,\"matrix_hits\":%d,\"collision_candidates\":%d,\"topology_applied\":%s,\"uplift_records\":%d,\"unique_vertices\":%d,\"terrane_area_km2\":%.12f,\"influence_radius_km\":%.12f,\"radius_oracle_residual_km\":%.15f,\"center_expected_delta_km\":%.12f,\"center_applied_delta_km\":%.12f,\"total_delta_km\":%.12f,\"oracle_delta_km\":%.12f,\"oracle_residual_km\":%.15f,\"policy_resolved_multi_hits\":%d,\"plan_hash\":%s,\"uplift_hash\":%s,\"replay_hash\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Fixture),
 			Result.Replay,
 			Result.bCompleted ? TEXT("true") : TEXT("false"),
@@ -919,6 +947,7 @@ namespace
 			Result.UpliftAudit.UniqueUpliftedVertexCount,
 			Result.UpliftAudit.TerraneAreaKm2,
 			Result.UpliftAudit.InfluenceRadiusKm,
+			Result.OracleRadiusResidualKm,
 			Result.UpliftAudit.CenterExpectedDeltaKm,
 			Result.UpliftAudit.CenterAppliedDeltaKm,
 			Result.UpliftAudit.TotalAppliedDeltaKm,
@@ -968,7 +997,7 @@ namespace
 
 		Report += TEXT("## Source Check\n\n");
 		Report += TEXT("- Formula source: `docs/Synthèse de terrain à léchelle planétaire/cc5c6807-071.png` (thesis page 60, Figure 38 text).\n");
-		Report += TEXT("- Radius: `r = r_c * sqrt(v(q)/v_0 * A/A_0)`.\n");
+		Report += TEXT("- Radius: `r = r_c * sqrt(v(q)/v_0) * A/A_0`.\n");
 		Report += TEXT("- Uplift: `dz(p) = Delta_c * A * (1 - (d(p,R)/r)^2)^2` inside the influence region.\n");
 		Report += TEXT("- Fold direction: `(n x normalize(p - q)) x n`, with `q` as terrane centroid. CarrierLab applies this as a scalar field only; vertices remain on the unit sphere.\n\n");
 
@@ -992,6 +1021,12 @@ namespace
 			*CollisionB.ReplayHash,
 			CollisionA.UpliftAudit.UpliftRecordCount,
 			CollisionB.UpliftAudit.UpliftRecordCount);
+		Report += FString::Printf(TEXT("| Influence-radius oracle | %s | radius %.12f / %.12f km, residual %.12e / %.12e km |\n"),
+			*PassFail(CollisionA.OracleRadiusResidualKm <= GateToleranceKm && CollisionB.OracleRadiusResidualKm <= GateToleranceKm),
+			CollisionA.UpliftAudit.InfluenceRadiusKm,
+			CollisionB.UpliftAudit.InfluenceRadiusKm,
+			CollisionA.OracleRadiusResidualKm,
+			CollisionB.OracleRadiusResidualKm);
 		Report += FString::Printf(TEXT("| Formula oracle | %s | delta residual %.15f km, record residual %.15f km |\n"),
 			*PassFail(bCollisionPass),
 			FMath::Abs(CollisionA.OracleDeltaSumKm - CollisionA.UpliftAudit.TotalAppliedDeltaKm),
@@ -1020,12 +1055,12 @@ namespace
 			OceanB.PolicyResolvedMultiHitCount);
 
 		Report += TEXT("## Uplift Replays\n\n");
-		Report += TEXT("| Fixture | Replay | Step | Topology | Records | Unique vertices | Terrane area km2 | Radius km | Center expected | Center applied | Total delta | Oracle residual | Policy multi-hits | Plan hash | Uplift hash |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
+		Report += TEXT("| Fixture | Replay | Step | Topology | Records | Unique vertices | Terrane area km2 | Radius km | Radius residual | Center expected | Center applied | Total delta | Oracle residual | Policy multi-hits | Plan hash | Uplift hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
 		auto AddUpliftRow = [&Report](const FUpliftReplayResult& Result)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %d | %d | %s | %d | %d | %.6f | %.6f | %.12f | %.12f | %.12f | %.15f | %d | `%s` | `%s` |\n"),
+				TEXT("| %s | %d | %d | %s | %d | %d | %.6f | %.6f | %.12e | %.12f | %.12f | %.12f | %.15f | %d | `%s` | `%s` |\n"),
 				*Result.Fixture,
 				Result.Replay,
 				Result.StepCount,
@@ -1034,6 +1069,7 @@ namespace
 				Result.UpliftAudit.UniqueUpliftedVertexCount,
 				Result.UpliftAudit.TerraneAreaKm2,
 				Result.UpliftAudit.InfluenceRadiusKm,
+				Result.OracleRadiusResidualKm,
 				Result.UpliftAudit.CenterExpectedDeltaKm,
 				Result.UpliftAudit.CenterAppliedDeltaKm,
 				Result.UpliftAudit.TotalAppliedDeltaKm,
@@ -1144,7 +1180,7 @@ int32 UCarrierLabPhaseIIID7Commandlet::Main(const FString& Params)
 		*FPaths::Combine(OutputRoot, TEXT("metrics.jsonl")));
 
 	const FString Report = BuildReport(OutputRoot, BypassA, BypassB, IIIBA, IIIBB, CollisionA, CollisionB, OceanA, OceanB);
-	FFileHelper::SaveStringToFile(Report, *ReportPath);
+	FFileHelper::SaveStringToFile(Report, *ReportPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 
 	const bool bPass =
 		bBypassA &&
