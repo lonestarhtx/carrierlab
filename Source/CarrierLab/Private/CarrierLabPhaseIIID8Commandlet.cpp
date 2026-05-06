@@ -164,6 +164,34 @@ namespace
 		return FString::Printf(TEXT("%.2fx"), Ratio);
 	}
 
+	void AddDiagnosticCallCounts(
+		FCarrierLabPhaseIIIDiagnosticCallCounts& Accumulator,
+		const FCarrierLabPhaseIIIDiagnosticCallCounts& Value)
+	{
+		Accumulator.DetectTerranes += Value.DetectTerranes;
+		Accumulator.GroupCollisions += Value.GroupCollisions;
+		Accumulator.DestinationMass += Value.DestinationMass;
+		Accumulator.SlabBreakPlan += Value.SlabBreakPlan;
+		Accumulator.SuturePlan += Value.SuturePlan;
+		Accumulator.TopologyMutation += Value.TopologyMutation;
+		Accumulator.UpliftPlan += Value.UpliftPlan;
+		Accumulator.UpliftApply += Value.UpliftApply;
+	}
+
+	FString FormatCallCounts(const FCarrierLabPhaseIIIDiagnosticCallCounts& Calls)
+	{
+		return FString::Printf(
+			TEXT("D1=%d D2=%d D3=%d D4=%d D5=%d D6=%d D7p=%d D7a=%d"),
+			Calls.DetectTerranes,
+			Calls.GroupCollisions,
+			Calls.DestinationMass,
+			Calls.SlabBreakPlan,
+			Calls.SuturePlan,
+			Calls.TopologyMutation,
+			Calls.UpliftPlan,
+			Calls.UpliftApply);
+	}
+
 	FString GetOutputRoot(const FString& Params)
 	{
 		FString OutputRoot;
@@ -298,6 +326,10 @@ namespace
 		int32 CollisionUpliftRecordCount = 0;
 		double CollisionTransferredContinentalArea = 0.0;
 		double CollisionUpliftDeltaKm = 0.0;
+		double CollisionProbeSeconds = 0.0;
+		double CollisionMutationProbeSeconds = 0.0;
+		double CollisionNoMutationProbeSeconds = 0.0;
+		FCarrierLabPhaseIIIDiagnosticCallCounts CollisionCallCounts;
 		int32 PolicyResolvedMultiHitCount = 0;
 		FCarrierLabPhaseIIContactMetrics ContactMetrics;
 		FCarrierLabPhaseIITriangleLabelMetrics LabelMetrics;
@@ -798,20 +830,26 @@ namespace
 	{
 		UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: start attempt %d"), Result.CollisionAttemptCount + 1);
 		const double StartSeconds = FPlatformTime::Seconds();
+		Actor.ResetPhaseIIIDiagnosticCallCounts();
 		FCarrierLabPhaseIIID7CollisionUpliftAudit Audit;
 		if (!Actor.ApplyPhaseIIID7CollisionUplift(Audit, CollisionThresholdKm, DestinationMassThresholdRatio))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("IIID8 collision probe: failed in %.3fs"), FPlatformTime::Seconds() - StartSeconds);
 			return false;
 		}
+		const double ProbeSeconds = FPlatformTime::Seconds() - StartSeconds;
+		Result.CollisionProbeSeconds += ProbeSeconds;
+		AddDiagnosticCallCounts(Result.CollisionCallCounts, Actor.GetPhaseIIIDiagnosticCallCounts());
 		++Result.CollisionAttemptCount;
 		if (!Audit.bTopologyMutationApplied)
 		{
-			UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: no mutation in %.3fs"), FPlatformTime::Seconds() - StartSeconds);
+			Result.CollisionNoMutationProbeSeconds += ProbeSeconds;
+			UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: no mutation in %.3fs"), ProbeSeconds);
 			return true;
 		}
 
 		++Result.CollisionEventCount;
+		Result.CollisionMutationProbeSeconds += ProbeSeconds;
 		Result.CollisionUpliftRecordCount += Audit.UpliftRecordCount;
 		Result.CollisionUpliftDeltaKm += Audit.TotalAppliedDeltaKm;
 		for (const FCarrierLabPhaseIIID6TopologyMutationRecord& Record : Audit.TopologyAudit.Records)
@@ -829,7 +867,7 @@ namespace
 		HashMix(Hash, static_cast<uint64>(Result.CollisionEventCount + 1));
 		HashMixDouble(Hash, Result.CollisionTransferredContinentalArea);
 		Result.CollisionMutationHash = HashToString(Hash);
-		UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: mutation event=%d transfer=%.12f uplift_records=%d in %.3fs"), Result.CollisionEventCount, Result.CollisionTransferredContinentalArea, Audit.UpliftRecordCount, FPlatformTime::Seconds() - StartSeconds);
+		UE_LOG(LogTemp, Display, TEXT("IIID8 collision probe: mutation event=%d transfer=%.12f uplift_records=%d in %.3fs"), Result.CollisionEventCount, Result.CollisionTransferredContinentalArea, Audit.UpliftRecordCount, ProbeSeconds);
 		return true;
 	}
 
@@ -981,6 +1019,21 @@ namespace
 			Result.FilterMetrics.AuthoritativeCAFAfter,
 			Result.Seconds,
 			*JsonString(Result.ReplayHash)));
+		if (Result.bIIIDActive)
+		{
+			Lines.Add(FString::Printf(
+				TEXT("{\"kind\":\"iiid_collision_probe_timing\",\"fixture\":%s,\"replay\":%d,\"attempts\":%d,\"events\":%d,\"total_seconds\":%.6f,\"mutation_seconds\":%.6f,\"no_mutation_seconds\":%.6f,\"seconds_per_attempt\":%.9f,\"seconds_per_event\":%.9f,\"calls\":%s}"),
+				*JsonString(Result.FixtureName),
+				Result.Replay,
+				Result.CollisionAttemptCount,
+				Result.CollisionEventCount,
+				Result.CollisionProbeSeconds,
+				Result.CollisionMutationProbeSeconds,
+				Result.CollisionNoMutationProbeSeconds,
+				Result.CollisionAttemptCount > 0 ? Result.CollisionProbeSeconds / static_cast<double>(Result.CollisionAttemptCount) : 0.0,
+				Result.CollisionEventCount > 0 ? Result.CollisionMutationProbeSeconds / static_cast<double>(Result.CollisionEventCount) : 0.0,
+				*JsonString(FormatCallCounts(Result.CollisionCallCounts))));
+		}
 	}
 
 	FString BuildTierPolicyReport(const FString& OutputRoot, const EValidationTier Tier)
@@ -1117,6 +1170,41 @@ namespace
 				Row->FilterMetrics.AuthoritativeCAFAfter,
 				*Row->LedgerMetrics.MaterialLedgerHash,
 				*Row->ReplayHash);
+		}
+
+		Report += TEXT("\n## Integrated Collision Timing\n\n");
+		Report += TEXT("| Fixture | Replay | Attempts | Events | Collision probe seconds | Mutation seconds | No-mutation seconds | Seconds / attempt | Seconds / event | Nested calls |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += FString::Printf(
+			TEXT("| %s | %d | %d | %d | %.6f | %.6f | %.6f | %.9f | %.9f | %s |\n"),
+			*ActiveA.FixtureName,
+			ActiveA.Replay,
+			ActiveA.CollisionAttemptCount,
+			ActiveA.CollisionEventCount,
+			ActiveA.CollisionProbeSeconds,
+			ActiveA.CollisionMutationProbeSeconds,
+			ActiveA.CollisionNoMutationProbeSeconds,
+			ActiveA.CollisionAttemptCount > 0 ? ActiveA.CollisionProbeSeconds / static_cast<double>(ActiveA.CollisionAttemptCount) : 0.0,
+			ActiveA.CollisionEventCount > 0 ? ActiveA.CollisionMutationProbeSeconds / static_cast<double>(ActiveA.CollisionEventCount) : 0.0,
+			*FormatCallCounts(ActiveA.CollisionCallCounts));
+		if (bActiveReplay1Requested)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %d | %d | %d | %.6f | %.6f | %.6f | %.9f | %.9f | %s |\n"),
+				*ActiveB.FixtureName,
+				ActiveB.Replay,
+				ActiveB.CollisionAttemptCount,
+				ActiveB.CollisionEventCount,
+				ActiveB.CollisionProbeSeconds,
+				ActiveB.CollisionMutationProbeSeconds,
+				ActiveB.CollisionNoMutationProbeSeconds,
+				ActiveB.CollisionAttemptCount > 0 ? ActiveB.CollisionProbeSeconds / static_cast<double>(ActiveB.CollisionAttemptCount) : 0.0,
+				ActiveB.CollisionEventCount > 0 ? ActiveB.CollisionMutationProbeSeconds / static_cast<double>(ActiveB.CollisionEventCount) : 0.0,
+				*FormatCallCounts(ActiveB.CollisionCallCounts));
+		}
+		else
+		{
+			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
