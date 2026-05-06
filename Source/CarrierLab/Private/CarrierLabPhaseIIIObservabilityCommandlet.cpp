@@ -1094,6 +1094,285 @@ namespace
 		return true;
 	}
 
+	double MaxCollisionDeltaKm(const FCarrierLabPhaseIIID7CollisionUpliftAudit& Audit)
+	{
+		double MaxDeltaKm = 0.0;
+		for (const FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : Audit.Records)
+		{
+			if (Record.bApplied)
+			{
+				MaxDeltaKm = FMath::Max(MaxDeltaKm, FMath::Abs(Record.AppliedDeltaKm));
+			}
+		}
+		return FMath::Max(MaxDeltaKm, 1.0e-9);
+	}
+
+	FColor CollisionDeltaColor(const double NormalizedDelta)
+	{
+		const double T = FMath::Clamp(NormalizedDelta, 0.0, 1.0);
+		return FColor(
+			255,
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(112.0, 238.0, T))),
+			static_cast<uint8>(FMath::RoundToInt(FMath::Lerp(32.0, 74.0, T))),
+			255);
+	}
+
+	void DrawProjectedCross(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const FVector3d& UnitPosition,
+		const int32 Radius,
+		const FColor& Color)
+	{
+		int32 X = 0;
+		int32 Y = 0;
+		if (!ForwardMollweidePixel(UnitPosition, Width, Height, X, Y))
+		{
+			return;
+		}
+		DrawThickLine(Pixels, Width, Height, X - Radius, Y, X + Radius, Y, Color, 1);
+		DrawThickLine(Pixels, Width, Height, X, Y - Radius, X, Y + Radius, Color, 1);
+	}
+
+	FVector3d OrthogonalUnitVector(const FVector3d& Normal)
+	{
+		FVector3d Axis = FVector3d::CrossProduct(FVector3d::UnitZ(), Normal);
+		if (Axis.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			Axis = FVector3d::CrossProduct(FVector3d::UnitX(), Normal);
+		}
+		return Axis.GetSafeNormal();
+	}
+
+	void DrawProjectedRadiusRing(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const FVector3d& CenterUnitPosition,
+		const double RadiusKm,
+		const double PlanetRadiusKm,
+		const FColor& Color)
+	{
+		if (RadiusKm <= 0.0 || PlanetRadiusKm <= 0.0)
+		{
+			return;
+		}
+
+		const FVector3d Center = CenterUnitPosition.GetSafeNormal();
+		const FVector3d BasisA = OrthogonalUnitVector(Center);
+		const FVector3d BasisB = FVector3d::CrossProduct(Center, BasisA).GetSafeNormal();
+		const double AngularRadius = FMath::Clamp(RadiusKm / PlanetRadiusKm, 0.0, UE_DOUBLE_PI);
+
+		int32 PreviousX = INDEX_NONE;
+		int32 PreviousY = INDEX_NONE;
+		for (int32 Segment = 0; Segment <= 144; ++Segment)
+		{
+			const double Theta = 2.0 * UE_DOUBLE_PI * static_cast<double>(Segment) / 144.0;
+			const FVector3d Tangent = BasisA * FMath::Cos(Theta) + BasisB * FMath::Sin(Theta);
+			const FVector3d Point = (Center * FMath::Cos(AngularRadius) + Tangent * FMath::Sin(AngularRadius)).GetSafeNormal();
+			int32 X = 0;
+			int32 Y = 0;
+			if (!ForwardMollweidePixel(Point, Width, Height, X, Y))
+			{
+				PreviousX = INDEX_NONE;
+				PreviousY = INDEX_NONE;
+				continue;
+			}
+			if (PreviousX != INDEX_NONE && FMath::Abs(X - PreviousX) < Width / 2)
+			{
+				DrawThickLine(Pixels, Width, Height, PreviousX, PreviousY, X, Y, Color, 1);
+			}
+			PreviousX = X;
+			PreviousY = Y;
+		}
+	}
+
+	void DrawCollisionAuditOverlay(
+		TArray<FColor>& Pixels,
+		const int32 Width,
+		const int32 Height,
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit& Audit,
+		const bool bDrawConnections)
+	{
+		const double MaxDeltaKm = MaxCollisionDeltaKm(Audit);
+		const FVector3d Center = Audit.TerraneCentroid.GetSafeNormal();
+		DrawProjectedRadiusRing(Pixels, Width, Height, Center, Audit.InfluenceRadiusKm, Audit.PlanetRadiusKm, FColor(80, 222, 255, 255));
+
+		int32 CenterX = 0;
+		int32 CenterY = 0;
+		const bool bHasCenter = ForwardMollweidePixel(Center, Width, Height, CenterX, CenterY);
+		if (bHasCenter)
+		{
+			DrawProjectedCross(Pixels, Width, Height, Center, 14, FColor(240, 248, 255, 255));
+		}
+
+		for (const FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : Audit.Records)
+		{
+			if (!Record.bApplied)
+			{
+				continue;
+			}
+			int32 X = 0;
+			int32 Y = 0;
+			if (!ForwardMollweidePixel(Record.VertexUnitPosition, Width, Height, X, Y))
+			{
+				continue;
+			}
+			if (bDrawConnections && bHasCenter && FMath::Abs(X - CenterX) < Width / 2)
+			{
+				DrawLine(Pixels, Width, Height, CenterX, CenterY, X, Y, FColor(84, 155, 180, 255));
+			}
+			const double NormalizedDelta = FMath::Abs(Record.AppliedDeltaKm) / MaxDeltaKm;
+			const int32 Radius = 8 + FMath::RoundToInt(10.0 * FMath::Clamp(NormalizedDelta, 0.0, 1.0));
+			DrawDisk(Pixels, Width, Height, X, Y, Radius + 2, FColor(20, 12, 5, 255));
+			DrawDisk(Pixels, Width, Height, X, Y, Radius, CollisionDeltaColor(NormalizedDelta));
+		}
+	}
+
+	bool BuildCollisionDeltaMap(
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit& Audit,
+		TArray<FColor>& OutPixels,
+		int32& OutWidth,
+		int32& OutHeight)
+	{
+		OutWidth = 2048;
+		OutHeight = 1024;
+		OutPixels.Init(FColor(3, 6, 10, 255), OutWidth * OutHeight);
+		if (Audit.UpliftRecordCount <= 0)
+		{
+			return true;
+		}
+		DrawCollisionAuditOverlay(OutPixels, OutWidth, OutHeight, Audit, true);
+		DrawTextSmall(OutPixels, OutWidth, OutHeight, 24, 24, TEXT("COLLISION DELTA"), FColor(235, 241, 247, 255), 2);
+		DrawTextSmall(
+			OutPixels,
+			OutWidth,
+			OutHeight,
+			24,
+			48,
+			FString::Printf(TEXT("%d RECORDS / %.3f KM TOTAL"), Audit.UpliftRecordCount, Audit.TotalAppliedDeltaKm),
+			FColor(180, 203, 216, 255),
+			1);
+		return true;
+	}
+
+	bool ComputeCollisionProjectedBounds(
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit& Audit,
+		const int32 Width,
+		const int32 Height,
+		FIntRect& OutBounds)
+	{
+		int32 MinX = Width;
+		int32 MinY = Height;
+		int32 MaxX = 0;
+		int32 MaxY = 0;
+		int32 Count = 0;
+
+		auto AddPoint = [&](const FVector3d& UnitPosition)
+		{
+			int32 X = 0;
+			int32 Y = 0;
+			if (!ForwardMollweidePixel(UnitPosition, Width, Height, X, Y))
+			{
+				return;
+			}
+			MinX = FMath::Min(MinX, X);
+			MinY = FMath::Min(MinY, Y);
+			MaxX = FMath::Max(MaxX, X);
+			MaxY = FMath::Max(MaxY, Y);
+			++Count;
+		};
+
+		AddPoint(Audit.TerraneCentroid);
+		for (const FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : Audit.Records)
+		{
+			if (Record.bApplied)
+			{
+				AddPoint(Record.VertexUnitPosition);
+			}
+		}
+
+		if (Count == 0)
+		{
+			return false;
+		}
+
+		const int32 MarginX = FMath::Max(96, (MaxX - MinX) * 3);
+		const int32 MarginY = FMath::Max(64, (MaxY - MinY) * 3);
+		MinX = FMath::Clamp(MinX - MarginX, 0, Width - 1);
+		MaxX = FMath::Clamp(MaxX + MarginX, 0, Width - 1);
+		MinY = FMath::Clamp(MinY - MarginY, 0, Height - 1);
+		MaxY = FMath::Clamp(MaxY + MarginY, 0, Height - 1);
+
+		const double TargetAspect = 2.0;
+		int32 CropWidth = FMath::Max(64, MaxX - MinX + 1);
+		int32 CropHeight = FMath::Max(32, MaxY - MinY + 1);
+		if (static_cast<double>(CropWidth) / static_cast<double>(CropHeight) < TargetAspect)
+		{
+			const int32 DesiredWidth = FMath::RoundToInt(static_cast<double>(CropHeight) * TargetAspect);
+			const int32 Expand = DesiredWidth - CropWidth;
+			MinX = FMath::Clamp(MinX - Expand / 2, 0, Width - 1);
+			MaxX = FMath::Clamp(MaxX + Expand - Expand / 2, 0, Width - 1);
+		}
+		else
+		{
+			const int32 DesiredHeight = FMath::RoundToInt(static_cast<double>(CropWidth) / TargetAspect);
+			const int32 Expand = DesiredHeight - CropHeight;
+			MinY = FMath::Clamp(MinY - Expand / 2, 0, Height - 1);
+			MaxY = FMath::Clamp(MaxY + Expand - Expand / 2, 0, Height - 1);
+		}
+
+		OutBounds = FIntRect(MinX, MinY, MaxX + 1, MaxY + 1);
+		return OutBounds.Width() > 0 && OutBounds.Height() > 0;
+	}
+
+	bool BuildCollisionZoomMap(
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit& Audit,
+		const TArray<FColor>& SourcePixels,
+		const int32 SourceWidth,
+		const int32 SourceHeight,
+		TArray<FColor>& OutPixels,
+		int32& OutWidth,
+		int32& OutHeight)
+	{
+		OutWidth = 1024;
+		OutHeight = 512;
+		OutPixels.Init(FColor(3, 6, 10, 255), OutWidth * OutHeight);
+		FIntRect Bounds;
+		if (!ComputeCollisionProjectedBounds(Audit, SourceWidth, SourceHeight, Bounds))
+		{
+			return true;
+		}
+
+		for (int32 Y = 0; Y < OutHeight; ++Y)
+		{
+			const int32 SourceY = FMath::Clamp(Bounds.Min.Y + (Y * Bounds.Height()) / OutHeight, 0, SourceHeight - 1);
+			for (int32 X = 0; X < OutWidth; ++X)
+			{
+				const int32 SourceX = FMath::Clamp(Bounds.Min.X + (X * Bounds.Width()) / OutWidth, 0, SourceWidth - 1);
+				OutPixels[Y * OutWidth + X] = SourcePixels[SourceY * SourceWidth + SourceX];
+			}
+		}
+
+		const FColor Border(235, 241, 247, 255);
+		DrawThickLine(OutPixels, OutWidth, OutHeight, 0, 0, OutWidth - 1, 0, Border, 1);
+		DrawThickLine(OutPixels, OutWidth, OutHeight, 0, OutHeight - 1, OutWidth - 1, OutHeight - 1, Border, 1);
+		DrawThickLine(OutPixels, OutWidth, OutHeight, 0, 0, 0, OutHeight - 1, Border, 1);
+		DrawThickLine(OutPixels, OutWidth, OutHeight, OutWidth - 1, 0, OutWidth - 1, OutHeight - 1, Border, 1);
+		DrawTextSmall(OutPixels, OutWidth, OutHeight, 18, 18, TEXT("COLLISION ZOOM"), FColor(235, 241, 247, 255), 2);
+		DrawTextSmall(
+			OutPixels,
+			OutWidth,
+			OutHeight,
+			18,
+			42,
+			FString::Printf(TEXT("%d UPLIFT POINTS / R %.0f KM"), Audit.UpliftRecordCount, Audit.InfluenceRadiusKm),
+			FColor(180, 203, 216, 255),
+			1);
+		return true;
+	}
+
 	struct FLayerExport
 	{
 		ECarrierLabVisualizationLayer Layer = ECarrierLabVisualizationLayer::PlateId;
@@ -1368,6 +1647,51 @@ namespace
 			return false;
 		}
 		Images.Add(DistanceToFront);
+
+		if (CollisionUpliftAudit != nullptr && CollisionUpliftAudit->UpliftRecordCount > 0)
+		{
+			FLayerPixels CollisionOverlay = CrustType;
+			CollisionOverlay.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
+			CollisionOverlay.Export.Name = TEXT("CollisionOverlay");
+			CollisionOverlay.Label = TEXT("COLLISION OVERLAY");
+			DimPixels(CollisionOverlay.Pixels, 0.50);
+			DrawPlateBoundaryTriangleOverlays(CollisionOverlay.Pixels, CollisionOverlay.Width, CollisionOverlay.Height, PlateBoundaryTriangles, 1);
+			DrawCollisionAuditOverlay(CollisionOverlay.Pixels, CollisionOverlay.Width, CollisionOverlay.Height, *CollisionUpliftAudit, true);
+			if (!SaveImage(CollisionOverlay))
+			{
+				return false;
+			}
+			Images.Add(CollisionOverlay);
+
+			FLayerPixels CollisionDelta;
+			CollisionDelta.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
+			CollisionDelta.Export.Name = TEXT("CollisionDelta");
+			CollisionDelta.Label = TEXT("COLLISION DELTA");
+			if (!BuildCollisionDeltaMap(*CollisionUpliftAudit, CollisionDelta.Pixels, CollisionDelta.Width, CollisionDelta.Height) ||
+				!SaveImage(CollisionDelta))
+			{
+				return false;
+			}
+			Images.Add(CollisionDelta);
+
+			FLayerPixels CollisionZoom;
+			CollisionZoom.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
+			CollisionZoom.Export.Name = TEXT("CollisionZoom");
+			CollisionZoom.Label = TEXT("COLLISION ZOOM");
+			if (!BuildCollisionZoomMap(
+					*CollisionUpliftAudit,
+					CollisionOverlay.Pixels,
+					CollisionOverlay.Width,
+					CollisionOverlay.Height,
+					CollisionZoom.Pixels,
+					CollisionZoom.Width,
+					CollisionZoom.Height) ||
+				!SaveImage(CollisionZoom))
+			{
+				return false;
+			}
+			Images.Add(MoveTemp(CollisionZoom));
+		}
 
 		FLayerPixels ProfileImage;
 		ProfileImage.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
@@ -1892,6 +2216,10 @@ namespace
 		Report += TEXT("- `Elevation` shows the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color on the filled continental/oceanic base map.\n");
 		Report += TEXT("- `CombinedTectonicSummary` is deliberately restrained: crust + current plate-local boundaries + velocity + subduction roles. Elevation remains separate so uplift heat does not swamp the overview.\n");
 		Report += TEXT("- `DistanceToFront` is also rasterized from current plate-local active-boundary triangles. It is diagnostic context, not a source of authority.\n");
+		if (bIIIDCollisionMode)
+		{
+			Report += TEXT("- `CollisionOverlay`, `CollisionDelta`, and `CollisionZoom` are event-focused diagnostics derived from the existing IIID.7 uplift audit records. They deliberately amplify the small forced fixture so the transferred/uplifted region is visible to a human reviewer; they do not add a new simulation signal.\n");
+		}
 		Report += TEXT("- Contact sheet headers include the simulation step and approximate `Myr` timestamp using the CarrierLab `2 Ma` timestep.\n");
 		Report += bIIIDCollisionMode
 			? TEXT("- `ElevationProfile` plots IIID.7 collision uplift delta against distance-to-terrane for the post-collision fixture. The profile is a visual sanity plot; the IIID.7 commandlet remains the formula gate.\n\n")
