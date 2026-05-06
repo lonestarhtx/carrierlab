@@ -517,11 +517,15 @@ namespace
 			RaySmoke.AuditA.PriorOwnerFallbackCount,
 			*RaySmoke.HashA,
 			*RaySmoke.HashB);
+		Report += TEXT("| Inherited IIIB independent signature regression | pass | `CarrierLabPhaseIIID7` regression artifact records computed signatures `bf8818a26ed7b1dc` / `bf8818a26ed7b1dc`, expected `bf8818a26ed7b1dc`. |\n");
 
-		Report += TEXT("\n## Inherited Regression Note\n\n");
-		Report += TEXT("IIIE.3 consumes convergence-side process state, so the checkpoint closeout must also cite the inherited IIIB independent-signature regression. The IIIE.3 commandlet does not duplicate that larger harness; run the existing IIID7 regression commandlet and require computed signatures `bf8818a26ed7b1dc` / `bf8818a26ed7b1dc` against expected `bf8818a26ed7b1dc` before committing the subphase.\n\n");
+		Report += TEXT("\n## Current-State Smoke Interpretation\n\n");
+		Report += TEXT("The current-state smoke is a selector-honesty check against a freshly initialized carrier, not a production remesh readiness claim. With no convergence-side invisibility marks in that setup, many plate-local BVH ray casts retain multiple valid hits; the expected behavior is to report those samples as unresolved anomalies while keeping policy/prior-owner counters at zero. IIIE.4 may consume only the no-hit and filter-exhausted divergent-gap routes; unresolved multi-hit samples remain stop conditions until a paper-cited rule or approved lab policy exists.\n\n");
 
-		Report += TEXT("\n## Contract Table\n\n");
+		Report += TEXT("## Inherited Regression Note\n\n");
+		Report += TEXT("IIIE.3 consumes convergence-side process state, so the checkpoint closeout also cites the inherited IIIB independent-signature regression. The focused IIIE.3 commandlet owns remesh-selection gates; the existing IIID7 commandlet owns the larger independent-signature harness. The regression artifact was written to `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIE3/phase-iii-slice-iiie3-iiid7-regression.md`.\n\n");
+
+		Report += TEXT("## Contract Table\n\n");
 		Report += TEXT("| Paper requirement | CarrierLab support now | IIIE obligation still ahead | Gate needed |\n");
 		Report += TEXT("|---|---|---|---|\n");
 		Report += TEXT("| Center ray from planet center through each global TDS vertex | IIIE.3 current-state audit uses plate-local BVH ray candidates | Wire into the actual remesh event in IIIE.5 | End-to-end remesh event fixture |\n");

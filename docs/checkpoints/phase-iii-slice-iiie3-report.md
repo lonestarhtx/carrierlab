@@ -23,7 +23,11 @@ Verdict: PASS / IIIE.4 UNBLOCKED. This slice implements the Phase IIIE remesh so
 | third-plate multi-hit fails loud | pass | class `unresolved third-plate multi-hit`, raw `3`, visible `3`, filters sub/obd/coll `0/0/0`, resolved plate `-1`, policy/prior `0/0`, hash `ad9c95058968de25`. |
 | Same-seed filtered-selection replay | pass | Replay hashes `fed4e6557a4d1a0a` and `fed4e6557a4d1a0a`. |
 | Current-state plate-local ray smoke | pass | samples `64`, raw hits `64`, gaps `0`, unresolved `51`, policy/prior `0/0`, hashes `5feb44ddb3e99f7b` / `5feb44ddb3e99f7b`. |
-| Inherited IIIB independent signature regression | pass | `CarrierLabPhaseIIID7` regression produced computed signatures `bf8818a26ed7b1dc` / `bf8818a26ed7b1dc`, expected `bf8818a26ed7b1dc`. |
+| Inherited IIIB independent signature regression | pass | `CarrierLabPhaseIIID7` regression artifact records computed signatures `bf8818a26ed7b1dc` / `bf8818a26ed7b1dc`, expected `bf8818a26ed7b1dc`. |
+
+## Current-State Smoke Interpretation
+
+The current-state smoke is a selector-honesty check against a freshly initialized carrier, not a production remesh readiness claim. With no convergence-side invisibility marks in that setup, many plate-local BVH ray casts retain multiple valid hits; the expected behavior is to report those samples as unresolved anomalies while keeping policy/prior-owner counters at zero. IIIE.4 may consume only the no-hit and filter-exhausted divergent-gap routes; unresolved multi-hit samples remain stop conditions until a paper-cited rule or approved lab policy exists.
 
 ## Inherited Regression Note
 
