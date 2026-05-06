@@ -176,6 +176,21 @@ namespace
 		Accumulator.TopologyMutation += Value.TopologyMutation;
 		Accumulator.UpliftPlan += Value.UpliftPlan;
 		Accumulator.UpliftApply += Value.UpliftApply;
+		Accumulator.D1SortedHitCount += Value.D1SortedHitCount;
+		Accumulator.D1CollisionCandidateHitCount += Value.D1CollisionCandidateHitCount;
+		Accumulator.D1ComponentBuildCount += Value.D1ComponentBuildCount;
+		Accumulator.D1ComponentCacheHitCount += Value.D1ComponentCacheHitCount;
+		Accumulator.D1ExpandedContinentalTriangleCount += Value.D1ExpandedContinentalTriangleCount;
+		Accumulator.D1ScannedOceanicTriangleCount += Value.D1ScannedOceanicTriangleCount;
+		Accumulator.D1InnerSeaTriangleCount += Value.D1InnerSeaTriangleCount;
+		Accumulator.D1RecordCount += Value.D1RecordCount;
+		Accumulator.D1DecisionIndexSeconds += Value.D1DecisionIndexSeconds;
+		Accumulator.D1HitSortSeconds += Value.D1HitSortSeconds;
+		Accumulator.D1HitClassificationSeconds += Value.D1HitClassificationSeconds;
+		Accumulator.D1ComponentExpansionSeconds += Value.D1ComponentExpansionSeconds;
+		Accumulator.D1InnerSeaScanSeconds += Value.D1InnerSeaScanSeconds;
+		Accumulator.D1RecordConstructionSeconds += Value.D1RecordConstructionSeconds;
+		Accumulator.D1AuditHashSeconds += Value.D1AuditHashSeconds;
 	}
 
 	FString FormatCallCounts(const FCarrierLabPhaseIIIDiagnosticCallCounts& Calls)
@@ -190,6 +205,17 @@ namespace
 			Calls.TopologyMutation,
 			Calls.UpliftPlan,
 			Calls.UpliftApply);
+	}
+
+	double D1MeasuredSeconds(const FCarrierLabPhaseIIIDiagnosticCallCounts& Calls)
+	{
+		return Calls.D1DecisionIndexSeconds +
+			Calls.D1HitSortSeconds +
+			Calls.D1HitClassificationSeconds +
+			Calls.D1ComponentExpansionSeconds +
+			Calls.D1InnerSeaScanSeconds +
+			Calls.D1RecordConstructionSeconds +
+			Calls.D1AuditHashSeconds;
 	}
 
 	FString GetOutputRoot(const FString& Params)
@@ -1033,6 +1059,27 @@ namespace
 				Result.CollisionAttemptCount > 0 ? Result.CollisionProbeSeconds / static_cast<double>(Result.CollisionAttemptCount) : 0.0,
 				Result.CollisionEventCount > 0 ? Result.CollisionMutationProbeSeconds / static_cast<double>(Result.CollisionEventCount) : 0.0,
 				*JsonString(FormatCallCounts(Result.CollisionCallCounts))));
+			Lines.Add(FString::Printf(
+				TEXT("{\"kind\":\"iiid_d1_detection_split\",\"fixture\":%s,\"replay\":%d,\"calls\":%d,\"measured_seconds\":%.6f,\"decision_index_seconds\":%.6f,\"hit_sort_seconds\":%.6f,\"hit_classification_seconds\":%.6f,\"component_expansion_seconds\":%.6f,\"inner_sea_scan_seconds\":%.6f,\"record_construction_seconds\":%.6f,\"audit_hash_seconds\":%.6f,\"sorted_hits\":%d,\"collision_candidates\":%d,\"component_builds\":%d,\"component_cache_hits\":%d,\"expanded_continental_triangles\":%d,\"scanned_oceanic_triangles\":%d,\"inner_sea_triangles\":%d,\"records\":%d}"),
+				*JsonString(Result.FixtureName),
+				Result.Replay,
+				Result.CollisionCallCounts.DetectTerranes,
+				D1MeasuredSeconds(Result.CollisionCallCounts),
+				Result.CollisionCallCounts.D1DecisionIndexSeconds,
+				Result.CollisionCallCounts.D1HitSortSeconds,
+				Result.CollisionCallCounts.D1HitClassificationSeconds,
+				Result.CollisionCallCounts.D1ComponentExpansionSeconds,
+				Result.CollisionCallCounts.D1InnerSeaScanSeconds,
+				Result.CollisionCallCounts.D1RecordConstructionSeconds,
+				Result.CollisionCallCounts.D1AuditHashSeconds,
+				Result.CollisionCallCounts.D1SortedHitCount,
+				Result.CollisionCallCounts.D1CollisionCandidateHitCount,
+				Result.CollisionCallCounts.D1ComponentBuildCount,
+				Result.CollisionCallCounts.D1ComponentCacheHitCount,
+				Result.CollisionCallCounts.D1ExpandedContinentalTriangleCount,
+				Result.CollisionCallCounts.D1ScannedOceanicTriangleCount,
+				Result.CollisionCallCounts.D1InnerSeaTriangleCount,
+				Result.CollisionCallCounts.D1RecordCount));
 		}
 	}
 
@@ -1201,6 +1248,63 @@ namespace
 				ActiveB.CollisionAttemptCount > 0 ? ActiveB.CollisionProbeSeconds / static_cast<double>(ActiveB.CollisionAttemptCount) : 0.0,
 				ActiveB.CollisionEventCount > 0 ? ActiveB.CollisionMutationProbeSeconds / static_cast<double>(ActiveB.CollisionEventCount) : 0.0,
 				*FormatCallCounts(ActiveB.CollisionCallCounts));
+		}
+		else
+		{
+			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
+		}
+
+		Report += TEXT("\n## D1 Detection Split\n\n");
+		Report += TEXT("| Fixture | Replay | D1 calls | Measured D1 seconds | Decision index | Hit sort | Hit classification | Component expansion | Inner-sea scan | Record construction | Audit hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		auto AppendD1TimingRow = [&Report](const FPrimaryReplayResult& Result)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %d | %d | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f |\n"),
+				*Result.FixtureName,
+				Result.Replay,
+				Result.CollisionCallCounts.DetectTerranes,
+				D1MeasuredSeconds(Result.CollisionCallCounts),
+				Result.CollisionCallCounts.D1DecisionIndexSeconds,
+				Result.CollisionCallCounts.D1HitSortSeconds,
+				Result.CollisionCallCounts.D1HitClassificationSeconds,
+				Result.CollisionCallCounts.D1ComponentExpansionSeconds,
+				Result.CollisionCallCounts.D1InnerSeaScanSeconds,
+				Result.CollisionCallCounts.D1RecordConstructionSeconds,
+				Result.CollisionCallCounts.D1AuditHashSeconds);
+		};
+		AppendD1TimingRow(ActiveA);
+		if (bActiveReplay1Requested)
+		{
+			AppendD1TimingRow(ActiveB);
+		}
+		else
+		{
+			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
+		}
+
+		Report += TEXT("\n## D1 Detection Counts\n\n");
+		Report += TEXT("| Fixture | Replay | Sorted hits | Collision candidates | Component builds | Component cache hits | Expanded continental triangles | Scanned oceanic triangles | Inner-sea triangles | Records |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		auto AppendD1CountRow = [&Report](const FPrimaryReplayResult& Result)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n"),
+				*Result.FixtureName,
+				Result.Replay,
+				Result.CollisionCallCounts.D1SortedHitCount,
+				Result.CollisionCallCounts.D1CollisionCandidateHitCount,
+				Result.CollisionCallCounts.D1ComponentBuildCount,
+				Result.CollisionCallCounts.D1ComponentCacheHitCount,
+				Result.CollisionCallCounts.D1ExpandedContinentalTriangleCount,
+				Result.CollisionCallCounts.D1ScannedOceanicTriangleCount,
+				Result.CollisionCallCounts.D1InnerSeaTriangleCount,
+				Result.CollisionCallCounts.D1RecordCount);
+		};
+		AppendD1CountRow(ActiveA);
+		if (bActiveReplay1Requested)
+		{
+			AppendD1CountRow(ActiveB);
 		}
 		else
 		{

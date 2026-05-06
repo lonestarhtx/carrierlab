@@ -189,6 +189,21 @@ struct FCarrierLabPhaseIIIDiagnosticCallCounts
 	int32 TopologyMutation = 0;
 	int32 UpliftPlan = 0;
 	int32 UpliftApply = 0;
+	int32 D1SortedHitCount = 0;
+	int32 D1CollisionCandidateHitCount = 0;
+	int32 D1ComponentBuildCount = 0;
+	int32 D1ComponentCacheHitCount = 0;
+	int32 D1ExpandedContinentalTriangleCount = 0;
+	int32 D1ScannedOceanicTriangleCount = 0;
+	int32 D1InnerSeaTriangleCount = 0;
+	int32 D1RecordCount = 0;
+	double D1DecisionIndexSeconds = 0.0;
+	double D1HitSortSeconds = 0.0;
+	double D1HitClassificationSeconds = 0.0;
+	double D1ComponentExpansionSeconds = 0.0;
+	double D1InnerSeaScanSeconds = 0.0;
+	double D1RecordConstructionSeconds = 0.0;
+	double D1AuditHashSeconds = 0.0;
 };
 
 struct FCarrierLabVisualizationMotion

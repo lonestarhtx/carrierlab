@@ -793,7 +793,8 @@ namespace
 	bool BuildPhaseIIID1TerraneComponent(
 		const CarrierLab::FCarrierPlate& Plate,
 		const int32 SeedLocalTriangleId,
-		FPhaseIIID1TerraneComponent& OutComponent)
+		FPhaseIIID1TerraneComponent& OutComponent,
+		FCarrierLabPhaseIIIDiagnosticCallCounts* Diagnostics = nullptr)
 	{
 		OutComponent = FPhaseIIID1TerraneComponent();
 		if (!Plate.LocalTriangles.IsValidIndex(SeedLocalTriangleId) ||
@@ -807,6 +808,7 @@ namespace
 		Queue.Add(SeedLocalTriangleId);
 		ContinentalComponent.Add(SeedLocalTriangleId);
 
+		const double ExpansionStartSeconds = FPlatformTime::Seconds();
 		for (int32 QueueIndex = 0; QueueIndex < Queue.Num(); ++QueueIndex)
 		{
 			TArray<int32> Neighbors;
@@ -823,10 +825,17 @@ namespace
 				Queue.Add(NeighborId);
 			}
 		}
+		if (Diagnostics != nullptr)
+		{
+			Diagnostics->D1ComponentExpansionSeconds += FPlatformTime::Seconds() - ExpansionStartSeconds;
+			Diagnostics->D1ExpandedContinentalTriangleCount += ContinentalComponent.Num();
+		}
 
 		TSet<int32> TerraneTriangles = ContinentalComponent;
 		int32 InnerSeaTriangleCount = 0;
+		int32 ScannedOceanicTriangleCount = 0;
 		TSet<int32> VisitedOceanicTriangles;
+		const double InnerSeaStartSeconds = FPlatformTime::Seconds();
 		for (int32 LocalTriangleId = 0; LocalTriangleId < Plate.LocalTriangles.Num(); ++LocalTriangleId)
 		{
 			if (ContinentalComponent.Contains(LocalTriangleId) ||
@@ -848,6 +857,7 @@ namespace
 			{
 				const int32 OceanicTriangleId = OceanicQueue[QueueIndex];
 				OceanicRegion.Add(OceanicTriangleId);
+				++ScannedOceanicTriangleCount;
 
 				const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[OceanicTriangleId];
 				if (Triangle.bBoundary)
@@ -901,6 +911,12 @@ namespace
 					++InnerSeaTriangleCount;
 				}
 			}
+		}
+		if (Diagnostics != nullptr)
+		{
+			Diagnostics->D1InnerSeaScanSeconds += FPlatformTime::Seconds() - InnerSeaStartSeconds;
+			Diagnostics->D1ScannedOceanicTriangleCount += ScannedOceanicTriangleCount;
+			Diagnostics->D1InnerSeaTriangleCount += InnerSeaTriangleCount;
 		}
 
 		OutComponent.LocalTriangleIds = TerraneTriangles.Array();
@@ -4781,16 +4797,18 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 	OutAudit.PlateCount = State.Plates.Num();
 	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
 
+	double TimingStartSeconds = FPlatformTime::Seconds();
 	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
 	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
 	{
 		DecisionsByPair.Add(Decision.PairKey, Decision);
 	}
+	PhaseIIIDiagnosticCallCounts.D1DecisionIndexSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 
 	TArray<FPhaseIIID1TerraneComponent> ComponentCache;
 	TMap<uint64, int32> ComponentIndexByTriangle;
 
-	auto FindOrBuildComponent = [&ComponentCache, &ComponentIndexByTriangle](
+	auto FindOrBuildComponent = [this, &ComponentCache, &ComponentIndexByTriangle](
 		const CarrierLab::FCarrierPlate& Plate,
 		const int32 SeedLocalTriangleId,
 		FPhaseIIID1TerraneComponent const*& OutComponent) -> bool
@@ -4802,15 +4820,17 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 			if (ComponentCache.IsValidIndex(*ExistingIndex))
 			{
 				OutComponent = &ComponentCache[*ExistingIndex];
+				++PhaseIIIDiagnosticCallCounts.D1ComponentCacheHitCount;
 				return true;
 			}
 		}
 
 		FPhaseIIID1TerraneComponent NewComponent;
-		if (!BuildPhaseIIID1TerraneComponent(Plate, SeedLocalTriangleId, NewComponent))
+		if (!BuildPhaseIIID1TerraneComponent(Plate, SeedLocalTriangleId, NewComponent, &PhaseIIIDiagnosticCallCounts))
 		{
 			return false;
 		}
+		++PhaseIIIDiagnosticCallCounts.D1ComponentBuildCount;
 
 		const int32 NewIndex = ComponentCache.Add(MoveTemp(NewComponent));
 		for (const int32 LocalTriangleId : ComponentCache[NewIndex].LocalTriangleIds)
@@ -4824,6 +4844,7 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 		return true;
 	};
 
+	TimingStartSeconds = FPlatformTime::Seconds();
 	TArray<CarrierLab::FConvergenceSubductionTriangleHit> SortedHits = State.ConvergenceSubductionTriangleHits;
 	SortedHits.Sort([](
 		const CarrierLab::FConvergenceSubductionTriangleHit& A,
@@ -4843,16 +4864,21 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 		}
 		return A.EvidenceId < B.EvidenceId;
 	});
+	PhaseIIIDiagnosticCallCounts.D1HitSortSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
+	PhaseIIIDiagnosticCallCounts.D1SortedHitCount += SortedHits.Num();
 
+	TimingStartSeconds = FPlatformTime::Seconds();
 	uint64 AuditHash = 1469598103934665603ull;
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.Step + 1));
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.EventCount + 1));
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.PlateCount + 1));
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.ResetSerial + 1));
 	HashMix(AuditHash, static_cast<uint64>(SortedHits.Num() + 1));
+	PhaseIIIDiagnosticCallCounts.D1AuditHashSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 
 	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : SortedHits)
 	{
+		TimingStartSeconds = FPlatformTime::Seconds();
 		HashMix(AuditHash, Hit.PairKey + 1ull);
 		HashMix(AuditHash, static_cast<uint64>(Hit.PlateId + 1));
 		HashMix(AuditHash, static_cast<uint64>(Hit.OtherPlateId + 1));
@@ -4865,6 +4891,7 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 			Decision->DecisionClass != CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate)
 		{
 			++OutAudit.NonCollisionDecisionHitCount;
+			PhaseIIIDiagnosticCallCounts.D1HitClassificationSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 			continue;
 		}
 
@@ -4872,6 +4899,7 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 		if (!State.Plates.IsValidIndex(Hit.PlateId))
 		{
 			++OutAudit.InvalidSeedCount;
+			PhaseIIIDiagnosticCallCounts.D1HitClassificationSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 			continue;
 		}
 
@@ -4879,13 +4907,16 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 		if (!Plate.LocalTriangles.IsValidIndex(Hit.LocalTriangleId))
 		{
 			++OutAudit.InvalidSeedCount;
+			PhaseIIIDiagnosticCallCounts.D1HitClassificationSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 			continue;
 		}
 		if (!IsPlateLocalTriangleContinental(Plate, Hit.LocalTriangleId))
 		{
 			++OutAudit.NonContinentalSeedCount;
+			PhaseIIIDiagnosticCallCounts.D1HitClassificationSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 			continue;
 		}
+		PhaseIIIDiagnosticCallCounts.D1HitClassificationSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 
 		const FPhaseIIID1TerraneComponent* Component = nullptr;
 		if (!FindOrBuildComponent(Plate, Hit.LocalTriangleId, Component) || Component == nullptr)
@@ -4894,6 +4925,7 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 			continue;
 		}
 
+		TimingStartSeconds = FPlatformTime::Seconds();
 		FCarrierLabPhaseIIID1TerraneRecord& Record = OutAudit.Records.AddDefaulted_GetRef();
 		Record.RecordId = OutAudit.Records.Num() - 1;
 		Record.PairKey = Hit.PairKey;
@@ -4959,8 +4991,10 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 		HashMix(AuditHash, static_cast<uint64>(Record.VertexCount + 1));
 		HashMixDouble(AuditHash, Record.MeanContinentalFraction);
 		HashMixDouble(AuditHash, Record.AreaWeight);
+		PhaseIIIDiagnosticCallCounts.D1RecordConstructionSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
 	}
 
+	TimingStartSeconds = FPlatformTime::Seconds();
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.CollisionCandidateHitCount + 1));
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.TerraneRecordCount + 1));
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.TotalTerraneTriangleCount + 1));
@@ -4972,6 +5006,9 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID1ConnectedTerranes(FCarrierLa
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.NonContinentalSeedCount + 1));
 	HashMix(AuditHash, static_cast<uint64>(OutAudit.EmptyTerraneCount + 1));
 	OutAudit.TerraneDetectionHash = HashToString(AuditHash);
+	PhaseIIIDiagnosticCallCounts.D1AuditHashSeconds += FPlatformTime::Seconds() - TimingStartSeconds;
+	PhaseIIIDiagnosticCallCounts.D1CollisionCandidateHitCount += OutAudit.CollisionCandidateHitCount;
+	PhaseIIIDiagnosticCallCounts.D1RecordCount += OutAudit.TerraneRecordCount;
 	return true;
 }
 
