@@ -188,6 +188,8 @@ namespace
 		Accumulator.D7AppliedRecordCount += Value.D7AppliedRecordCount;
 		Accumulator.D7TopologyMutationAppliedCount += Value.D7TopologyMutationAppliedCount;
 		Accumulator.D7NoUpliftAvailableCount += Value.D7NoUpliftAvailableCount;
+		Accumulator.D3DestinationComponentBuildCount += Value.D3DestinationComponentBuildCount;
+		Accumulator.D3DestinationComponentCacheHitCount += Value.D3DestinationComponentCacheHitCount;
 		Accumulator.D1DecisionIndexSeconds += Value.D1DecisionIndexSeconds;
 		Accumulator.D1HitSortSeconds += Value.D1HitSortSeconds;
 		Accumulator.D1HitClassificationSeconds += Value.D1HitClassificationSeconds;
@@ -197,6 +199,11 @@ namespace
 		Accumulator.D1AuditHashSeconds += Value.D1AuditHashSeconds;
 		Accumulator.D7ApplyTotalSeconds += Value.D7ApplyTotalSeconds;
 		Accumulator.D7InputPipelineSeconds += Value.D7InputPipelineSeconds;
+		Accumulator.D7D2GroupingSeconds += Value.D7D2GroupingSeconds;
+		Accumulator.D7D3DestinationMassSeconds += Value.D7D3DestinationMassSeconds;
+		Accumulator.D7D4SlabBreakSeconds += Value.D7D4SlabBreakSeconds;
+		Accumulator.D7D5SutureSeconds += Value.D7D5SutureSeconds;
+		Accumulator.D3DestinationComponentExpansionSeconds += Value.D3DestinationComponentExpansionSeconds;
 		Accumulator.D7UpliftPlanSeconds += Value.D7UpliftPlanSeconds;
 		Accumulator.D7ApplyFromPlanSeconds += Value.D7ApplyFromPlanSeconds;
 		Accumulator.D7TopologyMutationSeconds += Value.D7TopologyMutationSeconds;
@@ -235,6 +242,15 @@ namespace
 		return Calls.D7InputPipelineSeconds +
 			Calls.D7UpliftPlanSeconds +
 			Calls.D7ApplyFromPlanSeconds;
+	}
+
+	double D7MeasuredInputStageSeconds(const FCarrierLabPhaseIIIDiagnosticCallCounts& Calls)
+	{
+		return D1MeasuredSeconds(Calls) +
+			Calls.D7D2GroupingSeconds +
+			Calls.D7D3DestinationMassSeconds +
+			Calls.D7D4SlabBreakSeconds +
+			Calls.D7D5SutureSeconds;
 	}
 
 	FString GetOutputRoot(const FString& Params)
@@ -1117,6 +1133,20 @@ namespace
 				Result.CollisionCallCounts.D7AppliedRecordCount,
 				Result.CollisionCallCounts.D7TopologyMutationAppliedCount,
 				Result.CollisionCallCounts.D7NoUpliftAvailableCount));
+			Lines.Add(FString::Printf(
+				TEXT("{\"kind\":\"iiid_d7_input_pipeline_split\",\"fixture\":%s,\"replay\":%d,\"input_pipeline_seconds\":%.6f,\"measured_stage_seconds\":%.6f,\"d1_measured_seconds\":%.6f,\"d2_grouping_seconds\":%.6f,\"d3_destination_mass_seconds\":%.6f,\"d4_slab_break_seconds\":%.6f,\"d5_suture_seconds\":%.6f,\"d3_destination_component_seconds\":%.6f,\"d3_destination_component_builds\":%d,\"d3_destination_component_cache_hits\":%d}"),
+				*JsonString(Result.FixtureName),
+				Result.Replay,
+				Result.CollisionCallCounts.D7InputPipelineSeconds,
+				D7MeasuredInputStageSeconds(Result.CollisionCallCounts),
+				D1MeasuredSeconds(Result.CollisionCallCounts),
+				Result.CollisionCallCounts.D7D2GroupingSeconds,
+				Result.CollisionCallCounts.D7D3DestinationMassSeconds,
+				Result.CollisionCallCounts.D7D4SlabBreakSeconds,
+				Result.CollisionCallCounts.D7D5SutureSeconds,
+				Result.CollisionCallCounts.D3DestinationComponentExpansionSeconds,
+				Result.CollisionCallCounts.D3DestinationComponentBuildCount,
+				Result.CollisionCallCounts.D3DestinationComponentCacheHitCount));
 		}
 	}
 
@@ -1375,6 +1405,36 @@ namespace
 		else
 		{
 			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
+		}
+
+		Report += TEXT("\n## D7 Input Pipeline Split\n\n");
+		Report += TEXT("| Fixture | Replay | Input pipeline | Measured stage subtotal | D1 measured | D2 grouping | D3 destination mass | D4 slab-break | D5 suture | D3 destination component | D3 component builds | D3 cache hits |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		auto AppendD7InputRow = [&Report](const FPrimaryReplayResult& Result)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %d | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f | %.6f | %d | %d |\n"),
+				*Result.FixtureName,
+				Result.Replay,
+				Result.CollisionCallCounts.D7InputPipelineSeconds,
+				D7MeasuredInputStageSeconds(Result.CollisionCallCounts),
+				D1MeasuredSeconds(Result.CollisionCallCounts),
+				Result.CollisionCallCounts.D7D2GroupingSeconds,
+				Result.CollisionCallCounts.D7D3DestinationMassSeconds,
+				Result.CollisionCallCounts.D7D4SlabBreakSeconds,
+				Result.CollisionCallCounts.D7D5SutureSeconds,
+				Result.CollisionCallCounts.D3DestinationComponentExpansionSeconds,
+				Result.CollisionCallCounts.D3DestinationComponentBuildCount,
+				Result.CollisionCallCounts.D3DestinationComponentCacheHitCount);
+		};
+		AppendD7InputRow(ActiveA);
+		if (bActiveReplay1Requested)
+		{
+			AppendD7InputRow(ActiveB);
+		}
+		else
+		{
+			Report += TEXT("| iiid_active_primary_60k | 1 | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP | SKIP |\n");
 		}
 
 		Report += TEXT("\n## D7 Apply Counts\n\n");

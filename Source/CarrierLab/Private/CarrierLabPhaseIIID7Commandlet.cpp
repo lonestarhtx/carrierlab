@@ -225,6 +225,7 @@ namespace
 		FCarrierLabPhaseIIIB4PolarityAudit PolarityAudit;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureBefore;
 		FCarrierLabPhaseIIIB7HashClosureAudit ClosureAfter;
+		FCarrierLabPhaseIIID7InputPipelineEquivalenceAudit InputPipelineEquivalenceAudit;
 		FCarrierLabPhaseIIID7CollisionUpliftAudit PlanAudit;
 		FCarrierLabPhaseIIID7CollisionUpliftAudit UpliftAudit;
 		int32 PolicyResolvedMultiHitCount = 0;
@@ -664,6 +665,13 @@ namespace
 		HashMixString(Hash, Result.PolarityAudit.PolarityHash);
 		HashMixString(Hash, Result.ClosureBefore.ComputedConvergenceTrackingHash);
 		HashMixString(Hash, Result.ClosureAfter.ComputedConvergenceTrackingHash);
+		HashMix(Hash, Result.InputPipelineEquivalenceAudit.bPassed ? 1ull : 0ull);
+		HashMixString(Hash, Result.InputPipelineEquivalenceAudit.CachedDestinationMassHash);
+		HashMixString(Hash, Result.InputPipelineEquivalenceAudit.UncachedDestinationMassHash);
+		HashMixString(Hash, Result.InputPipelineEquivalenceAudit.CachedSlabBreakPlanHash);
+		HashMixString(Hash, Result.InputPipelineEquivalenceAudit.UncachedSlabBreakPlanHash);
+		HashMixString(Hash, Result.InputPipelineEquivalenceAudit.CachedSuturePlanHash);
+		HashMixString(Hash, Result.InputPipelineEquivalenceAudit.UncachedSuturePlanHash);
 		HashMixString(Hash, Result.PlanAudit.UpliftHash);
 		HashMixString(Hash, Result.UpliftAudit.SourceTopologyMutationHash);
 		HashMixString(Hash, Result.UpliftAudit.UpliftHash);
@@ -772,7 +780,14 @@ namespace
 				}
 			}
 
-			if (!Actor->GetPhaseIIIB3SubductionMatrixAudit(OutResult.MatrixAudit) ||
+			const bool bInputEquivalenceOk = !bExpectUplift ||
+				Actor->VerifyPhaseIIID7InputPipelineEquivalence(
+					OutResult.InputPipelineEquivalenceAudit,
+					CollisionThresholdKm,
+					DestinationMassThresholdRatio);
+
+			if (!bInputEquivalenceOk ||
+				!Actor->GetPhaseIIIB3SubductionMatrixAudit(OutResult.MatrixAudit) ||
 				!Actor->GetPhaseIIIB4PolarityAudit(OutResult.PolarityAudit) ||
 				!Actor->GetPhaseIIIB7HashClosureAudit(OutResult.ClosureBefore) ||
 				!Actor->PlanPhaseIIID7CollisionUplift(OutResult.PlanAudit, CollisionThresholdKm, DestinationMassThresholdRatio) ||
@@ -828,6 +843,13 @@ namespace
 			A.ReplayHash == B.ReplayHash &&
 			A.MatrixAudit.MatrixEvidenceHash == B.MatrixAudit.MatrixEvidenceHash &&
 			A.PolarityAudit.PolarityHash == B.PolarityAudit.PolarityHash &&
+			A.InputPipelineEquivalenceAudit.bPassed == B.InputPipelineEquivalenceAudit.bPassed &&
+			A.InputPipelineEquivalenceAudit.CachedDestinationMassHash == B.InputPipelineEquivalenceAudit.CachedDestinationMassHash &&
+			A.InputPipelineEquivalenceAudit.UncachedDestinationMassHash == B.InputPipelineEquivalenceAudit.UncachedDestinationMassHash &&
+			A.InputPipelineEquivalenceAudit.CachedSlabBreakPlanHash == B.InputPipelineEquivalenceAudit.CachedSlabBreakPlanHash &&
+			A.InputPipelineEquivalenceAudit.UncachedSlabBreakPlanHash == B.InputPipelineEquivalenceAudit.UncachedSlabBreakPlanHash &&
+			A.InputPipelineEquivalenceAudit.CachedSuturePlanHash == B.InputPipelineEquivalenceAudit.CachedSuturePlanHash &&
+			A.InputPipelineEquivalenceAudit.UncachedSuturePlanHash == B.InputPipelineEquivalenceAudit.UncachedSuturePlanHash &&
 			A.PlanAudit.UpliftHash == B.PlanAudit.UpliftHash &&
 			A.UpliftAudit.SourceTopologyMutationHash == B.UpliftAudit.SourceTopologyMutationHash &&
 			A.UpliftAudit.UpliftHash == B.UpliftAudit.UpliftHash &&
@@ -859,6 +881,7 @@ namespace
 			A.OracleMaxRecordResidualKm <= GateToleranceKm &&
 			A.UpliftAudit.FormulaResidualKm <= GateToleranceKm &&
 			A.UpliftAudit.MaxOutsideRadiusDeltaKm <= GateToleranceKm &&
+			A.InputPipelineEquivalenceAudit.bPassed &&
 			A.UpliftAudit.TopologyAudit.bOneCollisionOnly &&
 			A.UpliftAudit.TopologyAudit.AppliedMutationCount == 1 &&
 			A.PolicyResolvedMultiHitCount == 0;
@@ -906,6 +929,19 @@ namespace
 			*JsonString(Result.UpliftAudit.UpliftHash),
 			*JsonString(Result.ReplayHash),
 			Result.Seconds));
+		Lines.Add(FString::Printf(
+			TEXT("{\"kind\":\"iiid7_input_pipeline_equivalence\",\"fixture\":%s,\"replay\":%d,\"passed\":%s,\"cached_seconds\":%.6f,\"uncached_seconds\":%.6f,\"cached_destination_hash\":%s,\"uncached_destination_hash\":%s,\"cached_slab_hash\":%s,\"uncached_slab_hash\":%s,\"cached_suture_hash\":%s,\"uncached_suture_hash\":%s}"),
+			*JsonString(Result.Fixture),
+			Result.Replay,
+			Result.InputPipelineEquivalenceAudit.bPassed ? TEXT("true") : TEXT("false"),
+			Result.InputPipelineEquivalenceAudit.CachedPipelineSeconds,
+			Result.InputPipelineEquivalenceAudit.UncachedPipelineSeconds,
+			*JsonString(Result.InputPipelineEquivalenceAudit.CachedDestinationMassHash),
+			*JsonString(Result.InputPipelineEquivalenceAudit.UncachedDestinationMassHash),
+			*JsonString(Result.InputPipelineEquivalenceAudit.CachedSlabBreakPlanHash),
+			*JsonString(Result.InputPipelineEquivalenceAudit.UncachedSlabBreakPlanHash),
+			*JsonString(Result.InputPipelineEquivalenceAudit.CachedSuturePlanHash),
+			*JsonString(Result.InputPipelineEquivalenceAudit.UncachedSuturePlanHash)));
 	}
 
 	FString BuildReport(
@@ -960,6 +996,14 @@ namespace
 			*PassFail(bCollisionPass),
 			FMath::Abs(CollisionA.OracleDeltaSumKm - CollisionA.UpliftAudit.TotalAppliedDeltaKm),
 			CollisionA.OracleMaxRecordResidualKm);
+		Report += FString::Printf(TEXT("| D7 input pipeline equivalence | %s | cached/uncached destination `%s` / `%s`, slab `%s` / `%s`, suture `%s` / `%s` |\n"),
+			*PassFail(CollisionA.InputPipelineEquivalenceAudit.bPassed && CollisionB.InputPipelineEquivalenceAudit.bPassed),
+			*CollisionA.InputPipelineEquivalenceAudit.CachedDestinationMassHash,
+			*CollisionA.InputPipelineEquivalenceAudit.UncachedDestinationMassHash,
+			*CollisionA.InputPipelineEquivalenceAudit.CachedSlabBreakPlanHash,
+			*CollisionA.InputPipelineEquivalenceAudit.UncachedSlabBreakPlanHash,
+			*CollisionA.InputPipelineEquivalenceAudit.CachedSuturePlanHash,
+			*CollisionA.InputPipelineEquivalenceAudit.UncachedSuturePlanHash);
 		Report += FString::Printf(TEXT("| Pure oceanic negative | %s | collision candidates %d, uplift records %d |\n"),
 			*PassFail(bOceanPass),
 			OceanA.PolarityAudit.CollisionCandidateCount,
@@ -1002,6 +1046,30 @@ namespace
 		AddUpliftRow(CollisionB);
 		AddUpliftRow(OceanA);
 		AddUpliftRow(OceanB);
+
+		Report += TEXT("\n## D7 Input Pipeline Equivalence\n\n");
+		Report += TEXT("| Fixture | Replay | Pass | Cached seconds | Uncached seconds | Destination hash | Slab-break hash | Suture hash |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---|---|---|\n");
+		auto AddEquivalenceRow = [&Report](const FUpliftReplayResult& Result)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %d | %s | %.6f | %.6f | `%s` / `%s` | `%s` / `%s` | `%s` / `%s` |\n"),
+				*Result.Fixture,
+				Result.Replay,
+				Result.InputPipelineEquivalenceAudit.bPassed ? TEXT("PASS") : TEXT("SKIP"),
+				Result.InputPipelineEquivalenceAudit.CachedPipelineSeconds,
+				Result.InputPipelineEquivalenceAudit.UncachedPipelineSeconds,
+				*Result.InputPipelineEquivalenceAudit.CachedDestinationMassHash,
+				*Result.InputPipelineEquivalenceAudit.UncachedDestinationMassHash,
+				*Result.InputPipelineEquivalenceAudit.CachedSlabBreakPlanHash,
+				*Result.InputPipelineEquivalenceAudit.UncachedSlabBreakPlanHash,
+				*Result.InputPipelineEquivalenceAudit.CachedSuturePlanHash,
+				*Result.InputPipelineEquivalenceAudit.UncachedSuturePlanHash);
+		};
+		AddEquivalenceRow(CollisionA);
+		AddEquivalenceRow(CollisionB);
+		AddEquivalenceRow(OceanA);
+		AddEquivalenceRow(OceanB);
 
 		Report += TEXT("\n## Representative Records\n\n");
 		Report += TEXT("| Vertex | Distance km | Transfer | Previous z | Delta z | New z | Fold magnitude |\n");

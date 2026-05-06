@@ -201,6 +201,8 @@ struct FCarrierLabPhaseIIIDiagnosticCallCounts
 	int32 D7AppliedRecordCount = 0;
 	int32 D7TopologyMutationAppliedCount = 0;
 	int32 D7NoUpliftAvailableCount = 0;
+	int32 D3DestinationComponentBuildCount = 0;
+	int32 D3DestinationComponentCacheHitCount = 0;
 	double D1DecisionIndexSeconds = 0.0;
 	double D1HitSortSeconds = 0.0;
 	double D1HitClassificationSeconds = 0.0;
@@ -210,6 +212,11 @@ struct FCarrierLabPhaseIIIDiagnosticCallCounts
 	double D1AuditHashSeconds = 0.0;
 	double D7ApplyTotalSeconds = 0.0;
 	double D7InputPipelineSeconds = 0.0;
+	double D7D2GroupingSeconds = 0.0;
+	double D7D3DestinationMassSeconds = 0.0;
+	double D7D4SlabBreakSeconds = 0.0;
+	double D7D5SutureSeconds = 0.0;
+	double D3DestinationComponentExpansionSeconds = 0.0;
 	double D7UpliftPlanSeconds = 0.0;
 	double D7ApplyFromPlanSeconds = 0.0;
 	double D7TopologyMutationSeconds = 0.0;
@@ -1259,6 +1266,31 @@ struct FCarrierLabPhaseIIID5SuturePlanAudit
 	FString SuturePlanHash;
 };
 
+struct FCarrierLabPhaseIIID7InputPipelineEquivalenceAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	double InterpenetrationThresholdKm = 300.0;
+	double DestinationMassThresholdRatio = 0.5;
+	bool bPassed = false;
+	bool bTerraneBuilt = false;
+	bool bGroupingBuilt = false;
+	bool bCachedPipelineBuilt = false;
+	bool bUncachedPipelineBuilt = false;
+	double CachedPipelineSeconds = 0.0;
+	double UncachedPipelineSeconds = 0.0;
+	FString TerraneDetectionHash;
+	FString GroupingHash;
+	FString CachedDestinationMassHash;
+	FString UncachedDestinationMassHash;
+	FString CachedSlabBreakPlanHash;
+	FString UncachedSlabBreakPlanHash;
+	FString CachedSuturePlanHash;
+	FString UncachedSuturePlanHash;
+};
+
 struct FCarrierLabPhaseIIID6TopologyMutationRecord
 {
 	int32 EventId = INDEX_NONE;
@@ -1696,6 +1728,10 @@ public:
 		FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
 		double InterpenetrationThresholdKm = 300.0,
 		double DestinationMassThresholdRatio = 0.5) const;
+	bool VerifyPhaseIIID7InputPipelineEquivalence(
+		FCarrierLabPhaseIIID7InputPipelineEquivalenceAudit& OutAudit,
+		double InterpenetrationThresholdKm = 300.0,
+		double DestinationMassThresholdRatio = 0.5) const;
 	bool ApplyPhaseIIID7CollisionUplift(
 		FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
 		double InterpenetrationThresholdKm = 300.0,
@@ -1758,7 +1794,8 @@ private:
 		const FCarrierLabPhaseIIID2CollisionGroupingAudit& GroupingAudit,
 		FCarrierLabPhaseIIID3DestinationMassAudit& OutAudit,
 		double InterpenetrationThresholdKm,
-		double DestinationMassThresholdRatio) const;
+		double DestinationMassThresholdRatio,
+		bool bEnableDestinationComponentCache = true) const;
 	bool BuildPhaseIIID4SlabBreakFromInputs(
 		const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
 		const FCarrierLabPhaseIIID3DestinationMassAudit& DestinationMassAudit,

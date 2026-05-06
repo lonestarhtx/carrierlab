@@ -5266,7 +5266,8 @@ bool ACarrierLabVisualizationActor::BuildPhaseIIID3DestinationMassFromInputs(
 	const FCarrierLabPhaseIIID2CollisionGroupingAudit& GroupingAudit,
 	FCarrierLabPhaseIIID3DestinationMassAudit& OutAudit,
 	const double InterpenetrationThresholdKm,
-	const double DestinationMassThresholdRatio) const
+	const double DestinationMassThresholdRatio,
+	const bool bEnableDestinationComponentCache) const
 {
 	OutAudit = FCarrierLabPhaseIIID3DestinationMassAudit();
 	OutAudit.Step = TerraneAudit.Step;
@@ -5317,6 +5318,8 @@ bool ACarrierLabVisualizationActor::BuildPhaseIIID3DestinationMassFromInputs(
 
 	double MinAcceptedRatio = TNumericLimits<double>::Max();
 	double MinRejectedRatio = TNumericLimits<double>::Max();
+	TArray<FPhaseIIID1TerraneComponent> DestinationComponentCache;
+	TMap<uint64, int32> DestinationComponentIndexByTriangle;
 	for (const FCarrierLabPhaseIIID2CollisionGroupRecord& Group : SortedGroups)
 	{
 		HashMix(AuditHash, Group.PairKey + 1ull);
@@ -5389,19 +5392,67 @@ bool ACarrierLabVisualizationActor::BuildPhaseIIID3DestinationMassFromInputs(
 			}
 
 			FPhaseIIID1TerraneComponent DestinationComponent;
+			const FPhaseIIID1TerraneComponent* DestinationComponentPtr = nullptr;
+			bool bDestinationComponentValid = false;
 			if (bEvidenceMatches &&
-				State.Plates.IsValidIndex(MassRecord.DestinationPlateId) &&
-				BuildPhaseIIID1TerraneComponent(
-					State.Plates[MassRecord.DestinationPlateId],
-					MassRecord.DestinationSeedLocalTriangleId,
-					DestinationComponent))
+				State.Plates.IsValidIndex(MassRecord.DestinationPlateId))
+			{
+				const uint64 DestinationSeedKey = MakePlateTriangleKey(
+					MassRecord.DestinationPlateId,
+					MassRecord.DestinationSeedLocalTriangleId);
+				if (bEnableDestinationComponentCache)
+				{
+					if (const int32* ExistingIndex = DestinationComponentIndexByTriangle.Find(DestinationSeedKey))
+					{
+						if (DestinationComponentCache.IsValidIndex(*ExistingIndex))
+						{
+							DestinationComponentPtr = &DestinationComponentCache[*ExistingIndex];
+							bDestinationComponentValid = true;
+							++PhaseIIIDiagnosticCallCounts.D3DestinationComponentCacheHitCount;
+						}
+					}
+				}
+
+				if (!bDestinationComponentValid)
+				{
+					const double DestinationComponentStartSeconds = FPlatformTime::Seconds();
+					bDestinationComponentValid = BuildPhaseIIID1TerraneComponent(
+						State.Plates[MassRecord.DestinationPlateId],
+						MassRecord.DestinationSeedLocalTriangleId,
+						DestinationComponent);
+					PhaseIIIDiagnosticCallCounts.D3DestinationComponentExpansionSeconds +=
+						FPlatformTime::Seconds() - DestinationComponentStartSeconds;
+					++PhaseIIIDiagnosticCallCounts.D3DestinationComponentBuildCount;
+					if (bDestinationComponentValid)
+					{
+						if (bEnableDestinationComponentCache)
+						{
+							const int32 NewIndex = DestinationComponentCache.Add(MoveTemp(DestinationComponent));
+							DestinationComponentPtr = &DestinationComponentCache[NewIndex];
+							for (const int32 LocalTriangleId : DestinationComponentPtr->LocalTriangleIds)
+							{
+								DestinationComponentIndexByTriangle.Add(
+									MakePlateTriangleKey(MassRecord.DestinationPlateId, LocalTriangleId),
+									NewIndex);
+							}
+						}
+						else
+						{
+							DestinationComponentPtr = &DestinationComponent;
+						}
+					}
+				}
+			}
+
+			if (bDestinationComponentValid && DestinationComponentPtr != nullptr)
 			{
 				const CarrierLab::FCarrierPlate& DestinationPlate = State.Plates[MassRecord.DestinationPlateId];
 				MassRecord.bDestinationSeedValid = true;
-				MassRecord.DestinationTriangleCount = DestinationComponent.LocalTriangleIds.Num();
-				MassRecord.DestinationContinentalTriangleCount = DestinationComponent.ContinentalTriangleCount;
-				MassRecord.DestinationInnerSeaTriangleCount = DestinationComponent.InnerSeaTriangleCount;
-				MassRecord.DestinationContinentalAreaWeight = ComputePhaseIIIDComponentAreaWeight(DestinationPlate, DestinationComponent);
+				MassRecord.DestinationTriangleCount = DestinationComponentPtr->LocalTriangleIds.Num();
+				MassRecord.DestinationContinentalTriangleCount = DestinationComponentPtr->ContinentalTriangleCount;
+				MassRecord.DestinationInnerSeaTriangleCount = DestinationComponentPtr->InnerSeaTriangleCount;
+				MassRecord.DestinationContinentalAreaWeight =
+					ComputePhaseIIIDComponentAreaWeight(DestinationPlate, *DestinationComponentPtr);
 			}
 			else
 			{
@@ -6784,6 +6835,113 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID7CollisionUplift(
 		DestinationMassThresholdRatio);
 }
 
+bool ACarrierLabVisualizationActor::VerifyPhaseIIID7InputPipelineEquivalence(
+	FCarrierLabPhaseIIID7InputPipelineEquivalenceAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	const FCarrierLabPhaseIIIDiagnosticCallCounts SavedDiagnostics = PhaseIIIDiagnosticCallCounts;
+	OutAudit = FCarrierLabPhaseIIID7InputPipelineEquivalenceAudit();
+	OutAudit.InterpenetrationThresholdKm = InterpenetrationThresholdKm;
+	OutAudit.DestinationMassThresholdRatio = DestinationMassThresholdRatio;
+	if (!bInitialized)
+	{
+		PhaseIIIDiagnosticCallCounts = SavedDiagnostics;
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	OutAudit.bTerraneBuilt = DetectPhaseIIID1ConnectedTerranes(TerraneAudit);
+	if (!OutAudit.bTerraneBuilt)
+	{
+		PhaseIIIDiagnosticCallCounts = SavedDiagnostics;
+		return false;
+	}
+	OutAudit.TerraneDetectionHash = TerraneAudit.TerraneDetectionHash;
+
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	OutAudit.bGroupingBuilt = BuildPhaseIIID2CollisionGroupsFromTerranes(
+		TerraneAudit,
+		GroupingAudit,
+		InterpenetrationThresholdKm);
+	if (!OutAudit.bGroupingBuilt)
+	{
+		PhaseIIIDiagnosticCallCounts = SavedDiagnostics;
+		return false;
+	}
+	OutAudit.GroupingHash = GroupingAudit.GroupingHash;
+
+	FCarrierLabPhaseIIID3DestinationMassAudit CachedDestinationMassAudit;
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit CachedSlabBreakAudit;
+	FCarrierLabPhaseIIID5SuturePlanAudit CachedSutureAudit;
+	const double CachedStartSeconds = FPlatformTime::Seconds();
+	const bool bCachedD3 = BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		CachedDestinationMassAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio,
+		true);
+	const bool bCachedD4 = bCachedD3 && BuildPhaseIIID4SlabBreakFromInputs(
+		TerraneAudit,
+		CachedDestinationMassAudit,
+		CachedSlabBreakAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+	const bool bCachedD5 = bCachedD4 && BuildPhaseIIID5SutureFromSlabBreak(
+		CachedSlabBreakAudit,
+		CachedSutureAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+	OutAudit.CachedPipelineSeconds = FPlatformTime::Seconds() - CachedStartSeconds;
+	OutAudit.bCachedPipelineBuilt = bCachedD3 && bCachedD4 && bCachedD5;
+	OutAudit.CachedDestinationMassHash = CachedDestinationMassAudit.DestinationMassHash;
+	OutAudit.CachedSlabBreakPlanHash = CachedSlabBreakAudit.SlabBreakPlanHash;
+	OutAudit.CachedSuturePlanHash = CachedSutureAudit.SuturePlanHash;
+
+	FCarrierLabPhaseIIID3DestinationMassAudit UncachedDestinationMassAudit;
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit UncachedSlabBreakAudit;
+	FCarrierLabPhaseIIID5SuturePlanAudit UncachedSutureAudit;
+	const double UncachedStartSeconds = FPlatformTime::Seconds();
+	const bool bUncachedD3 = BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		UncachedDestinationMassAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio,
+		false);
+	const bool bUncachedD4 = bUncachedD3 && BuildPhaseIIID4SlabBreakFromInputs(
+		TerraneAudit,
+		UncachedDestinationMassAudit,
+		UncachedSlabBreakAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+	const bool bUncachedD5 = bUncachedD4 && BuildPhaseIIID5SutureFromSlabBreak(
+		UncachedSlabBreakAudit,
+		UncachedSutureAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+	OutAudit.UncachedPipelineSeconds = FPlatformTime::Seconds() - UncachedStartSeconds;
+	OutAudit.bUncachedPipelineBuilt = bUncachedD3 && bUncachedD4 && bUncachedD5;
+	OutAudit.UncachedDestinationMassHash = UncachedDestinationMassAudit.DestinationMassHash;
+	OutAudit.UncachedSlabBreakPlanHash = UncachedSlabBreakAudit.SlabBreakPlanHash;
+	OutAudit.UncachedSuturePlanHash = UncachedSutureAudit.SuturePlanHash;
+	OutAudit.bPassed =
+		OutAudit.bCachedPipelineBuilt &&
+		OutAudit.bUncachedPipelineBuilt &&
+		OutAudit.CachedDestinationMassHash == OutAudit.UncachedDestinationMassHash &&
+		OutAudit.CachedSlabBreakPlanHash == OutAudit.UncachedSlabBreakPlanHash &&
+		OutAudit.CachedSuturePlanHash == OutAudit.UncachedSuturePlanHash;
+
+	PhaseIIIDiagnosticCallCounts = SavedDiagnostics;
+	return OutAudit.bPassed;
+}
+
 bool ACarrierLabVisualizationActor::BuildPhaseIIID7CollisionUpliftFromPlans(
 	const FCarrierLabPhaseIIID2CollisionGroupingAudit& GroupingAudit,
 	const FCarrierLabPhaseIIID5SuturePlanAudit& SutureAudit,
@@ -7069,13 +7227,17 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 		return false;
 	}
 	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	double StageStartSeconds = FPlatformTime::Seconds();
 	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
 	{
+		PhaseIIIDiagnosticCallCounts.D7D2GroupingSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
+	PhaseIIIDiagnosticCallCounts.D7D2GroupingSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
+	StageStartSeconds = FPlatformTime::Seconds();
 	if (!BuildPhaseIIID3DestinationMassFromInputs(
 		TerraneAudit,
 		GroupingAudit,
@@ -7083,11 +7245,14 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7D3DestinationMassSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
+	PhaseIIIDiagnosticCallCounts.D7D3DestinationMassSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
+	StageStartSeconds = FPlatformTime::Seconds();
 	if (!BuildPhaseIIID4SlabBreakFromInputs(
 		TerraneAudit,
 		DestinationMassAudit,
@@ -7095,21 +7260,26 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7D4SlabBreakSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
+	PhaseIIIDiagnosticCallCounts.D7D4SlabBreakSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 	FCarrierLabPhaseIIID5SuturePlanAudit SutureAudit;
+	StageStartSeconds = FPlatformTime::Seconds();
 	if (!BuildPhaseIIID5SutureFromSlabBreak(
 		SlabBreakAudit,
 		SutureAudit,
 		InterpenetrationThresholdKm,
 		DestinationMassThresholdRatio))
 	{
+		PhaseIIIDiagnosticCallCounts.D7D5SutureSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
 		PhaseIIIDiagnosticCallCounts.D7ApplyTotalSeconds += FPlatformTime::Seconds() - ApplyStartSeconds;
 		return false;
 	}
+	PhaseIIIDiagnosticCallCounts.D7D5SutureSeconds += FPlatformTime::Seconds() - StageStartSeconds;
 	PhaseIIIDiagnosticCallCounts.D7InputPipelineSeconds += FPlatformTime::Seconds() - InputPipelineStartSeconds;
 
 	FCarrierLabPhaseIIID7CollisionUpliftAudit PlannedAudit;
