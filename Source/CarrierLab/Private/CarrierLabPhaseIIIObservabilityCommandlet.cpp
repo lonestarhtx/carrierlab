@@ -34,7 +34,8 @@ namespace
 	{
 		Informational,
 		NoProcessSignals,
-		ProcessSignalsRequired
+		ProcessSignalsRequired,
+		CollisionSignalsRequired
 	};
 
 	struct FObservabilityScenario
@@ -53,6 +54,9 @@ namespace
 		bool bEnableIIICSlabPull = false;
 		bool bEnableNaturalResamplingEvents = false;
 		bool bExpectNaturalResamplingEvent = false;
+		bool bEnableIIIDCollisionVisual = false;
+		bool bApplyDestinationPatchForTest = false;
+		bool bApplyIIIDCollisionEvent = false;
 	};
 
 	FString JsonString(const FString& Value)
@@ -110,6 +114,8 @@ namespace
 			return TEXT("no_process_signals");
 		case EObservabilityExpectedState::ProcessSignalsRequired:
 			return TEXT("process_signals_required");
+		case EObservabilityExpectedState::CollisionSignalsRequired:
+			return TEXT("collision_signals_required");
 		case EObservabilityExpectedState::Informational:
 		default:
 			return TEXT("informational");
@@ -149,9 +155,37 @@ namespace
 		}
 	}
 
-	TArray<FObservabilityScenario> BuildScenarios(const bool bIIICMode)
+	TArray<FObservabilityScenario> BuildScenarios(const bool bIIICMode, const bool bIIIDCollisionMode)
 	{
 		TArray<FObservabilityScenario> Scenarios;
+		if (bIIIDCollisionMode)
+		{
+			FObservabilityScenario BeforeCollision;
+			BeforeCollision.Name = TEXT("forced_collision_ready");
+			BeforeCollision.Description = TEXT("Two-plate forced-convergence fixture at the collision threshold with the same destination-patch scaffold used by the post-collision fixture, before applying the IIID mutation.");
+			BeforeCollision.SampleCount = 10000;
+			BeforeCollision.PlateCount = 2;
+			BeforeCollision.StepCount = 8;
+			BeforeCollision.ContinentalPlateFraction = 1.0;
+			BeforeCollision.MotionFixture = ECarrierLabPhaseIIMotionFixture::ForcedConvergence;
+			BeforeCollision.MaterialFixture = EObservabilityMaterialFixture::Default;
+			BeforeCollision.ExpectedState = EObservabilityExpectedState::Informational;
+			BeforeCollision.bEnableIIICProcessLayer = true;
+			BeforeCollision.bEnableIIICSlabPull = false;
+			BeforeCollision.bEnableIIIDCollisionVisual = true;
+			BeforeCollision.bApplyDestinationPatchForTest = true;
+			BeforeCollision.bApplyIIIDCollisionEvent = false;
+			Scenarios.Add(BeforeCollision);
+
+			FObservabilityScenario AfterCollision = BeforeCollision;
+			AfterCollision.Name = TEXT("forced_collision_after");
+			AfterCollision.Description = TEXT("Same forced-convergence fixture after applying the existing IIID detach/suture/uplift event. This is visual validation only; the mutation path is the accepted IIID actor path.");
+			AfterCollision.ExpectedState = EObservabilityExpectedState::CollisionSignalsRequired;
+			AfterCollision.bApplyIIIDCollisionEvent = true;
+			Scenarios.Add(AfterCollision);
+			return Scenarios;
+		}
+
 		if (bIIICMode)
 		{
 			FObservabilityScenario ZeroMotion;
@@ -253,20 +287,37 @@ namespace
 			Params.Contains(TEXT("Mode=iiic"));
 	}
 
-	FString GetOutputRoot(const FString& Params, const bool bIIICMode)
+	bool IsIIIDCollisionMode(const FString& Params)
+	{
+		return Params.Contains(TEXT("-IIIDCollision")) ||
+			Params.Contains(TEXT("-CollisionVisual")) ||
+			Params.Contains(TEXT("Mode=IIIDCollision")) ||
+			Params.Contains(TEXT("Mode=iiidcollision")) ||
+			Params.Contains(TEXT("Mode=CollisionVisual")) ||
+			Params.Contains(TEXT("Mode=collisionvisual"));
+	}
+
+	FString GetOutputRoot(const FString& Params, const bool bIIICMode, const bool bIIIDCollisionMode)
 	{
 		FString OutputRoot;
 		if (!FParse::Value(*Params, TEXT("Out="), OutputRoot))
 		{
 			const FString Stamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
-			OutputRoot = bIIICMode
-				? FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("IIICMapExport"), Stamp)
-				: FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("Observability"), TEXT("Maps"), Stamp);
+			if (bIIIDCollisionMode)
+			{
+				OutputRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("CollisionVisualValidation"), Stamp);
+			}
+			else
+			{
+				OutputRoot = bIIICMode
+					? FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("IIICMapExport"), Stamp)
+					: FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("CarrierLab"), TEXT("PhaseIII"), TEXT("Observability"), TEXT("Maps"), Stamp);
+			}
 		}
 		return FPaths::ConvertRelativePathToFull(OutputRoot);
 	}
 
-	FString ResolveReportPath(const FString& Params, const bool bIIICMode)
+	FString ResolveReportPath(const FString& Params, const bool bIIICMode, const bool bIIIDCollisionMode)
 	{
 		FString ReportPath;
 		if (!FParse::Value(*Params, TEXT("Report="), ReportPath))
@@ -275,7 +326,9 @@ namespace
 				FPaths::ProjectDir(),
 				TEXT("docs"),
 				TEXT("checkpoints"),
-				bIIICMode ? TEXT("phase-iii-iiic-map-export.md") : TEXT("phase-iii-observability-maps.md"));
+				bIIIDCollisionMode
+					? TEXT("phase-iii-collision-visual-validation.md")
+					: (bIIICMode ? TEXT("phase-iii-iiic-map-export.md") : TEXT("phase-iii-observability-maps.md")));
 		}
 		else if (FPaths::IsRelative(ReportPath))
 		{
@@ -1005,6 +1058,42 @@ namespace
 		return true;
 	}
 
+	bool BuildCollisionElevationProfile(
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit& Audit,
+		TArray<FColor>& OutPixels,
+		int32& OutWidth,
+		int32& OutHeight)
+	{
+		OutWidth = ProfileWidth;
+		OutHeight = ProfileHeight;
+		OutPixels.Init(FColor(5, 8, 12, 255), OutWidth * OutHeight);
+
+		const int32 Left = 72;
+		const int32 Right = OutWidth - 32;
+		const int32 Top = 32;
+		const int32 Bottom = OutHeight - 56;
+		const FColor AxisColor(190, 205, 220, 255);
+		DrawLine(OutPixels, OutWidth, OutHeight, Left, Bottom, Right, Bottom, AxisColor);
+		DrawLine(OutPixels, OutWidth, OutHeight, Left, Bottom, Left, Top, AxisColor);
+
+		const double MaxDistanceKm = FMath::Max(1.0, Audit.InfluenceRadiusKm);
+		double MaxDeltaKm = 0.0;
+		for (const FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : Audit.Records)
+		{
+			MaxDeltaKm = FMath::Max(MaxDeltaKm, FMath::Abs(Record.AppliedDeltaKm));
+		}
+		MaxDeltaKm = FMath::Max(MaxDeltaKm, 1.0e-9);
+
+		const FColor PointColor(255, 184, 82, 255);
+		for (const FCarrierLabPhaseIIID7CollisionUpliftRecord& Record : Audit.Records)
+		{
+			const int32 X = Left + FMath::RoundToInt((Right - Left) * FMath::Clamp(Record.DistanceToTerraneKm / MaxDistanceKm, 0.0, 1.0));
+			const int32 Y = Bottom - FMath::RoundToInt((Bottom - Top) * FMath::Clamp(FMath::Abs(Record.AppliedDeltaKm) / MaxDeltaKm, 0.0, 1.0));
+			DrawDisk(OutPixels, OutWidth, OutHeight, X, Y, 2, PointColor);
+		}
+		return true;
+	}
+
 	struct FLayerExport
 	{
 		ECarrierLabVisualizationLayer Layer = ECarrierLabVisualizationLayer::PlateId;
@@ -1046,6 +1135,14 @@ namespace
 		FCarrierLabPhaseIIIC3UpliftAudit IIICUpliftAudit;
 		FCarrierLabPhaseIIIC4SlabPullAudit IIICSlabPullAudit;
 		FCarrierLabPhaseIIIC5ElevationLedgerAudit IIICLedgerAudit;
+		FCarrierLabPhaseIIID2CollisionGroupingAudit IIIDGroupingAudit;
+		FCarrierLabPhaseIIID7CollisionUpliftAudit IIIDUpliftAudit;
+		FCarrierLabPhaseIIIDiagnosticCallCounts IIIDCallCounts;
+		bool bCollisionApplied = false;
+		int32 CollisionStep = 0;
+		int32 PatchSeedTriangleId = INDEX_NONE;
+		int32 PatchTriangleCount = 0;
+		int32 PolicyResolvedMultiHitCount = 0;
 		TArray<FLayerExport> LayerExports;
 		FString ContactSheetPath;
 		bool bExportReadOnly = false;
@@ -1078,6 +1175,18 @@ namespace
 				Replay.IIICLedgerAudit.TrenchRecordCount > 0 &&
 				Replay.IIICLedgerAudit.UpliftRecordCount > 0 &&
 				FMath::Abs(Replay.IIICLedgerAudit.VisibleElevationResidualKm) <= 1.0e-8;
+		case EObservabilityExpectedState::CollisionSignalsRequired:
+			return Replay.bCollisionApplied &&
+				Replay.IIIDGroupingAudit.AcceptedGroupCount > 0 &&
+				Replay.IIIDUpliftAudit.bTopologyMutationApplied &&
+				Replay.IIIDUpliftAudit.bUpliftApplied &&
+				Replay.IIIDUpliftAudit.TopologyAudit.AppliedMutationCount == 1 &&
+				Replay.IIIDUpliftAudit.TopologyAudit.bOneCollisionOnly &&
+				Replay.IIIDUpliftAudit.UpliftRecordCount > 0 &&
+				Replay.IIIDUpliftAudit.TotalAppliedDeltaKm > 0.0 &&
+				Replay.IIIDUpliftAudit.TopologyAudit.TopologyMutationHash.Len() > 0 &&
+				Replay.IIIDUpliftAudit.UpliftHash.Len() > 0 &&
+				Replay.PolicyResolvedMultiHitCount == 0;
 		case EObservabilityExpectedState::Informational:
 		default:
 			return true;
@@ -1088,6 +1197,15 @@ namespace
 	{
 		if (!Scenario.bEnableNaturalResamplingEvents)
 		{
+			if (Scenario.bEnableIIIDCollisionVisual)
+			{
+				if (Scenario.bApplyIIIDCollisionEvent)
+				{
+					return Replay.bCollisionApplied &&
+						Replay.EventCount == Replay.IIIDUpliftAudit.EventCountAfter;
+				}
+				return Replay.EventCount == 0;
+			}
 			return Replay.EventCount == 0;
 		}
 		if (!Scenario.bExpectNaturalResamplingEvent)
@@ -1119,6 +1237,7 @@ namespace
 		const FString& ReplayDir,
 		const ACarrierLabVisualizationActor& Actor,
 		const FCarrierLabPhaseIIIC3UpliftAudit& UpliftAudit,
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit* CollisionUpliftAudit,
 		TArray<FLayerExport>& OutLayerExports,
 		FString& OutContactSheetPath)
 	{
@@ -1253,8 +1372,13 @@ namespace
 		FLayerPixels ProfileImage;
 		ProfileImage.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;
 		ProfileImage.Export.Name = TEXT("ElevationProfile");
-		ProfileImage.Label = TEXT("ELEVATION PROFILE");
-		if (!BuildElevationProfile(UpliftAudit, ProfileImage.Pixels, ProfileImage.Width, ProfileImage.Height))
+		ProfileImage.Label = CollisionUpliftAudit != nullptr && CollisionUpliftAudit->UpliftRecordCount > 0
+			? TEXT("COLLISION PROFILE")
+			: TEXT("ELEVATION PROFILE");
+		const bool bProfileBuilt = CollisionUpliftAudit != nullptr && CollisionUpliftAudit->UpliftRecordCount > 0
+			? BuildCollisionElevationProfile(*CollisionUpliftAudit, ProfileImage.Pixels, ProfileImage.Width, ProfileImage.Height)
+			: BuildElevationProfile(UpliftAudit, ProfileImage.Pixels, ProfileImage.Width, ProfileImage.Height);
+		if (!bProfileBuilt)
 		{
 			return false;
 		}
@@ -1352,10 +1476,43 @@ namespace
 		}
 		Actor->bEnableNaturalResamplingEvents = Scenario.bEnableNaturalResamplingEvents;
 		Actor->ConfigurePhaseIIMotionFixture(Scenario.MotionFixture);
+		Actor->ResetPhaseIIIDiagnosticCallCounts();
 		for (int32 Step = 0; Step < Scenario.StepCount; ++Step)
 		{
 			Actor->StepOnce();
+			if (Scenario.bEnableIIIDCollisionVisual && !OutResult.bCollisionApplied)
+			{
+				FCarrierLabPhaseIIID2CollisionGroupingAudit ProbeGrouping;
+				if (!Actor->DetectPhaseIIID2CollisionGroups(ProbeGrouping, 300.0))
+				{
+					Actor->Destroy();
+					return false;
+				}
+				OutResult.IIIDGroupingAudit = ProbeGrouping;
+				if (ProbeGrouping.AcceptedGroupCount > 0)
+				{
+					if (Scenario.bApplyDestinationPatchForTest &&
+						!Actor->SetPhaseIIID3DestinationPatchForTest(0, 1, 0, OutResult.PatchSeedTriangleId, OutResult.PatchTriangleCount))
+					{
+						Actor->Destroy();
+						return false;
+					}
+					OutResult.CollisionStep = Actor->CurrentMetrics.Step;
+					if (!Scenario.bApplyIIIDCollisionEvent)
+					{
+						break;
+					}
+					if (!Actor->ApplyPhaseIIID7CollisionUplift(OutResult.IIIDUpliftAudit, 300.0, 0.5))
+					{
+						Actor->Destroy();
+						return false;
+					}
+					OutResult.bCollisionApplied = OutResult.IIIDUpliftAudit.bTopologyMutationApplied && OutResult.IIIDUpliftAudit.bUpliftApplied;
+					break;
+				}
+			}
 		}
+		OutResult.IIIDCallCounts = Actor->GetPhaseIIIDiagnosticCallCounts();
 
 		Actor->GetPhaseIIIB1TrackingAudit(OutResult.TrackingAudit);
 		Actor->GetPhaseIIIB2DistanceAudit(OutResult.DistanceAudit);
@@ -1379,9 +1536,12 @@ namespace
 		OutResult.CadenceSteps = Actor->CurrentMetrics.CadenceSteps;
 		OutResult.CadenceDeltaTMa = Actor->CurrentMetrics.CadenceDeltaTMa;
 		OutResult.ObservedMaxPlateSpeedMmPerYear = Actor->CurrentMetrics.ObservedMaxPlateSpeedMmPerYear;
+		OutResult.PolicyResolvedMultiHitCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
 
 		const FString ReplayDir = FPaths::Combine(OutputRoot, Scenario.Name, FString::Printf(TEXT("replay_%d"), Replay));
-		if (!WriteMaps(ReplayDir, *Actor, OutResult.IIICUpliftAudit, OutResult.LayerExports, OutResult.ContactSheetPath))
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit* CollisionUpliftAudit =
+			OutResult.IIIDUpliftAudit.UpliftRecordCount > 0 ? &OutResult.IIIDUpliftAudit : nullptr;
+		if (!WriteMaps(ReplayDir, *Actor, OutResult.IIICUpliftAudit, CollisionUpliftAudit, OutResult.LayerExports, OutResult.ContactSheetPath))
 		{
 			Actor->Destroy();
 			return false;
@@ -1443,6 +1603,11 @@ namespace
 			TEXT("\"iiic_process_layer\":%s,\"iiic_slab_pull\":%s,\"iiic_marks\":%d,")
 			TEXT("\"iiic_trench_records\":%d,\"iiic_uplift_records\":%d,\"iiic_ledger_records\":%d,")
 			TEXT("\"iiic_actual_delta_km\":%.15f,\"iiic_ledger_residual_km\":%.15e,")
+			TEXT("\"iiid_collision_applied\":%s,\"iiid_collision_step\":%d,\"iiid_accepted_groups\":%d,")
+			TEXT("\"iiid_mutations\":%d,\"iiid_deferred_plans\":%d,\"iiid_uplift_records\":%d,")
+			TEXT("\"iiid_uplift_total_delta_km\":%.15f,\"iiid_topology_hash\":%s,\"iiid_uplift_hash\":%s,")
+			TEXT("\"iiid_policy_multi_hits\":%d,\"iiid_patch_seed\":%d,\"iiid_patch_triangles\":%d,")
+			TEXT("\"iiid_d1_calls\":%d,\"iiid_d7_apply_calls\":%d,")
 			TEXT("\"map_exports\":[%s],\"contact_sheet\":%s}"),
 			*JsonString(Result.ScenarioName),
 			*JsonString(Result.ExpectedState),
@@ -1479,6 +1644,20 @@ namespace
 			Result.IIICLedgerAudit.RecordCount,
 			Result.IIICLedgerAudit.ActualVisibleElevationDeltaKm,
 			Result.IIICLedgerAudit.VisibleElevationResidualKm,
+			Result.bCollisionApplied ? TEXT("true") : TEXT("false"),
+			Result.CollisionStep,
+			Result.IIIDGroupingAudit.AcceptedGroupCount,
+			Result.IIIDUpliftAudit.TopologyAudit.AppliedMutationCount,
+			Result.IIIDUpliftAudit.TopologyAudit.DeferredValidPlanCount,
+			Result.IIIDUpliftAudit.UpliftRecordCount,
+			Result.IIIDUpliftAudit.TotalAppliedDeltaKm,
+			*JsonString(Result.IIIDUpliftAudit.SourceTopologyMutationHash),
+			*JsonString(Result.IIIDUpliftAudit.UpliftHash),
+			Result.PolicyResolvedMultiHitCount,
+			Result.PatchSeedTriangleId,
+			Result.PatchTriangleCount,
+			Result.IIIDCallCounts.DetectTerranes,
+			Result.IIIDCallCounts.UpliftApply,
 			*FString::Join(LayerJson, TEXT(",")),
 			*JsonString(Result.ContactSheetPath));
 	}
@@ -1487,24 +1666,36 @@ namespace
 		const FString& OutputRoot,
 		const TArray<FObservabilityScenarioResult>& Results,
 		const bool bOverallPass,
-		const bool bIIICMode)
+		const bool bIIICMode,
+		const bool bIIIDCollisionMode)
 	{
 		FString Report;
-		Report += bIIICMode
-			? TEXT("# Phase III IIIC Map Export Checkpoint\n\n")
-			: TEXT("# Phase III Observability Map Export Checkpoint\n\n");
-		Report += bIIICMode
-			? TEXT("Status: read-only spatial sanity export for the consolidated IIIC process layer.\n\n")
-			: TEXT("Status: read-only observability patch before IIIC entry reconciliation.\n\n");
+		Report += bIIIDCollisionMode
+			? TEXT("# Phase III Collision Visual Validation Checkpoint\n\n")
+			: (bIIICMode
+				? TEXT("# Phase III IIIC Map Export Checkpoint\n\n")
+				: TEXT("# Phase III Observability Map Export Checkpoint\n\n"));
+		Report += bIIIDCollisionMode
+			? TEXT("Status: read-only map export around the accepted IIID forced-collision actor path.\n\n")
+			: (bIIICMode
+				? TEXT("Status: read-only spatial sanity export for the consolidated IIIC process layer.\n\n")
+				: TEXT("Status: read-only observability patch before IIIC entry reconciliation.\n\n"));
 		Report += TEXT("## Scope\n\n");
-		Report += bIIICMode
-			? TEXT("This checkpoint exports filled Mollweide-style PNG artifacts after the consolidated IIIC process layer has run with slab pull off. The export path itself is read-only. Some fixtures explicitly enable observed-speed natural resampling before export; those events are reported as cadence evidence, not hidden visualization cleanup. When IIIC subducting marks are enabled, natural cadence events call the existing filtered resampling path so marked subducting triangles are excluded rather than silently ignored. The export path must not add unreported process mutation, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n")
-			: TEXT("This checkpoint exports the Phase III actor-only spatial sanity layers to filled Mollweide-style PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n");
+		if (bIIIDCollisionMode)
+		{
+			Report += TEXT("This checkpoint exports filled Mollweide-style PNG artifacts before and after the existing IIID collision path mutates plate-local topology and applies IIID.7 uplift. The export path itself is read-only; the post-collision fixture intentionally invokes the already accepted IIID actor mutation so the resulting maps are visually inspectable. This checkpoint does not add new simulation behavior, resampling behavior, authority fallback patterns, projection repair, terrain displacement, or paper-remesh claims.\n\n");
+		}
+		else
+		{
+			Report += bIIICMode
+				? TEXT("This checkpoint exports filled Mollweide-style PNG artifacts after the consolidated IIIC process layer has run with slab pull off. The export path itself is read-only. Some fixtures explicitly enable observed-speed natural resampling before export; those events are reported as cadence evidence, not hidden visualization cleanup. When IIIC subducting marks are enabled, natural cadence events call the existing filtered resampling path so marked subducting triangles are excluded rather than silently ignored. The export path must not add unreported process mutation, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n")
+				: TEXT("This checkpoint exports the Phase III actor-only spatial sanity layers to filled Mollweide-style PNG artifacts. It does not add process mutation, resampling behavior, triangle consumption, material transfer, forbidden authority fallback patterns, or projection-derived carrier authority.\n\n");
+		}
 		Report += TEXT("Fixtures:\n\n");
 		for (const FObservabilityScenarioResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d steps / %s motion / %s material / natural resampling %s / IIIC process %s / slab pull %s / expected %s / centroid policy`).\n"),
+				TEXT("- `%s`: %s (`%dk / %d plates / seed %d / %d steps / %s motion / %s material / natural resampling %s / IIIC process %s / slab pull %s / IIID visual %s / IIID apply %s / expected %s / centroid policy`).\n"),
 				*Result.Scenario.Name,
 				*Result.Scenario.Description,
 				Result.Scenario.SampleCount / 1000,
@@ -1516,6 +1707,8 @@ namespace
 				Result.Scenario.bEnableNaturalResamplingEvents ? TEXT("on") : TEXT("off"),
 				Result.Scenario.bEnableIIICProcessLayer ? TEXT("on") : TEXT("off"),
 				Result.Scenario.bEnableIIICSlabPull ? TEXT("on") : TEXT("off"),
+				Result.Scenario.bEnableIIIDCollisionVisual ? TEXT("on") : TEXT("off"),
+				Result.Scenario.bApplyIIIDCollisionEvent ? TEXT("on") : TEXT("off"),
 				*ExpectedStateName(Result.Scenario.ExpectedState));
 		}
 		Report += TEXT("\n");
@@ -1627,6 +1820,42 @@ namespace
 			}
 		}
 
+		if (bIIIDCollisionMode)
+		{
+			Report += TEXT("\n## IIID Collision State Used For Maps\n\n");
+			Report += TEXT("| Scenario | Replay | Collision applied | Collision step | Accepted groups | Mutations | Deferred plans | Reset | Removed tris | Added tris | Uplift records | Total uplift km | Policy multi-hits | Patch seed/count | Topology hash | Uplift hash |\n");
+			Report += TEXT("|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---|---|---|\n");
+			for (const FObservabilityScenarioResult& ScenarioResult : Results)
+			{
+				for (const FObservabilityReplay* Result : { &ScenarioResult.A, &ScenarioResult.B })
+				{
+					const FCarrierLabPhaseIIID6TopologyMutationAudit& Topology = Result->IIIDUpliftAudit.TopologyAudit;
+					const FCarrierLabPhaseIIID6TopologyMutationRecord* Record = Topology.Records.IsEmpty() ? nullptr : &Topology.Records[0];
+					Report += FString::Printf(
+						TEXT("| `%s` | %d | %s | %d | %d | %d | %d | %d->%d | %d | %d | %d | %.12f | %d | %d/%d | `%s` | `%s` |\n"),
+						*ScenarioResult.Scenario.Name,
+						Result->Replay,
+						Result->bCollisionApplied ? TEXT("yes") : TEXT("no"),
+						Result->CollisionStep,
+						Result->IIIDGroupingAudit.AcceptedGroupCount,
+						Topology.AppliedMutationCount,
+						Topology.DeferredValidPlanCount,
+						Topology.ResetSerialBefore,
+						Topology.ResetSerialAfter,
+						Record != nullptr ? Record->RemovedTriangleCount : 0,
+						Record != nullptr ? Record->AddedTriangleCount : 0,
+						Result->IIIDUpliftAudit.UpliftRecordCount,
+						Result->IIIDUpliftAudit.TotalAppliedDeltaKm,
+						Result->PolicyResolvedMultiHitCount,
+						Result->PatchSeedTriangleId,
+						Result->PatchTriangleCount,
+						*Result->IIIDUpliftAudit.SourceTopologyMutationHash,
+						*Result->IIIDUpliftAudit.UpliftHash);
+				}
+			}
+			Report += TEXT("\nThis collision visual checkpoint gates only that the accepted forced fixture produced deterministic before/after maps and that no lab multi-hit policy resolved the collision evidence. The `forced_collision_ready` snapshot uses the same small destination-patch scaffold as `forced_collision_after`; broad blue/green differences between this visual fixture and natural world maps are fixture scaffolding, not a claimed geological output. It is not a Slice 5.5, Stage 1.5, or thesis-remesh success claim.\n");
+		}
+
 		Report += TEXT("\n## Exported Maps\n\n");
 		Report += TEXT("| Scenario | Replay | Layer | Hash | Non-background pixels | Path |\n");
 		Report += TEXT("|---|---:|---|---|---:|---|\n");
@@ -1664,14 +1893,25 @@ namespace
 		Report += TEXT("- `CombinedTectonicSummary` is deliberately restrained: crust + current plate-local boundaries + velocity + subduction roles. Elevation remains separate so uplift heat does not swamp the overview.\n");
 		Report += TEXT("- `DistanceToFront` is also rasterized from current plate-local active-boundary triangles. It is diagnostic context, not a source of authority.\n");
 		Report += TEXT("- Contact sheet headers include the simulation step and approximate `Myr` timestamp using the CarrierLab `2 Ma` timestep.\n");
-		Report += TEXT("- `ElevationProfile` plots uplift delta against distance-to-front and includes the expected thesis distance-transfer curve as a visual shape reference. It is paired with the IIIC.3 numeric oracle; the plot alone is not a gate.\n\n");
-		Report += TEXT("## Cadence Interpretation\n\n");
-		Report += TEXT("- The paper describes oceanic crust generation / plate resampling as periodic every `10-60` time steps depending on observed maximum plate speed; the thesis extraction refines this as `DeltaT = (1-alpha)M + alpha m`, with `alpha = min(1, vm/v0)`, `M=128 Ma`, and `m=32 Ma`.\n");
-		Report += TEXT("- With CarrierLab's `2 Ma` timestep, the thesis formula maps to `16-64` steps; the paper's `10-60` statement is treated as the paper-level cadence range, while the actor reports the exact thesis-derived cadence it used for each fixture.\n");
-		Report += TEXT("- The actor now reports and, when explicitly enabled, fires cadence from observed plate motion (`vm`) rather than only the configured scalar speed. This matters once slab pull or later process state changes plate motion.\n");
-		Report += TEXT("- `default_40_plate_process` intentionally keeps natural resampling off as the rigid-window visual baseline. `default_40_plate_process_cadence` enables natural resampling and must show at least one event by step 40 under the default 40-plate speed. Because IIIC marks are enabled in that fixture, the event uses filtered remeshing rather than the older unfiltered manual-resample shortcut.\n\n");
+		Report += bIIIDCollisionMode
+			? TEXT("- `ElevationProfile` plots IIID.7 collision uplift delta against distance-to-terrane for the post-collision fixture. The profile is a visual sanity plot; the IIID.7 commandlet remains the formula gate.\n\n")
+			: TEXT("- `ElevationProfile` plots uplift delta against distance-to-front and includes the expected thesis distance-transfer curve as a visual shape reference. It is paired with the IIIC.3 numeric oracle; the plot alone is not a gate.\n\n");
+		if (!bIIIDCollisionMode)
+		{
+			Report += TEXT("## Cadence Interpretation\n\n");
+			Report += TEXT("- The paper describes oceanic crust generation / plate resampling as periodic every `10-60` time steps depending on observed maximum plate speed; the thesis extraction refines this as `DeltaT = (1-alpha)M + alpha m`, with `alpha = min(1, vm/v0)`, `M=128 Ma`, and `m=32 Ma`.\n");
+			Report += TEXT("- With CarrierLab's `2 Ma` timestep, the thesis formula maps to `16-64` steps; the paper's `10-60` statement is treated as the paper-level cadence range, while the actor reports the exact thesis-derived cadence it used for each fixture.\n");
+			Report += TEXT("- The actor now reports and, when explicitly enabled, fires cadence from observed plate motion (`vm`) rather than only the configured scalar speed. This matters once slab pull or later process state changes plate motion.\n");
+			Report += TEXT("- `default_40_plate_process` intentionally keeps natural resampling off as the rigid-window visual baseline. `default_40_plate_process_cadence` enables natural resampling and must show at least one event by step 40 under the default 40-plate speed. Because IIIC marks are enabled in that fixture, the event uses filtered remeshing rather than the older unfiltered manual-resample shortcut.\n\n");
+		}
 		Report += TEXT("## Recommendation\n\n");
-		if (bIIICMode)
+		if (bIIIDCollisionMode)
+		{
+			Report += bOverallPass
+				? TEXT("Collision visual validation passes. Use the before/after contact sheets as human-spatial evidence that the accepted IIID actor path visibly mutates plate-local topology and applies uplift. This is still visual evidence only, not a replacement for commandlet gates or a thesis-remesh claim.\n")
+				: TEXT("Collision visual validation fails. Pause visual sign-off and inspect the failed map/export/collision-signal gate before trusting the actor maps for collision review.\n");
+		}
+		else if (bIIICMode)
 		{
 			Report += bOverallPass
 				? TEXT("IIIC map export passes. These images are suitable human spatial sanity artifacts for the consolidated IIIC process layer before Phase IIID work begins; they remain read-only evidence maps, not terrain morphology reproduction.\n")
@@ -1698,14 +1938,15 @@ UCarrierLabPhaseIIIObservabilityCommandlet::UCarrierLabPhaseIIIObservabilityComm
 int32 UCarrierLabPhaseIIIObservabilityCommandlet::Main(const FString& Params)
 {
 	const bool bIIICMode = IsIIICMode(Params);
-	const FString OutputRoot = GetOutputRoot(Params, bIIICMode);
-	const FString ReportPath = ResolveReportPath(Params, bIIICMode);
+	const bool bIIIDCollisionMode = IsIIIDCollisionMode(Params);
+	const FString OutputRoot = GetOutputRoot(Params, bIIICMode, bIIIDCollisionMode);
+	const FString ReportPath = ResolveReportPath(Params, bIIICMode, bIIIDCollisionMode);
 	IFileManager::Get().MakeDirectory(*OutputRoot, true);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
 
 	TArray<FObservabilityScenarioResult> Results;
 	bool bOverallPass = true;
-	for (const FObservabilityScenario& Scenario : BuildScenarios(bIIICMode))
+	for (const FObservabilityScenario& Scenario : BuildScenarios(bIIICMode, bIIIDCollisionMode))
 	{
 		FObservabilityScenarioResult Result;
 		Result.Scenario = Scenario;
@@ -1734,7 +1975,7 @@ int32 UCarrierLabPhaseIIIObservabilityCommandlet::Main(const FString& Params)
 	}
 	FFileHelper::SaveStringToFile(MetricsJsonl, *MetricsPath);
 
-	const FString Report = BuildReport(OutputRoot, Results, bOverallPass, bIIICMode);
+	const FString Report = BuildReport(OutputRoot, Results, bOverallPass, bIIICMode, bIIIDCollisionMode);
 	FFileHelper::SaveStringToFile(Report, *ReportPath);
 
 	UE_LOG(
