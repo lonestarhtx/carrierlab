@@ -621,6 +621,91 @@ struct FCarrierLabPhaseIIIE2BoundaryQueryAudit
 	FVector3d QGammaUnitPosition = FVector3d::UnitZ();
 };
 
+enum class ECarrierLabPhaseIIIE3FilterReason : uint8
+{
+	None,
+	Subducting,
+	ObductionPending,
+	CollisionPending
+};
+
+enum class ECarrierLabPhaseIIIE3SelectionClass : uint8
+{
+	NoHitDivergentGap,
+	ResolvedSingleHit,
+	DivergentGapAfterFiltering,
+	UnresolvedSameMaterialMultiHit,
+	UnresolvedMixedMaterialMultiHit,
+	UnresolvedThirdPlateMultiHit
+};
+
+struct FCarrierLabPhaseIIIE3CandidateProbe
+{
+	int32 PlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	FVector3d Bary = FVector3d(1.0, 0.0, 0.0);
+	double ContinentalFraction = 0.0;
+	double Elevation = 0.0;
+	double HistoricalElevation = 0.0;
+	double OceanicAge = 0.0;
+	FVector3d RidgeDirection = FVector3d::ZeroVector;
+	FVector3d FoldDirection = FVector3d::ZeroVector;
+	ECarrierLabPhaseIIIE3FilterReason FilterReason = ECarrierLabPhaseIIIE3FilterReason::None;
+};
+
+struct FCarrierLabPhaseIIIE3SelectionRecord
+{
+	int32 SampleId = INDEX_NONE;
+	FVector3d SampleUnitPosition = FVector3d::UnitZ();
+	int32 RawCandidateCount = 0;
+	int32 RawPlateCount = 0;
+	int32 FilteredCandidateCount = 0;
+	int32 FilteredSubductingCount = 0;
+	int32 FilteredObductionPendingCount = 0;
+	int32 FilteredCollisionPendingCount = 0;
+	int32 PostFilterCandidateCount = 0;
+	int32 PostFilterPlateCount = 0;
+	bool bResolvedSingleHit = false;
+	bool bDivergentGapRoute = false;
+	bool bUnresolvedMultiHit = false;
+	bool bUsedPolicyWinner = false;
+	bool bUsedPriorOwnerFallback = false;
+	int32 ResolvedPlateId = INDEX_NONE;
+	int32 ResolvedLocalTriangleId = INDEX_NONE;
+	FVector3d ResolvedBary = FVector3d(1.0, 0.0, 0.0);
+	ECarrierLabPhaseIIIE3SelectionClass SelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
+	double ContinentalFraction = 0.0;
+	double Elevation = 0.0;
+	double HistoricalElevation = 0.0;
+	double OceanicAge = 0.0;
+	FVector3d RidgeDirection = FVector3d::ZeroVector;
+	FVector3d FoldDirection = FVector3d::ZeroVector;
+};
+
+struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
+{
+	bool bRan = false;
+	int32 SampleCount = 0;
+	int32 RawHitSampleCount = 0;
+	int32 RawMissSampleCount = 0;
+	int32 RawMultiHitSampleCount = 0;
+	int32 RawThirdPlateHitSampleCount = 0;
+	int32 FilteredCandidateCount = 0;
+	int32 FilteredSubductingCount = 0;
+	int32 FilteredObductionPendingCount = 0;
+	int32 FilteredCollisionPendingCount = 0;
+	int32 PostFilterSingleHitCount = 0;
+	int32 DivergentGapRouteCount = 0;
+	int32 UnresolvedMultiHitCount = 0;
+	int32 UnresolvedSameMaterialMultiHitCount = 0;
+	int32 UnresolvedMixedMaterialMultiHitCount = 0;
+	int32 UnresolvedThirdPlateMultiHitCount = 0;
+	int32 PriorOwnerFallbackCount = 0;
+	int32 PolicyWinnerCount = 0;
+	FString SelectionHash;
+	TArray<FCarrierLabPhaseIIIE3SelectionRecord> Records;
+};
+
 struct FCarrierLabPhaseIIIB1TrackingAudit
 {
 	int32 Step = 0;
@@ -1777,6 +1862,14 @@ public:
 	bool QueryPhaseIIIE2ContinuousBoundaryPairFromCurrentStateForTest(
 		const FVector3d& SamplePosition,
 		FCarrierLabPhaseIIIE2BoundaryQueryAudit& OutAudit) const;
+	bool QueryPhaseIIIE3FilteredRemeshSelectionForTest(
+		const FVector3d& SamplePosition,
+		const TArray<FCarrierLabPhaseIIIE3CandidateProbe>& CandidateProbes,
+		FCarrierLabPhaseIIIE3SelectionRecord& OutRecord) const;
+	bool RunPhaseIIIE3FilteredRemeshSelectionAudit(FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit);
+	bool RunPhaseIIIE3FilteredRemeshSelectionAuditForSamples(
+		const TArray<int32>& SampleIds,
+		FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit);
 	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
