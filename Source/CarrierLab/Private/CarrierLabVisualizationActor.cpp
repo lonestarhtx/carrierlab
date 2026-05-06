@@ -4980,13 +4980,20 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID2CollisionGroups(
 	const double InterpenetrationThresholdKm) const
 {
 	++PhaseIIIDiagnosticCallCounts.GroupCollisions;
-	OutAudit = FCarrierLabPhaseIIID2CollisionGroupingAudit();
 	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
 	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
 	{
 		return false;
 	}
+	return BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, OutAudit, InterpenetrationThresholdKm);
+}
 
+bool ACarrierLabVisualizationActor::BuildPhaseIIID2CollisionGroupsFromTerranes(
+	const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
+	FCarrierLabPhaseIIID2CollisionGroupingAudit& OutAudit,
+	const double InterpenetrationThresholdKm) const
+{
+	OutAudit = FCarrierLabPhaseIIID2CollisionGroupingAudit();
 	OutAudit.Step = TerraneAudit.Step;
 	OutAudit.EventCount = TerraneAudit.EventCount;
 	OutAudit.PlateCount = TerraneAudit.PlateCount;
@@ -5198,7 +5205,6 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID3DestinationMass(
 	const double DestinationMassThresholdRatio) const
 {
 	++PhaseIIIDiagnosticCallCounts.DestinationMass;
-	OutAudit = FCarrierLabPhaseIIID3DestinationMassAudit();
 	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
 	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
 	{
@@ -5206,11 +5212,26 @@ bool ACarrierLabVisualizationActor::DetectPhaseIIID3DestinationMass(
 	}
 
 	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
-	if (!DetectPhaseIIID2CollisionGroups(GroupingAudit, InterpenetrationThresholdKm))
+	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
 	{
 		return false;
 	}
+	return BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		OutAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+}
 
+bool ACarrierLabVisualizationActor::BuildPhaseIIID3DestinationMassFromInputs(
+	const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
+	const FCarrierLabPhaseIIID2CollisionGroupingAudit& GroupingAudit,
+	FCarrierLabPhaseIIID3DestinationMassAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID3DestinationMassAudit();
 	OutAudit.Step = TerraneAudit.Step;
 	OutAudit.EventCount = TerraneAudit.EventCount;
 	OutAudit.PlateCount = TerraneAudit.PlateCount;
@@ -5433,19 +5454,44 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID4SlabBreak(
 	const double DestinationMassThresholdRatio) const
 {
 	++PhaseIIIDiagnosticCallCounts.SlabBreakPlan;
-	OutAudit = FCarrierLabPhaseIIID4SlabBreakPlanAudit();
 	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
 	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
 	{
 		return false;
 	}
 
-	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
-	if (!DetectPhaseIIID3DestinationMass(DestinationMassAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
 	{
 		return false;
 	}
 
+	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
+	if (!BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		DestinationMassAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	return BuildPhaseIIID4SlabBreakFromInputs(
+		TerraneAudit,
+		DestinationMassAudit,
+		OutAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+}
+
+bool ACarrierLabVisualizationActor::BuildPhaseIIID4SlabBreakFromInputs(
+	const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
+	const FCarrierLabPhaseIIID3DestinationMassAudit& DestinationMassAudit,
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID4SlabBreakPlanAudit();
 	OutAudit.Step = DestinationMassAudit.Step;
 	OutAudit.EventCount = DestinationMassAudit.EventCount;
 	OutAudit.PlateCount = DestinationMassAudit.PlateCount;
@@ -5739,13 +5785,53 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID5Suture(
 	const double DestinationMassThresholdRatio) const
 {
 	++PhaseIIIDiagnosticCallCounts.SuturePlan;
-	OutAudit = FCarrierLabPhaseIIID5SuturePlanAudit();
-	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
-	if (!PlanPhaseIIID4SlabBreak(SlabBreakAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
 	{
 		return false;
 	}
 
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
+	{
+		return false;
+	}
+
+	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
+	if (!BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		DestinationMassAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
+	if (!BuildPhaseIIID4SlabBreakFromInputs(
+		TerraneAudit,
+		DestinationMassAudit,
+		SlabBreakAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	return BuildPhaseIIID5SutureFromSlabBreak(
+		SlabBreakAudit,
+		OutAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+}
+
+bool ACarrierLabVisualizationActor::BuildPhaseIIID5SutureFromSlabBreak(
+	const FCarrierLabPhaseIIID4SlabBreakPlanAudit& SlabBreakAudit,
+	FCarrierLabPhaseIIID5SuturePlanAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID5SuturePlanAudit();
 	OutAudit.Step = SlabBreakAudit.Step;
 	OutAudit.EventCount = SlabBreakAudit.EventCount;
 	OutAudit.PlateCount = SlabBreakAudit.PlateCount;
@@ -6147,20 +6233,68 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSuture(
 	const double InterpenetrationThresholdKm,
 	const double DestinationMassThresholdRatio)
 {
-	++PhaseIIIDiagnosticCallCounts.TopologyMutation;
-	OutAudit = FCarrierLabPhaseIIID6TopologyMutationAudit();
 	if (!bInitialized && !InitializeCarrier())
 	{
 		return false;
 	}
 
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
+	if (!BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		DestinationMassAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
 	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
-	if (!PlanPhaseIIID4SlabBreak(SlabBreakAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	if (!BuildPhaseIIID4SlabBreakFromInputs(
+		TerraneAudit,
+		DestinationMassAudit,
+		SlabBreakAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
 	{
 		return false;
 	}
 	FCarrierLabPhaseIIID5SuturePlanAudit SutureAudit;
-	if (!PlanPhaseIIID5Suture(SutureAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	if (!BuildPhaseIIID5SutureFromSlabBreak(
+		SlabBreakAudit,
+		SutureAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	return ApplyPhaseIIID6DetachAndSutureFromPlans(
+		SlabBreakAudit,
+		SutureAudit,
+		OutAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+}
+
+bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSutureFromPlans(
+	const FCarrierLabPhaseIIID4SlabBreakPlanAudit& SlabBreakAudit,
+	const FCarrierLabPhaseIIID5SuturePlanAudit& SutureAudit,
+	FCarrierLabPhaseIIID6TopologyMutationAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio)
+{
+	++PhaseIIIDiagnosticCallCounts.TopologyMutation;
+	OutAudit = FCarrierLabPhaseIIID6TopologyMutationAudit();
+	if (!bInitialized && !InitializeCarrier())
 	{
 		return false;
 	}
@@ -6561,28 +6695,70 @@ bool ACarrierLabVisualizationActor::PlanPhaseIIID7CollisionUplift(
 	const double DestinationMassThresholdRatio) const
 {
 	++PhaseIIIDiagnosticCallCounts.UpliftPlan;
-	OutAudit = FCarrierLabPhaseIIID7CollisionUpliftAudit();
 	if (!bInitialized)
 	{
 		return false;
 	}
 
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
+	{
+		return false;
+	}
 	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
-	if (!DetectPhaseIIID2CollisionGroups(GroupingAudit, InterpenetrationThresholdKm))
+	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
+	if (!BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		DestinationMassAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
 	{
 		return false;
 	}
 	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
-	if (!PlanPhaseIIID4SlabBreak(SlabBreakAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	if (!BuildPhaseIIID4SlabBreakFromInputs(
+		TerraneAudit,
+		DestinationMassAudit,
+		SlabBreakAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
 	{
 		return false;
 	}
 	FCarrierLabPhaseIIID5SuturePlanAudit SutureAudit;
-	if (!PlanPhaseIIID5Suture(SutureAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	if (!BuildPhaseIIID5SutureFromSlabBreak(
+		SlabBreakAudit,
+		SutureAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
 	{
 		return false;
 	}
+	return BuildPhaseIIID7CollisionUpliftFromPlans(
+		GroupingAudit,
+		SutureAudit,
+		OutAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+}
 
+bool ACarrierLabVisualizationActor::BuildPhaseIIID7CollisionUpliftFromPlans(
+	const FCarrierLabPhaseIIID2CollisionGroupingAudit& GroupingAudit,
+	const FCarrierLabPhaseIIID5SuturePlanAudit& SutureAudit,
+	FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio) const
+{
+	OutAudit = FCarrierLabPhaseIIID7CollisionUpliftAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
 	OutAudit.Step = CurrentMetrics.Step;
 	OutAudit.EventCountBefore = CurrentMetrics.EventCount;
 	OutAudit.EventCountAfter = CurrentMetrics.EventCount;
@@ -6840,12 +7016,77 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 	const double DestinationMassThresholdRatio)
 {
 	++PhaseIIIDiagnosticCallCounts.UpliftApply;
-	FCarrierLabPhaseIIID7CollisionUpliftAudit PlannedAudit;
-	if (!PlanPhaseIIID7CollisionUplift(PlannedAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	if (!bInitialized && !InitializeCarrier())
 	{
 		return false;
 	}
 
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID3DestinationMassAudit DestinationMassAudit;
+	if (!BuildPhaseIIID3DestinationMassFromInputs(
+		TerraneAudit,
+		GroupingAudit,
+		DestinationMassAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID4SlabBreakPlanAudit SlabBreakAudit;
+	if (!BuildPhaseIIID4SlabBreakFromInputs(
+		TerraneAudit,
+		DestinationMassAudit,
+		SlabBreakAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID5SuturePlanAudit SutureAudit;
+	if (!BuildPhaseIIID5SutureFromSlabBreak(
+		SlabBreakAudit,
+		SutureAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID7CollisionUpliftAudit PlannedAudit;
+	if (!BuildPhaseIIID7CollisionUpliftFromPlans(
+		GroupingAudit,
+		SutureAudit,
+		PlannedAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
+	{
+		return false;
+	}
+	return ApplyPhaseIIID7CollisionUpliftFromPlan(
+		PlannedAudit,
+		SlabBreakAudit,
+		SutureAudit,
+		OutAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio);
+}
+
+bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUpliftFromPlan(
+	const FCarrierLabPhaseIIID7CollisionUpliftAudit& PlannedAudit,
+	const FCarrierLabPhaseIIID4SlabBreakPlanAudit& SlabBreakAudit,
+	const FCarrierLabPhaseIIID5SuturePlanAudit& SutureAudit,
+	FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
+	const double InterpenetrationThresholdKm,
+	const double DestinationMassThresholdRatio)
+{
 	OutAudit = PlannedAudit;
 	OutAudit.bPlannedOnly = false;
 	if (PlannedAudit.bNoUpliftAvailable || PlannedAudit.Records.IsEmpty())
@@ -6854,7 +7095,12 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID7CollisionUplift(
 	}
 
 	FCarrierLabPhaseIIID6TopologyMutationAudit TopologyAudit;
-	if (!ApplyPhaseIIID6DetachAndSuture(TopologyAudit, InterpenetrationThresholdKm, DestinationMassThresholdRatio))
+	if (!ApplyPhaseIIID6DetachAndSutureFromPlans(
+		SlabBreakAudit,
+		SutureAudit,
+		TopologyAudit,
+		InterpenetrationThresholdKm,
+		DestinationMassThresholdRatio))
 	{
 		return false;
 	}

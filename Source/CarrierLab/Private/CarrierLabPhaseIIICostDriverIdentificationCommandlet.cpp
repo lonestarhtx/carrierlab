@@ -25,6 +25,9 @@ namespace
 	constexpr double PaperTable2PlateRiftingSecondsPerEvent = 0.23;
 	constexpr double SoftPaperRatioTarget = 10.0;
 	constexpr double IIID8Replay0WallSeconds = 1151.130;
+	constexpr double PreReuseIIID6TopologyMutationSeconds = 7.127022;
+	constexpr double PreReuseIIID7UpliftApplySeconds = 15.030029;
+	constexpr double PreReuseTotalMeasuredSurfaceSeconds = 45.064643;
 
 	enum class EValidationTier : uint8
 	{
@@ -677,6 +680,25 @@ namespace
 		return Largest;
 	}
 
+	const FCostDriverRow* FindRowByName(const FCostDriverResult& Result, const FString& Name)
+	{
+		for (const FCostDriverRow& Row : Result.Rows)
+		{
+			if (Row.Name == Name)
+			{
+				return &Row;
+			}
+		}
+		return nullptr;
+	}
+
+	double PercentReduction(const double Before, const double After)
+	{
+		return Before > UE_DOUBLE_SMALL_NUMBER
+			? 100.0 * FMath::Max(0.0, Before - After) / Before
+			: 0.0;
+	}
+
 	FString BuildTimingTable(const FCostDriverResult& Result)
 	{
 		FString Table;
@@ -711,11 +733,14 @@ namespace
 		const FCostDriverRow* LargestProcess = FindLargestRow(Result, TEXT("per_step"));
 		const FCostDriverRow* LargestCollision = FindLargestRow(Result, TEXT("collision"));
 		const FCostDriverRow* LargestElevation = FindLargestRow(Result, TEXT("collision_elevation"));
+		const FCostDriverRow* D6Row = FindRowByName(Result, TEXT("iiid6_topology_mutation"));
+		const FCostDriverRow* D7ApplyRow = FindRowByName(Result, TEXT("iiid7_uplift_apply"));
+		const FCostDriverRow* TotalRow = FindRowByName(Result, TEXT("total_measured_cost_driver_surface"));
 
 		FString Report;
-		Report += TEXT("# Phase III Pre-IIIE Cost Driver Identification\n\n");
+		Report += TEXT("# Phase III Pre-IIIE Collision Plan Reuse / Cost Driver Identification\n\n");
 		Report += FString::Printf(
-			TEXT("Status: %s. This slice adds diagnostic cost-driver timing only. It does not optimize collision, remesh, projection, or carrier code paths.\n\n"),
+			TEXT("Status: %s. This slice adds behavior-preserving IIID collision-plan reuse and regenerates the cost-driver timing report. It does not add remesh, projection-derived correction, global ownership, cache-as-authority, or new tectonic behavior.\n\n"),
 			*PassFail(Result.bCompleted && bTierWithinTarget));
 		Report += FString::Printf(TEXT("Output root: `%s`\n\n"), *OutputRoot);
 
@@ -760,6 +785,30 @@ namespace
 		Report += FString::Printf(
 			TEXT("- `integrated_gap`: IIID.8 replay 0 remains `%s` the paper Table 2 total-process baseline. This slice did not rerun the integrated replay; it decomposes a Slice-tier fixture to identify likely drivers.\n"),
 			*RatioString(IIID8PaperRatio));
+		if (D6Row != nullptr)
+		{
+			Report += FString::Printf(
+				TEXT("- `plan_reuse_d6_delta`: `iiid6_topology_mutation` changed from `%.6fs/step` to `%.6fs/step` (`%.2f%%` reduction) by consuming the staged D1-D5 plan chain once instead of recomputing D4/D5 inside the mutation path.\n"),
+				PreReuseIIID6TopologyMutationSeconds,
+				RowSecondsPerStep(*D6Row),
+				PercentReduction(PreReuseIIID6TopologyMutationSeconds, RowSecondsPerStep(*D6Row)));
+		}
+		if (D7ApplyRow != nullptr)
+		{
+			Report += FString::Printf(
+				TEXT("- `plan_reuse_d7_delta`: `iiid7_uplift_apply` changed from `%.6fs/step` to `%.6fs/step` (`%.2f%%` reduction). The nested public-call shape collapsed from repeated D1-D5 rediscovery to one D1 seed plus one D6 mutation call.\n"),
+				PreReuseIIID7UpliftApplySeconds,
+				RowSecondsPerStep(*D7ApplyRow),
+				PercentReduction(PreReuseIIID7UpliftApplySeconds, RowSecondsPerStep(*D7ApplyRow)));
+		}
+		if (TotalRow != nullptr)
+		{
+			Report += FString::Printf(
+				TEXT("- `plan_reuse_total_delta`: `total_measured_cost_driver_surface` changed from `%.6fs/step` to `%.6fs/step` (`%.2f%%` reduction). This total is still an inclusive diagnostic surface, not an exclusive profiler trace.\n"),
+				PreReuseTotalMeasuredSurfaceSeconds,
+				RowSecondsPerStep(*TotalRow),
+				PercentReduction(PreReuseTotalMeasuredSurfaceSeconds, RowSecondsPerStep(*TotalRow)));
+		}
 		if (LargestOverall != nullptr)
 		{
 			Report += FString::Printf(
@@ -792,16 +841,16 @@ namespace
 				RowSecondsPerStep(*LargestElevation),
 				*RatioString(RowPaperRatio(*LargestElevation)));
 		}
-		Report += TEXT("- `first_order_conclusion`: in this existing Slice-tier fixture, one-step IIIB/IIIC process work and setup amortization are small; the immediate measured driver is the IIID.6/IIID.7 apply path, especially repeated nested recomputation of earlier collision plans.\n");
-		Report += TEXT("- `scale_limit`: this does not prove IIIB.3/BVH work is harmless at the 60k/40 integrated scale. It says the first optimization target should be validated against the heavy IIID apply rows before changing core tracking logic.\n");
-		Report += TEXT("- `nested_recompute_shape`: D4 calls D1 and D3; D5 calls D4; D6 calls D4 and D5; D7 plan calls D2, D4, and D5; D7 apply calls D7 plan and D6. The call-count column makes that recomputation visible as diagnostic evidence.\n");
+		Report += TEXT("- `first_order_conclusion`: plan reuse removed the largest recomputation pattern. The remaining Slice-tier over-target rows are now the first-pass D1/DestinationMass-family scans themselves rather than repeated nested rediscovery in D6/D7 apply.\n");
+		Report += TEXT("- `scale_limit`: this does not establish that IIIB.3/BVH work is harmless at the 60k/40 integrated scale. It says the first optimization target should be validated against the heavy IIID apply rows before changing core tracking logic.\n");
+		Report += TEXT("- `nested_recompute_shape`: D6/D7 no longer call the earlier public stage APIs repeatedly. The call-count column remains diagnostic evidence for whether future edits accidentally reintroduce nested public-stage recomputation.\n");
 		Report += TEXT("- `scope_limit`: rows are Slice-tier diagnostics on existing fixtures, not a replacement for mandatory Integrated-tier sub-phase evidence.\n\n");
 
 		Report += TEXT("## Next Remediation Candidates\n\n");
-		Report += TEXT("Do not optimize in this slice. The next optimization/design pass should start from the rows above, with special attention to any over-target row that is both large and repeatedly nested. Plausible remediation surfaces include staged-plan reuse inside commandlets, per-step BVH refresh avoidance when topology has not changed, and separating audit-record construction from hot process loops. Any such change needs its own slice and gates.\n\n");
+		Report += TEXT("The next optimization/design pass should start from the remaining over-target rows, especially D1 terrane expansion and destination-mass/component construction. Per-step BVH refresh avoidance and audit-record construction are still possible future surfaces, but this run no longer points at D6/D7 nested recomputation as the dominant Slice-tier driver.\n\n");
 
 		Report += TEXT("## Scope Notes\n\n");
-		Report += TEXT("This commandlet adds diagnostics only. It does not add carrier authority state, global sample ownership, repair, recovery, backfill, cache-as-authority, projection-derived state, remesh replacement, collision optimization, or IIIE behavior.\n");
+		Report += TEXT("The actor change is plan reuse only: already-computed IIID audits are passed forward inside a single call chain. It does not add carrier authority state, global sample ownership, forbidden fallback-family behavior, cache-as-authority, projection-derived state, remesh replacement, or IIIE behavior.\n");
 		return Report;
 	}
 }

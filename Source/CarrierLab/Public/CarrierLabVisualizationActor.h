@@ -1722,6 +1722,46 @@ private:
 	bool ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark);
 	void ApplyPhaseIIIC3OverridingPlateUplift();
 	void ApplyPhaseIIIC4SlabPull();
+	bool BuildPhaseIIID2CollisionGroupsFromTerranes(
+		const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
+		FCarrierLabPhaseIIID2CollisionGroupingAudit& OutAudit,
+		double InterpenetrationThresholdKm) const;
+	bool BuildPhaseIIID3DestinationMassFromInputs(
+		const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
+		const FCarrierLabPhaseIIID2CollisionGroupingAudit& GroupingAudit,
+		FCarrierLabPhaseIIID3DestinationMassAudit& OutAudit,
+		double InterpenetrationThresholdKm,
+		double DestinationMassThresholdRatio) const;
+	bool BuildPhaseIIID4SlabBreakFromInputs(
+		const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
+		const FCarrierLabPhaseIIID3DestinationMassAudit& DestinationMassAudit,
+		FCarrierLabPhaseIIID4SlabBreakPlanAudit& OutAudit,
+		double InterpenetrationThresholdKm,
+		double DestinationMassThresholdRatio) const;
+	bool BuildPhaseIIID5SutureFromSlabBreak(
+		const FCarrierLabPhaseIIID4SlabBreakPlanAudit& SlabBreakAudit,
+		FCarrierLabPhaseIIID5SuturePlanAudit& OutAudit,
+		double InterpenetrationThresholdKm,
+		double DestinationMassThresholdRatio) const;
+	bool BuildPhaseIIID7CollisionUpliftFromPlans(
+		const FCarrierLabPhaseIIID2CollisionGroupingAudit& GroupingAudit,
+		const FCarrierLabPhaseIIID5SuturePlanAudit& SutureAudit,
+		FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
+		double InterpenetrationThresholdKm,
+		double DestinationMassThresholdRatio) const;
+	bool ApplyPhaseIIID6DetachAndSutureFromPlans(
+		const FCarrierLabPhaseIIID4SlabBreakPlanAudit& SlabBreakAudit,
+		const FCarrierLabPhaseIIID5SuturePlanAudit& SutureAudit,
+		FCarrierLabPhaseIIID6TopologyMutationAudit& OutAudit,
+		double InterpenetrationThresholdKm,
+		double DestinationMassThresholdRatio);
+	bool ApplyPhaseIIID7CollisionUpliftFromPlan(
+		const FCarrierLabPhaseIIID7CollisionUpliftAudit& PlannedAudit,
+		const FCarrierLabPhaseIIID4SlabBreakPlanAudit& SlabBreakAudit,
+		const FCarrierLabPhaseIIID5SuturePlanAudit& SutureAudit,
+		FCarrierLabPhaseIIID7CollisionUpliftAudit& OutAudit,
+		double InterpenetrationThresholdKm,
+		double DestinationMassThresholdRatio);
 	void ProjectCurrentCarrier();
 	bool RefreshPlateRayMeshes(FString& OutError);
 	bool RefreshProjectionRayMesh(FString& OutError);
