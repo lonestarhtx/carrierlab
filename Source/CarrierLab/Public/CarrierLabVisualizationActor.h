@@ -1747,6 +1747,12 @@ public:
 		int32 NeighborDepth,
 		int32& OutSeedLocalTriangleId,
 		int32& OutPatchTriangleCount);
+	bool SetPhaseIIID3DestinationFrontPatchForTest(
+		int32 SourcePlateId,
+		int32 DestinationPlateId,
+		int32 NeighborDepth,
+		int32& OutSeedLocalTriangleId,
+		int32& OutPatchTriangleCount);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
 	bool SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit);

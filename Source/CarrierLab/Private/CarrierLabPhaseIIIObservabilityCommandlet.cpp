@@ -56,6 +56,8 @@ namespace
 		bool bExpectNaturalResamplingEvent = false;
 		bool bEnableIIIDCollisionVisual = false;
 		bool bApplyDestinationPatchForTest = false;
+		bool bApplyDestinationFrontPatchForTest = false;
+		int32 DestinationPatchNeighborDepth = 0;
 		bool bApplyIIIDCollisionEvent = false;
 	};
 
@@ -183,6 +185,22 @@ namespace
 			AfterCollision.ExpectedState = EObservabilityExpectedState::CollisionSignalsRequired;
 			AfterCollision.bApplyIIIDCollisionEvent = true;
 			Scenarios.Add(AfterCollision);
+
+			FObservabilityScenario FrontReady = BeforeCollision;
+			FrontReady.Name = TEXT("forced_collision_front_ready");
+			FrontReady.Description = TEXT("Two-plate forced-convergence fixture with all accepted destination-side front triangles made continental before applying IIID mutation. This asks whether the current collision model can present a ridge-scale candidate front.");
+			FrontReady.bApplyDestinationPatchForTest = false;
+			FrontReady.bApplyDestinationFrontPatchForTest = true;
+			FrontReady.DestinationPatchNeighborDepth = 1;
+			FrontReady.bApplyIIIDCollisionEvent = false;
+			Scenarios.Add(FrontReady);
+
+			FObservabilityScenario FrontAfter = FrontReady;
+			FrontAfter.Name = TEXT("forced_collision_front_after");
+			FrontAfter.Description = TEXT("Same broad-front fixture after applying the existing IIID detach/suture/uplift event. This is a visual falsification fixture for the mountain-range question, not a new paper-faithfulness claim.");
+			FrontAfter.ExpectedState = EObservabilityExpectedState::CollisionSignalsRequired;
+			FrontAfter.bApplyIIIDCollisionEvent = true;
+			Scenarios.Add(FrontAfter);
 			return Scenarios;
 		}
 
@@ -1816,7 +1834,23 @@ namespace
 				if (ProbeGrouping.AcceptedGroupCount > 0)
 				{
 					if (Scenario.bApplyDestinationPatchForTest &&
-						!Actor->SetPhaseIIID3DestinationPatchForTest(0, 1, 0, OutResult.PatchSeedTriangleId, OutResult.PatchTriangleCount))
+						!Actor->SetPhaseIIID3DestinationPatchForTest(
+							0,
+							1,
+							Scenario.DestinationPatchNeighborDepth,
+							OutResult.PatchSeedTriangleId,
+							OutResult.PatchTriangleCount))
+					{
+						Actor->Destroy();
+						return false;
+					}
+					if (Scenario.bApplyDestinationFrontPatchForTest &&
+						!Actor->SetPhaseIIID3DestinationFrontPatchForTest(
+							0,
+							1,
+							Scenario.DestinationPatchNeighborDepth,
+							OutResult.PatchSeedTriangleId,
+							OutResult.PatchTriangleCount))
 					{
 						Actor->Destroy();
 						return false;

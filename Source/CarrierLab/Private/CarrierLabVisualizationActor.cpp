@@ -7581,6 +7581,127 @@ bool ACarrierLabVisualizationActor::SetPhaseIIID3DestinationPatchForTest(
 	return OutPatchTriangleCount > 0;
 }
 
+bool ACarrierLabVisualizationActor::SetPhaseIIID3DestinationFrontPatchForTest(
+	const int32 SourcePlateId,
+	const int32 DestinationPlateId,
+	const int32 NeighborDepth,
+	int32& OutSeedLocalTriangleId,
+	int32& OutPatchTriangleCount)
+{
+	OutSeedLocalTriangleId = INDEX_NONE;
+	OutPatchTriangleCount = 0;
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+	if (!State.Plates.IsValidIndex(SourcePlateId) ||
+		!State.Plates.IsValidIndex(DestinationPlateId) ||
+		SourcePlateId == DestinationPlateId)
+	{
+		return false;
+	}
+
+	CarrierLab::FCarrierPlate& Plate = State.Plates[DestinationPlateId];
+	TSet<int32> PatchTriangles;
+	TArray<int32> Frontier;
+
+	TArray<CarrierLab::FConvergenceSubductionMatrixEvidence> EvidenceRecords = State.ConvergenceSubductionMatrixEvidence;
+	EvidenceRecords.Sort([](
+		const CarrierLab::FConvergenceSubductionMatrixEvidence& A,
+		const CarrierLab::FConvergenceSubductionMatrixEvidence& B)
+	{
+		if (A.EvidenceId != B.EvidenceId)
+		{
+			return A.EvidenceId < B.EvidenceId;
+		}
+		if (A.PlateId != B.PlateId)
+		{
+			return A.PlateId < B.PlateId;
+		}
+		return A.LocalTriangleId < B.LocalTriangleId;
+	});
+
+	for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : EvidenceRecords)
+	{
+		if (!Evidence.bAccepted ||
+			Evidence.PlateId != SourcePlateId ||
+			Evidence.OtherPlateId != DestinationPlateId ||
+			!Plate.LocalTriangles.IsValidIndex(Evidence.OtherLocalTriangleId))
+		{
+			continue;
+		}
+		if (OutSeedLocalTriangleId == INDEX_NONE)
+		{
+			OutSeedLocalTriangleId = Evidence.OtherLocalTriangleId;
+		}
+		if (!PatchTriangles.Contains(Evidence.OtherLocalTriangleId))
+		{
+			PatchTriangles.Add(Evidence.OtherLocalTriangleId);
+			Frontier.Add(Evidence.OtherLocalTriangleId);
+		}
+	}
+	if (PatchTriangles.IsEmpty())
+	{
+		return false;
+	}
+
+	const int32 ClampedDepth = FMath::Clamp(NeighborDepth, 0, 64);
+	for (int32 Depth = 0; Depth < ClampedDepth; ++Depth)
+	{
+		TArray<int32> NextFrontier;
+		for (const int32 LocalTriangleId : Frontier)
+		{
+			TArray<int32> Neighbors;
+			GetPlateLocalTriangleNeighbors(Plate, LocalTriangleId, Neighbors);
+			for (const int32 NeighborId : Neighbors)
+			{
+				if (!PatchTriangles.Contains(NeighborId))
+				{
+					PatchTriangles.Add(NeighborId);
+					NextFrontier.Add(NeighborId);
+				}
+			}
+		}
+		Frontier = MoveTemp(NextFrontier);
+		if (Frontier.IsEmpty())
+		{
+			break;
+		}
+	}
+
+	TSet<int32> ContinentalVertexIds;
+	for (const int32 LocalTriangleId : PatchTriangles)
+	{
+		if (!Plate.LocalTriangles.IsValidIndex(LocalTriangleId))
+		{
+			continue;
+		}
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[LocalTriangleId];
+		ContinentalVertexIds.Add(Triangle.A);
+		ContinentalVertexIds.Add(Triangle.B);
+		ContinentalVertexIds.Add(Triangle.C);
+	}
+
+	Plate.bContinental = true;
+	for (int32 LocalVertexId = 0; LocalVertexId < Plate.Vertices.Num(); ++LocalVertexId)
+	{
+		CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[LocalVertexId];
+		const bool bPatchVertex = ContinentalVertexIds.Contains(LocalVertexId);
+		Vertex.ContinentalFraction = bPatchVertex ? 1.0 : 0.0;
+		Vertex.bContinental = bPatchVertex;
+		if (State.Samples.IsValidIndex(Vertex.GlobalSampleId) &&
+			State.Samples[Vertex.GlobalSampleId].PlateId == DestinationPlateId)
+		{
+			State.Samples[Vertex.GlobalSampleId].ContinentalFraction = Vertex.ContinentalFraction;
+			State.Samples[Vertex.GlobalSampleId].bContinental = bPatchVertex;
+		}
+	}
+
+	OutPatchTriangleCount = PatchTriangles.Num();
+	ProjectCurrentCarrier();
+	return OutPatchTriangleCount > 0;
+}
+
 bool ACarrierLabVisualizationActor::SetPlateElevationForTest(const int32 PlateId, const double ElevationKm)
 {
 	if (!bInitialized && !InitializeCarrier())
