@@ -36,3 +36,10 @@ For CarrierLab implementation or planning work, read only the relevant subset:
 - Stage or slice advancement requires a written checkpoint and explicit user go/no-go.
 - Numbers first, images second, verdict last.
 - Do not port Aurous V6/V9/Prototype A/B/C/D/E logic.
+
+## Codex Desktop Windows Notes
+
+- For release/closeout work, use `$carrierlab-stage-release` before staging, committing, pushing, or running final validation.
+- Stage explicit intended paths only. In Codex Desktop on Windows, `git add` can fail on `.git/index.lock` under the normal sandbox; if so, verify no competing Git operation, then rerun the same scoped `git add -- <paths>` with escalation.
+- Real `CarrierLabEditor` builds should use `$carrierlab-build` and request escalation on the first compile attempt because UnrealBuildTool writes AppData caches outside the workspace sandbox.
+- Real `UnrealEditor-Cmd.exe -run=...` commandlets/tests should request escalation on the first attempt. A sandboxed launch can return immediately without a log/report/output folder; treat that as an environment launch failure, not commandlet evidence.
