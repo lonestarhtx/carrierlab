@@ -1,20 +1,20 @@
 # Phase III Pre-IIIE Thesis Cleanup
 
-Status: in progress. This checkpoint records the focused cleanup requested after
+Status: complete. This checkpoint records the focused cleanup requested after
 the IIID visual/performance validation pass. It does not start IIIE.1.
 
 ## Scope
 
-This tranche addresses two local thesis-formula findings and makes one
-obduction control-flow decision before any IIIE remesh-contract work begins:
+This tranche addresses two local thesis-formula findings and records the
+obduction control-flow decision that was completed by Pre-IIIE.8 before any
+IIIE remesh-contract work begins:
 
 - Finding 9: IIIC.3 fold direction used uplift magnitude as the increment
   scale.
 - Finding 20: IIID.7 collision influence radius placed the terrane-area factor
   under the square root.
-- Finding 33: continental-continental obduction currently reaches IIID
-  collision evidence, but not the IIIC.3 continuous uplift path before the
-  collision threshold.
+- Finding 33: continental-continental obduction now reaches a separate
+  obduction-pending continuous uplift path before the collision threshold.
 
 No new carrier authority source, ownership retention, repair, recovery,
 backfill, projection-derived state, or IIIE remesh implementation is introduced
@@ -71,7 +71,8 @@ a discrete carrier approximation, not a continuous polygon-distance oracle.
 
 ### Finding 33: Obduction Continuous Uplift
 
-Decision: do not fix by overloading subducting marks.
+Decision: fix with a separate obduction-pending mark/audit path; do not
+overload subducting marks.
 
 Rationale:
 
@@ -82,19 +83,19 @@ Rationale:
 - Overloading subducting marks would risk making IIIE's filtered-remesh contract
   ambiguous at exactly the boundary where it needs to be most explicit.
 
-Required next cleanup before IIIE.1:
+Implemented by Pre-IIIE.8:
 
-- Add a separate obduction-pending evidence/mark path, or record an explicit
-  user-approved deferral.
-- The preferred bridge should consume IIIB `CollisionCandidate` evidence,
-  apply the IIIC.3 continuous uplift formula for sub-threshold obduction, and
-  leave IIID's 300 km collision/suture event as the discrete threshold path.
-- A fixture should demonstrate sub-threshold continental-continental uplift
-  without topology mutation.
+- A separate obduction-pending evidence/mark path consumes IIIB
+  `CollisionCandidate` evidence.
+- The bridge applies the IIIC.3 continuous uplift formula for sub-threshold
+  obduction and leaves IIID's 300 km collision/suture event as the discrete
+  threshold path.
+- The Pre-IIIE.8 checkpoint demonstrates sub-threshold
+  continental-continental uplift without topology mutation.
 
-Until that bridge or deferral lands, IIID must not claim full
-continental-continental obduction behavior. It may claim the already-accepted
-local collision/suture behavior for the exercised fixtures.
+IIID may claim local continental-continental obduction uplift for the exercised
+Pre-IIIE.8 fixture. It still must not claim full remesh/elevation-evolution
+faithfulness before IIIE/IIIH.
 
 ## Exit Criteria
 
@@ -102,6 +103,7 @@ local collision/suture behavior for the exercised fixtures.
   tolerance.
 - `CarrierLabPhaseIIID7` passes with radius oracle residual at floating-point
   tolerance.
-- The IIIE entry audit and Phase III design docs record Findings 9 and 20 as
-  fixed, and Finding 33 as a separate obduction bridge blocker/defer point.
+- The IIIE entry audit and Phase III design docs record Findings 9, 20, and 33
+  as fixed for local convergence mechanics, with remesh-time filtering still
+  IIIE-owned.
 - IIIE.1 is not started by this tranche.

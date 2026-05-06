@@ -146,6 +146,19 @@ namespace CarrierLab
 		double VisibleElevationAppliedKm = 0.0;
 	};
 
+	struct FConvergenceObductionTriangleMark
+	{
+		int32 MarkId = INDEX_NONE;
+		uint64 PairKey = 0;
+		int32 PlateId = INDEX_NONE;
+		int32 OtherPlateId = INDEX_NONE;
+		int32 LocalTriangleId = INDEX_NONE;
+		int32 OtherLocalTriangleId = INDEX_NONE;
+		int32 EvidenceId = INDEX_NONE;
+		double SignedConvergenceVelocity = 0.0;
+		EConvergenceSubductionPolarityClass DecisionClass = EConvergenceSubductionPolarityClass::None;
+	};
+
 	struct FCarrierState
 	{
 		FStage0Config Config;
@@ -160,6 +173,7 @@ namespace CarrierLab
 		TArray<FConvergenceSubductionTriangleHit> ConvergenceSubductionTriangleHits;
 		TArray<FConvergenceSubductionMatrixEvidence> ConvergenceSubductionMatrixEvidence;
 		TArray<FConvergenceSubductingTriangleMark> ConvergenceSubductingTriangleMarks;
+		TArray<FConvergenceObductionTriangleMark> ConvergenceObductionTriangleMarks;
 		int32 ConvergenceTrackingResetSerial = 0;
 		int32 ConvergenceTrackingDistanceCullCount = 0;
 		int32 ConvergenceSubductionMatrixRayTestCount = 0;
@@ -173,6 +187,8 @@ namespace CarrierLab
 		int32 ConvergenceNeighborPropagationInvalidCount = 0;
 		int32 ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 		int32 ConvergenceSubductingTriangleMarkInvalidCount = 0;
+		int32 ConvergenceObductionTriangleMarkDuplicateCount = 0;
+		int32 ConvergenceObductionTriangleMarkInvalidCount = 0;
 		int32 ConvergenceHistoricalElevationSnapshotCount = 0;
 		int32 ConvergenceHistoricalElevationSnapshotVertexCount = 0;
 		int32 ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;

@@ -453,6 +453,7 @@ namespace CarrierLab
 		State.ConvergenceSubductionTriangleHits.Reset();
 		State.ConvergenceSubductionMatrixEvidence.Reset();
 		State.ConvergenceSubductingTriangleMarks.Reset();
+		State.ConvergenceObductionTriangleMarks.Reset();
 		State.ConvergenceTrackingDistanceCullCount = 0;
 		State.ConvergenceSubductionMatrixRayTestCount = 0;
 		State.ConvergenceSubductionMatrixHitCount = 0;
@@ -465,6 +466,8 @@ namespace CarrierLab
 		State.ConvergenceNeighborPropagationInvalidCount = 0;
 		State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 		State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+		State.ConvergenceObductionTriangleMarkDuplicateCount = 0;
+		State.ConvergenceObductionTriangleMarkInvalidCount = 0;
 		State.ConvergenceHistoricalElevationSnapshotCount = 0;
 		State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
 		State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;

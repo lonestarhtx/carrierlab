@@ -2270,6 +2270,7 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	State = MoveTemp(NewState);
 	CurrentMetrics = FCarrierLabVisualizationMetrics();
 	LastPhaseIIIC3UpliftAudit = FCarrierLabPhaseIIIC3UpliftAudit();
+	LastPhaseIIICObductionUpliftAudit = FCarrierLabPhaseIIICObductionUpliftAudit();
 	LastPhaseIIIC4SlabPullAudit = FCarrierLabPhaseIIIC4SlabPullAudit();
 	LastPhaseIIIC5ElevationLedgerAudit = FCarrierLabPhaseIIIC5ElevationLedgerAudit();
 	RenderPlateIds.SetNum(State.Samples.Num());
@@ -2345,6 +2346,7 @@ void ACarrierLabVisualizationActor::ConfigurePhaseIIICProcessLayer(const bool bE
 	bEnablePhaseIIICSubductingMarks = bEnabled;
 	bEnablePhaseIIICVisibleHistoricalElevation = bEnabled;
 	bEnablePhaseIIICOverridingPlateUplift = bEnabled;
+	bEnablePhaseIIICObductionUpliftBridge = bEnabled;
 	bEnablePhaseIIICSlabPull = bEnabled && bInEnableSlabPull;
 }
 
@@ -4745,6 +4747,34 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIII
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::GetPhaseIIICObductionUpliftAudit(FCarrierLabPhaseIIICObductionUpliftAudit& OutAudit) const
+{
+	OutAudit = LastPhaseIIICObductionUpliftAudit;
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.EventCount = CurrentMetrics.EventCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	OutAudit.bEnabled = bEnablePhaseIIICObductionUpliftBridge;
+	OutAudit.bUpliftEnabled = bEnablePhaseIIICOverridingPlateUplift;
+	OutAudit.MarkCount = State.ConvergenceObductionTriangleMarks.Num();
+	OutAudit.DuplicateMarkCount = State.ConvergenceObductionTriangleMarkDuplicateCount;
+	OutAudit.InvalidMarkCount = State.ConvergenceObductionTriangleMarkInvalidCount;
+	OutAudit.EffectRadiusKm = PhaseIIICSubductionEffectRadiusKm;
+	OutAudit.UpliftRateMmPerYear = PhaseIIICSubductionUpliftMmPerYear;
+	OutAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	OutAudit.FoldInfluenceBeta = PhaseIIICFoldDirectionBeta;
+	OutAudit.TrenchDepthKm = PhaseIIICTrenchDepthKm;
+	OutAudit.ContinentalMaxElevationKm = PhaseIIICMaxContinentalElevationKm;
+	OutAudit.VisibleElevationHash = CurrentMetrics.VisibleElevationHash;
+	OutAudit.CrustStateHash = CurrentMetrics.CrustStateHash;
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const
 {
 	OutAudit = LastPhaseIIIC4SlabPullAudit;
@@ -6699,6 +6729,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSutureFromPlans(
 	State.ConvergenceSubductionTriangleHits.Reset();
 	State.ConvergenceSubductionMatrixEvidence.Reset();
 	State.ConvergenceSubductingTriangleMarks.Reset();
+	State.ConvergenceObductionTriangleMarks.Reset();
 	State.ConvergenceTrackingDistanceCullCount = 0;
 	State.ConvergenceSubductionMatrixRayTestCount = 0;
 	State.ConvergenceSubductionMatrixHitCount = 0;
@@ -6711,6 +6742,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSutureFromPlans(
 	State.ConvergenceNeighborPropagationInvalidCount = 0;
 	State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 	State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+	State.ConvergenceObductionTriangleMarkDuplicateCount = 0;
+	State.ConvergenceObductionTriangleMarkInvalidCount = 0;
 	State.ConvergenceHistoricalElevationSnapshotCount = 0;
 	State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
 	State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
@@ -6721,7 +6754,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSutureFromPlans(
 		State.ConvergenceSubductionPolarityDecisions.IsEmpty() &&
 		State.ConvergenceSubductionTriangleHits.IsEmpty() &&
 		State.ConvergenceSubductionMatrixEvidence.IsEmpty() &&
-		State.ConvergenceSubductingTriangleMarks.IsEmpty();
+		State.ConvergenceSubductingTriangleMarks.IsEmpty() &&
+		State.ConvergenceObductionTriangleMarks.IsEmpty();
 
 	++CurrentMetrics.EventCount;
 	OutAudit.EventCountAfter = CurrentMetrics.EventCount;
@@ -7762,6 +7796,16 @@ bool ACarrierLabVisualizationActor::SetPlateOceanicAgeForTest(const int32 PlateI
 	return true;
 }
 
+int32 ACarrierLabVisualizationActor::GetCarrierLocalTriangleCountForTest() const
+{
+	int32 Count = 0;
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		Count += Plate.LocalTriangles.Num();
+	}
+	return Count;
+}
+
 bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit)
 {
 	OutAudit = FCarrierLabPhaseIIIB3SubductionMatrixAudit();
@@ -7791,6 +7835,7 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(F
 	State.ConvergenceSubductionTriangleHits.Reset();
 	State.ConvergenceSubductionMatrixEvidence.Reset();
 	State.ConvergenceSubductingTriangleMarks.Reset();
+	State.ConvergenceObductionTriangleMarks.Reset();
 	State.ConvergenceSubductionMatrixRayTestCount = 1;
 	State.ConvergenceSubductionMatrixHitCount = 0;
 	State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
@@ -7802,6 +7847,8 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(F
 	State.ConvergenceNeighborPropagationInvalidCount = 0;
 	State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 	State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+	State.ConvergenceObductionTriangleMarkDuplicateCount = 0;
+	State.ConvergenceObductionTriangleMarkInvalidCount = 0;
 	State.ConvergenceHistoricalElevationSnapshotCount = 0;
 	State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
 	State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
@@ -7919,6 +7966,7 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			State.ConvergenceSubductionTriangleHits.Reset();
 			State.ConvergenceSubductionMatrixEvidence.Reset();
 			State.ConvergenceSubductingTriangleMarks.Reset();
+			State.ConvergenceObductionTriangleMarks.Reset();
 			State.ConvergenceSubductionMatrixRayTestCount = 0;
 			State.ConvergenceSubductionMatrixHitCount = 1;
 			State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
@@ -7930,6 +7978,8 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			State.ConvergenceNeighborPropagationInvalidCount = 0;
 			State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
 			State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+			State.ConvergenceObductionTriangleMarkDuplicateCount = 0;
+			State.ConvergenceObductionTriangleMarkInvalidCount = 0;
 			State.ConvergenceHistoricalElevationSnapshotCount = 0;
 			State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
 			State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
@@ -8133,12 +8183,31 @@ bool ACarrierLabVisualizationActor::RunPhaseIIICostDriverAdvanceProbe(FCarrierLa
 	{
 		StartSeconds = FPlatformTime::Seconds();
 		UpdatePhaseIIICSubductingTriangleMarks();
+		if (bEnablePhaseIIICObductionUpliftBridge)
+		{
+			UpdatePhaseIIICObductionTriangleMarks();
+		}
 		OutAudit.MarkSeconds = FPlatformTime::Seconds() - StartSeconds;
 	}
 	if (bEnablePhaseIIICOverridingPlateUplift)
 	{
 		StartSeconds = FPlatformTime::Seconds();
 		ApplyPhaseIIIC3OverridingPlateUplift();
+		if (bEnablePhaseIIICObductionUpliftBridge)
+		{
+			ApplyPhaseIIICObductionUplift();
+		}
+		else
+		{
+			LastPhaseIIICObductionUpliftAudit = FCarrierLabPhaseIIICObductionUpliftAudit();
+			LastPhaseIIICObductionUpliftAudit.Step = CurrentMetrics.Step + 1;
+			LastPhaseIIICObductionUpliftAudit.EventCount = CurrentMetrics.EventCount;
+			LastPhaseIIICObductionUpliftAudit.PlateCount = State.Plates.Num();
+			LastPhaseIIICObductionUpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+			LastPhaseIIICObductionUpliftAudit.bEnabled = false;
+			LastPhaseIIICObductionUpliftAudit.bUpliftEnabled = true;
+			LastPhaseIIICObductionUpliftAudit.MarkCount = State.ConvergenceObductionTriangleMarks.Num();
+		}
 		OutAudit.UpliftSeconds = FPlatformTime::Seconds() - StartSeconds;
 	}
 	else
@@ -8152,6 +8221,14 @@ bool ACarrierLabVisualizationActor::RunPhaseIIICostDriverAdvanceProbe(FCarrierLa
 		LastPhaseIIIC3UpliftAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
 		LastPhaseIIIC3UpliftAudit.bUpliftEnabled = false;
 		LastPhaseIIIC3UpliftAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+		LastPhaseIIICObductionUpliftAudit = FCarrierLabPhaseIIICObductionUpliftAudit();
+		LastPhaseIIICObductionUpliftAudit.Step = CurrentMetrics.Step + 1;
+		LastPhaseIIICObductionUpliftAudit.EventCount = CurrentMetrics.EventCount;
+		LastPhaseIIICObductionUpliftAudit.PlateCount = State.Plates.Num();
+		LastPhaseIIICObductionUpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+		LastPhaseIIICObductionUpliftAudit.bEnabled = bEnablePhaseIIICObductionUpliftBridge;
+		LastPhaseIIICObductionUpliftAudit.bUpliftEnabled = false;
+		LastPhaseIIICObductionUpliftAudit.MarkCount = State.ConvergenceObductionTriangleMarks.Num();
 	}
 
 	StartSeconds = FPlatformTime::Seconds();
@@ -8178,7 +8255,9 @@ bool ACarrierLabVisualizationActor::RunPhaseIIICostDriverAdvanceProbe(FCarrierLa
 	OutAudit.NeighborSeedCount = State.ConvergenceNeighborPropagationSeedCount;
 	OutAudit.NeighborAddedCount = State.ConvergenceNeighborPropagationAddedCount;
 	OutAudit.SubductingMarkCount = State.ConvergenceSubductingTriangleMarks.Num();
-	OutAudit.UpliftRecordCount = LastPhaseIIIC3UpliftAudit.UpliftRecordCount;
+	OutAudit.UpliftRecordCount =
+		LastPhaseIIIC3UpliftAudit.UpliftRecordCount +
+		LastPhaseIIICObductionUpliftAudit.UpliftRecordCount;
 	OutAudit.SlabPullContributionCount = LastPhaseIIIC4SlabPullAudit.ContributionCount;
 	OutAudit.TotalProcessSeconds = FPlatformTime::Seconds() - TotalStartSeconds;
 	return true;
@@ -8903,6 +8982,72 @@ void ACarrierLabVisualizationActor::UpdatePhaseIIICSubductingTriangleMarks()
 	}
 }
 
+void ACarrierLabVisualizationActor::UpdatePhaseIIICObductionTriangleMarks()
+{
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+
+	TMap<int32, CarrierLab::FConvergenceSubductionMatrixEvidence> EvidenceById;
+	for (const CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence : State.ConvergenceSubductionMatrixEvidence)
+	{
+		EvidenceById.Add(Evidence.EvidenceId, Evidence);
+	}
+
+	TSet<uint64> ExistingTriangleKeys;
+	for (const CarrierLab::FConvergenceObductionTriangleMark& Mark : State.ConvergenceObductionTriangleMarks)
+	{
+		ExistingTriangleKeys.Add(MakePlateTriangleKey(Mark.PlateId, Mark.LocalTriangleId));
+	}
+
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : State.ConvergenceSubductionTriangleHits)
+	{
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision == nullptr ||
+			Decision->DecisionClass != CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate)
+		{
+			continue;
+		}
+
+		if (!State.Plates.IsValidIndex(Hit.PlateId) ||
+			!State.Plates[Hit.PlateId].LocalTriangles.IsValidIndex(Hit.LocalTriangleId))
+		{
+			++State.ConvergenceObductionTriangleMarkInvalidCount;
+			continue;
+		}
+
+		const CarrierLab::FConvergenceSubductionMatrixEvidence* Evidence = EvidenceById.Find(Hit.EvidenceId);
+		if (Evidence == nullptr ||
+			!State.Plates.IsValidIndex(Hit.OtherPlateId) ||
+			!State.Plates[Hit.OtherPlateId].LocalTriangles.IsValidIndex(Evidence->OtherLocalTriangleId))
+		{
+			++State.ConvergenceObductionTriangleMarkInvalidCount;
+			continue;
+		}
+
+		const uint64 TriangleKey = MakePlateTriangleKey(Hit.PlateId, Hit.LocalTriangleId);
+		if (ExistingTriangleKeys.Contains(TriangleKey))
+		{
+			++State.ConvergenceObductionTriangleMarkDuplicateCount;
+			continue;
+		}
+
+		CarrierLab::FConvergenceObductionTriangleMark& Mark = State.ConvergenceObductionTriangleMarks.AddDefaulted_GetRef();
+		Mark.MarkId = State.ConvergenceObductionTriangleMarks.Num() - 1;
+		Mark.PairKey = Hit.PairKey;
+		Mark.PlateId = Hit.PlateId;
+		Mark.OtherPlateId = Hit.OtherPlateId;
+		Mark.LocalTriangleId = Hit.LocalTriangleId;
+		Mark.OtherLocalTriangleId = Evidence->OtherLocalTriangleId;
+		Mark.EvidenceId = Hit.EvidenceId;
+		Mark.SignedConvergenceVelocity = Hit.SignedConvergenceVelocity;
+		Mark.DecisionClass = Decision->DecisionClass;
+		ExistingTriangleKeys.Add(TriangleKey);
+	}
+}
+
 double ACarrierLabVisualizationActor::SumPlateVisibleElevationKm() const
 {
 	double Sum = 0.0;
@@ -8973,6 +9118,10 @@ void ACarrierLabVisualizationActor::AddPhaseIIIC5ElevationLedgerRecord(
 		LastPhaseIIIC5ElevationLedgerAudit.TrenchVisibleElevationDeltaKm += DeltaKm;
 		break;
 	case ECarrierLabPhaseIIIC5ElevationLedgerClass::OverridingUplift:
+		++LastPhaseIIIC5ElevationLedgerAudit.UpliftRecordCount;
+		LastPhaseIIIC5ElevationLedgerAudit.UpliftVisibleElevationDeltaKm += DeltaKm;
+		break;
+	case ECarrierLabPhaseIIIC5ElevationLedgerClass::ObductionUplift:
 		++LastPhaseIIIC5ElevationLedgerAudit.UpliftRecordCount;
 		LastPhaseIIIC5ElevationLedgerAudit.UpliftVisibleElevationDeltaKm += DeltaKm;
 		break;
@@ -9315,6 +9464,257 @@ void ACarrierLabVisualizationActor::ApplyPhaseIIIC3OverridingPlateUplift()
 
 	LastPhaseIIIC3UpliftAudit.UniqueUpliftedVertexCount = UpliftedVertexKeys.Num();
 	LastPhaseIIIC3UpliftAudit.UpliftHash = HashToString(UpliftHash);
+}
+
+void ACarrierLabVisualizationActor::ApplyPhaseIIICObductionUplift()
+{
+	LastPhaseIIICObductionUpliftAudit = FCarrierLabPhaseIIICObductionUpliftAudit();
+	LastPhaseIIICObductionUpliftAudit.Step = CurrentMetrics.Step + 1;
+	LastPhaseIIICObductionUpliftAudit.EventCount = CurrentMetrics.EventCount;
+	LastPhaseIIICObductionUpliftAudit.PlateCount = State.Plates.Num();
+	LastPhaseIIICObductionUpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+	LastPhaseIIICObductionUpliftAudit.bEnabled = bEnablePhaseIIICObductionUpliftBridge;
+	LastPhaseIIICObductionUpliftAudit.bUpliftEnabled = bEnablePhaseIIICOverridingPlateUplift;
+	LastPhaseIIICObductionUpliftAudit.MarkCount = State.ConvergenceObductionTriangleMarks.Num();
+	LastPhaseIIICObductionUpliftAudit.DuplicateMarkCount = State.ConvergenceObductionTriangleMarkDuplicateCount;
+	LastPhaseIIICObductionUpliftAudit.InvalidMarkCount = State.ConvergenceObductionTriangleMarkInvalidCount;
+	LastPhaseIIICObductionUpliftAudit.EffectRadiusKm = PhaseIIICSubductionEffectRadiusKm;
+	LastPhaseIIICObductionUpliftAudit.UpliftRateMmPerYear = PhaseIIICSubductionUpliftMmPerYear;
+	LastPhaseIIICObductionUpliftAudit.ReferenceVelocityMmPerYear = PhaseIIICReferenceVelocityMmPerYear;
+	LastPhaseIIICObductionUpliftAudit.FoldInfluenceBeta = PhaseIIICFoldDirectionBeta;
+	LastPhaseIIICObductionUpliftAudit.TrenchDepthKm = PhaseIIICTrenchDepthKm;
+	LastPhaseIIICObductionUpliftAudit.ContinentalMaxElevationKm = PhaseIIICMaxContinentalElevationKm;
+
+	uint64 MarkHash = 1469598103934665603ull;
+	HashMix(MarkHash, static_cast<uint64>(LastPhaseIIICObductionUpliftAudit.Step + 1));
+	HashMix(MarkHash, static_cast<uint64>(State.ConvergenceObductionTriangleMarks.Num() + 1));
+	uint64 UpliftHash = 1469598103934665603ull;
+	HashMix(UpliftHash, static_cast<uint64>(LastPhaseIIICObductionUpliftAudit.Step + 1));
+	HashMix(UpliftHash, static_cast<uint64>(State.ConvergenceObductionTriangleMarks.Num() + 1));
+	HashMixDouble(UpliftHash, PhaseIIICSubductionUpliftMmPerYear);
+	HashMixDouble(UpliftHash, PhaseIIICReferenceVelocityMmPerYear);
+	HashMixDouble(UpliftHash, PhaseIIICFoldDirectionBeta);
+	HashMixDouble(UpliftHash, PhaseIIICTrenchDepthKm);
+	HashMixDouble(UpliftHash, PhaseIIICMaxContinentalElevationKm);
+	HashMixDouble(UpliftHash, PhaseIIICSubductionEffectRadiusKm);
+
+	TMap<uint64, CarrierLab::FConvergenceSubductionPolarityDecision> DecisionsByPair;
+	for (const CarrierLab::FConvergenceSubductionPolarityDecision& Decision : State.ConvergenceSubductionPolarityDecisions)
+	{
+		DecisionsByPair.Add(Decision.PairKey, Decision);
+	}
+	for (const CarrierLab::FConvergenceSubductionTriangleHit& Hit : State.ConvergenceSubductionTriangleHits)
+	{
+		const CarrierLab::FConvergenceSubductionPolarityDecision* Decision = DecisionsByPair.Find(Hit.PairKey);
+		if (Decision != nullptr &&
+			Decision->DecisionClass == CarrierLab::EConvergenceSubductionPolarityClass::CollisionCandidate)
+		{
+			++LastPhaseIIICObductionUpliftAudit.CollisionCandidateHitCount;
+		}
+	}
+
+	for (const CarrierLab::FConvergenceObductionTriangleMark& Mark : State.ConvergenceObductionTriangleMarks)
+	{
+		HashMix(MarkHash, static_cast<uint64>(Mark.MarkId + 1));
+		HashMix(MarkHash, static_cast<uint64>(Mark.PlateId + 1));
+		HashMix(MarkHash, static_cast<uint64>(Mark.OtherPlateId + 1));
+		HashMix(MarkHash, static_cast<uint64>(Mark.LocalTriangleId + 1));
+		HashMix(MarkHash, static_cast<uint64>(Mark.OtherLocalTriangleId + 1));
+		HashMix(MarkHash, Mark.PairKey + 1ull);
+		HashMixDouble(MarkHash, Mark.SignedConvergenceVelocity);
+	}
+
+	if (!bEnablePhaseIIICObductionUpliftBridge ||
+		!bEnablePhaseIIICOverridingPlateUplift ||
+		State.ConvergenceObductionTriangleMarks.IsEmpty())
+	{
+		LastPhaseIIICObductionUpliftAudit.ObductionMarkHash = HashToString(MarkHash);
+		LastPhaseIIICObductionUpliftAudit.ObductionUpliftHash = HashToString(UpliftHash);
+		return;
+	}
+
+	TSet<uint64> UpliftedVertexKeys;
+	for (const CarrierLab::FConvergenceObductionTriangleMark& Mark : State.ConvergenceObductionTriangleMarks)
+	{
+		if (!State.Plates.IsValidIndex(Mark.PlateId) ||
+			!State.Plates.IsValidIndex(Mark.OtherPlateId))
+		{
+			++LastPhaseIIICObductionUpliftAudit.InvalidInputCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlate& SourcePlate = State.Plates[Mark.PlateId];
+		CarrierLab::FCarrierPlate& DestinationPlate = State.Plates[Mark.OtherPlateId];
+		if (!SourcePlate.LocalTriangles.IsValidIndex(Mark.LocalTriangleId))
+		{
+			++LastPhaseIIICObductionUpliftAudit.InvalidInputCount;
+			continue;
+		}
+
+		const CarrierLab::FCarrierPlateTriangle& SourceTriangle = SourcePlate.LocalTriangles[Mark.LocalTriangleId];
+		const int32 SourceVertexIds[3] = { SourceTriangle.A, SourceTriangle.B, SourceTriangle.C };
+		bool bSourceVerticesValid = true;
+		FVector3d SourceBarycenter = FVector3d::ZeroVector;
+		double SourceElevationKm = 0.0;
+		for (const int32 SourceVertexId : SourceVertexIds)
+		{
+			if (!SourcePlate.Vertices.IsValidIndex(SourceVertexId))
+			{
+				bSourceVerticesValid = false;
+				break;
+			}
+			const CarrierLab::FCarrierVertex& SourceVertex = SourcePlate.Vertices[SourceVertexId];
+			SourceBarycenter += SourceVertex.UnitPosition;
+			SourceElevationKm += SourceVertex.Elevation;
+		}
+		if (!bSourceVerticesValid)
+		{
+			++LastPhaseIIICObductionUpliftAudit.InvalidInputCount;
+			continue;
+		}
+		SourceBarycenter = NormalizeOrFallback(SourceBarycenter, SourcePlate.Vertices[SourceVertexIds[0]].UnitPosition);
+		SourceElevationKm /= 3.0;
+
+		const double SpeedTransfer = PhaseIIIC3SpeedTransfer(
+			Mark.SignedConvergenceVelocity,
+			PhaseIIICReferenceVelocityMmPerYear);
+		const double ReliefTransfer = PhaseIIIC3ReliefTransfer(
+			SourceElevationKm,
+			PhaseIIICTrenchDepthKm,
+			PhaseIIICMaxContinentalElevationKm);
+		if (SpeedTransfer <= 0.0 || ReliefTransfer <= 0.0)
+		{
+			++LastPhaseIIICObductionUpliftAudit.InvalidInputCount;
+			continue;
+		}
+
+		for (int32 DestinationVertexId = 0; DestinationVertexId < DestinationPlate.Vertices.Num(); ++DestinationVertexId)
+		{
+			CarrierLab::FCarrierVertex& DestinationVertex = DestinationPlate.Vertices[DestinationVertexId];
+			if (DestinationVertex.ContinentalFraction <= 0.5)
+			{
+				++LastPhaseIIICObductionUpliftAudit.SkippedNonContinentalVertexCount;
+				continue;
+			}
+
+			const double Dot = FMath::Clamp(FVector3d::DotProduct(SourceBarycenter, DestinationVertex.UnitPosition), -1.0, 1.0);
+			const double DistanceKm = FMath::Acos(Dot) * EarthRadiusKm;
+			if (!FMath::IsFinite(DistanceKm) || DistanceKm > PhaseIIICSubductionEffectRadiusKm)
+			{
+				++LastPhaseIIICObductionUpliftAudit.SkippedOutsideRadiusCount;
+				continue;
+			}
+
+			const double DistanceTransfer = PhaseIIIC3DistanceTransfer(DistanceKm, PhaseIIICSubductionEffectRadiusKm);
+			const double DeltaKm = PhaseIIIC3UpliftDeltaKm(
+				PhaseIIICSubductionUpliftMmPerYear,
+				DistanceTransfer,
+				SpeedTransfer,
+				ReliefTransfer);
+			if (!FMath::IsFinite(DeltaKm) || DeltaKm <= 0.0)
+			{
+				++LastPhaseIIICObductionUpliftAudit.InvalidInputCount;
+				continue;
+			}
+
+			const double PreviousElevationKm = DestinationVertex.Elevation;
+			DestinationVertex.Elevation += DeltaKm;
+			AddPhaseIIIC5ElevationLedgerRecord(
+				ECarrierLabPhaseIIIC5ElevationLedgerClass::ObductionUplift,
+				Mark.MarkId,
+				Mark.OtherPlateId,
+				Mark.PlateId,
+				Mark.LocalTriangleId,
+				DestinationVertexId,
+				DestinationVertex.GlobalSampleId,
+				PreviousElevationKm,
+				DestinationVertex.Elevation,
+				Mark.SignedConvergenceVelocity);
+
+			const FVector3d PreviousFoldDirection = DestinationVertex.FoldDirection;
+			FVector3d RelativeFoldStep = FVector3d::ZeroVector;
+			FVector3d ExpectedFoldDirection = DestinationVertex.FoldDirection;
+			if (Motions.IsValidIndex(Mark.PlateId) && Motions.IsValidIndex(Mark.OtherPlateId))
+			{
+				const FVector3d SourceVelocity = FVector3d::CrossProduct(Motions[Mark.PlateId].Axis, DestinationVertex.UnitPosition) *
+					Motions[Mark.PlateId].AngularSpeedRadiansPerStep;
+				const FVector3d DestinationVelocity = FVector3d::CrossProduct(Motions[Mark.OtherPlateId].Axis, DestinationVertex.UnitPosition) *
+					Motions[Mark.OtherPlateId].AngularSpeedRadiansPerStep;
+				const FVector3d RawRelativeFoldStep = SourceVelocity - DestinationVelocity;
+				RelativeFoldStep = RawRelativeFoldStep -
+					DestinationVertex.UnitPosition * FVector3d::DotProduct(RawRelativeFoldStep, DestinationVertex.UnitPosition);
+				if (RelativeFoldStep.SquaredLength() > UE_DOUBLE_SMALL_NUMBER)
+				{
+					ExpectedFoldDirection = RetangentAndNormalizeVectorField(
+						PreviousFoldDirection + RelativeFoldStep * PhaseIIICFoldDirectionBeta,
+						DestinationVertex.UnitPosition);
+					DestinationVertex.FoldDirection = ExpectedFoldDirection;
+				}
+			}
+
+			const uint64 VertexKey = MakePlateVertexKey(Mark.OtherPlateId, DestinationVertexId);
+			UpliftedVertexKeys.Add(VertexKey);
+			++LastPhaseIIICObductionUpliftAudit.UpliftRecordCount;
+			LastPhaseIIICObductionUpliftAudit.TotalAppliedDeltaKm += DeltaKm;
+			LastPhaseIIICObductionUpliftAudit.MaxAppliedDeltaKm = FMath::Max(
+				LastPhaseIIICObductionUpliftAudit.MaxAppliedDeltaKm,
+				DeltaKm);
+
+			HashMix(UpliftHash, static_cast<uint64>(Mark.MarkId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(Mark.PlateId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(Mark.OtherPlateId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(Mark.LocalTriangleId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(DestinationVertexId + 1));
+			HashMix(UpliftHash, static_cast<uint64>(DestinationVertex.GlobalSampleId + 1));
+			HashMixDouble(UpliftHash, DistanceKm);
+			HashMixDouble(UpliftHash, Mark.SignedConvergenceVelocity);
+			HashMixDouble(UpliftHash, SourceElevationKm);
+			HashMixDouble(UpliftHash, PreviousElevationKm);
+			HashMixDouble(UpliftHash, DeltaKm);
+			HashMixDouble(UpliftHash, DestinationVertex.Elevation);
+			HashMixDouble(UpliftHash, PhaseIIICFoldDirectionBeta);
+			HashMixDouble(UpliftHash, PreviousFoldDirection.X);
+			HashMixDouble(UpliftHash, PreviousFoldDirection.Y);
+			HashMixDouble(UpliftHash, PreviousFoldDirection.Z);
+			HashMixDouble(UpliftHash, RelativeFoldStep.X);
+			HashMixDouble(UpliftHash, RelativeFoldStep.Y);
+			HashMixDouble(UpliftHash, RelativeFoldStep.Z);
+			HashMixDouble(UpliftHash, ExpectedFoldDirection.X);
+			HashMixDouble(UpliftHash, ExpectedFoldDirection.Y);
+			HashMixDouble(UpliftHash, ExpectedFoldDirection.Z);
+			HashMixDouble(UpliftHash, DestinationVertex.FoldDirection.X);
+			HashMixDouble(UpliftHash, DestinationVertex.FoldDirection.Y);
+			HashMixDouble(UpliftHash, DestinationVertex.FoldDirection.Z);
+
+			FCarrierLabPhaseIIIC3UpliftAuditRecord& Record = LastPhaseIIICObductionUpliftAudit.Records.AddDefaulted_GetRef();
+			Record.MarkId = Mark.MarkId;
+			Record.UnderPlateId = Mark.PlateId;
+			Record.OverPlateId = Mark.OtherPlateId;
+			Record.UnderLocalTriangleId = Mark.LocalTriangleId;
+			Record.OverLocalVertexId = DestinationVertexId;
+			Record.OverGlobalSampleId = DestinationVertex.GlobalSampleId;
+			Record.DistanceKm = DistanceKm;
+			Record.SignedConvergenceVelocity = Mark.SignedConvergenceVelocity;
+			Record.HistoricalElevationKm = SourceElevationKm;
+			Record.PreviousElevationKm = PreviousElevationKm;
+			Record.AppliedDeltaKm = DeltaKm;
+			Record.NewElevationKm = DestinationVertex.Elevation;
+			Record.DistanceTransfer = DistanceTransfer;
+			Record.SpeedTransfer = SpeedTransfer;
+			Record.ReliefTransfer = ReliefTransfer;
+			Record.FoldInfluenceBeta = PhaseIIICFoldDirectionBeta;
+			Record.OverUnitPosition = DestinationVertex.UnitPosition;
+			Record.PreviousFoldDirection = PreviousFoldDirection;
+			Record.RelativeFoldStep = RelativeFoldStep;
+			Record.ExpectedFoldDirection = ExpectedFoldDirection;
+			Record.NewFoldDirection = DestinationVertex.FoldDirection;
+			Record.FoldDirectionMagnitude = DestinationVertex.FoldDirection.Size();
+		}
+	}
+
+	LastPhaseIIICObductionUpliftAudit.UniqueUpliftedVertexCount = UpliftedVertexKeys.Num();
+	LastPhaseIIICObductionUpliftAudit.ObductionMarkHash = HashToString(MarkHash);
+	LastPhaseIIICObductionUpliftAudit.ObductionUpliftHash = HashToString(UpliftHash);
 }
 
 bool ACarrierLabVisualizationActor::BuildPhaseIIIC4SlabPullOracleFromCurrentState(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const
@@ -9716,10 +10116,29 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	if (bEnablePhaseIIICSubductingMarks)
 	{
 		UpdatePhaseIIICSubductingTriangleMarks();
+		if (bEnablePhaseIIICObductionUpliftBridge)
+		{
+			UpdatePhaseIIICObductionTriangleMarks();
+		}
 	}
 	if (bEnablePhaseIIICOverridingPlateUplift)
 	{
 		ApplyPhaseIIIC3OverridingPlateUplift();
+		if (bEnablePhaseIIICObductionUpliftBridge)
+		{
+			ApplyPhaseIIICObductionUplift();
+		}
+		else
+		{
+			LastPhaseIIICObductionUpliftAudit = FCarrierLabPhaseIIICObductionUpliftAudit();
+			LastPhaseIIICObductionUpliftAudit.Step = CurrentMetrics.Step + 1;
+			LastPhaseIIICObductionUpliftAudit.EventCount = CurrentMetrics.EventCount;
+			LastPhaseIIICObductionUpliftAudit.PlateCount = State.Plates.Num();
+			LastPhaseIIICObductionUpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+			LastPhaseIIICObductionUpliftAudit.bEnabled = false;
+			LastPhaseIIICObductionUpliftAudit.bUpliftEnabled = true;
+			LastPhaseIIICObductionUpliftAudit.MarkCount = State.ConvergenceObductionTriangleMarks.Num();
+		}
 	}
 	else
 	{
@@ -9732,6 +10151,14 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 		LastPhaseIIIC3UpliftAudit.bElevationSplitEnabled = bEnablePhaseIIICVisibleHistoricalElevation;
 		LastPhaseIIIC3UpliftAudit.bUpliftEnabled = false;
 		LastPhaseIIIC3UpliftAudit.MarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+		LastPhaseIIICObductionUpliftAudit = FCarrierLabPhaseIIICObductionUpliftAudit();
+		LastPhaseIIICObductionUpliftAudit.Step = CurrentMetrics.Step + 1;
+		LastPhaseIIICObductionUpliftAudit.EventCount = CurrentMetrics.EventCount;
+		LastPhaseIIICObductionUpliftAudit.PlateCount = State.Plates.Num();
+		LastPhaseIIICObductionUpliftAudit.ResetSerial = State.ConvergenceTrackingResetSerial;
+		LastPhaseIIICObductionUpliftAudit.bEnabled = bEnablePhaseIIICObductionUpliftBridge;
+		LastPhaseIIICObductionUpliftAudit.bUpliftEnabled = false;
+		LastPhaseIIICObductionUpliftAudit.MarkCount = State.ConvergenceObductionTriangleMarks.Num();
 	}
 	ApplyPhaseIIIC4SlabPull();
 	FinalizePhaseIIIC5ElevationLedger();

@@ -24,8 +24,8 @@ Direct thesis page-image inspection for slab pull used `docs/Synthèse de terrai
 | P0-3 Stage 1.5-style gap-fill runs on live viewer cadence path | Fixed now, scheduled before IIIE remesh | Live path is labeled as lab-policy remesh and exposes remesh mode. IIIE must replace this as the paper-primary remesh path. |
 | P0-4 `MultiHitPolicy = Centroid` is live default and used in IIID fixtures | Fixed now, scheduled before IIIE remesh | IIID.1/IIID.2 now fail if policy-resolved multi-hit count is nonzero. IIIE must retire policy tiebreaks from the paper-primary remesh path. |
 | P0-5 IIIB expected signature enforced only inside IIIC consolidation | Fixed now | Standalone IIIB consolidation directly compares the local-vs-pair independent signature to `bf8818a26ed7b1dc`. |
-| P1-1 Continental-continental obduction profile unimplemented/doc overclaim | Scheduled before IIID collision uplift | The IIIC design text no longer claims obduction is unified/implemented. Distinct obduction uplift must be checked before IIID uplift/event slices. |
-| P1-2 Fold-direction convergence increment unimplemented | Scheduled before IIID collision uplift | Must be source-checked and either implemented or explicitly deferred before uplift/event reports claim fold-direction behavior. |
+| P1-1 Continental-continental obduction profile unimplemented/doc overclaim | Fixed before IIIE.1 | Pre-IIIE.8 adds a separate obduction-pending mark/audit path for `CollisionCandidate` contacts and gates deterministic pre-threshold continuous uplift without topology mutation. |
+| P1-2 Fold-direction convergence increment unimplemented | Fixed before IIIE.1 | The pre-IIIE thesis cleanup tranche corrected IIIC.3 fold-direction updates to use the raw tangent relative velocity step scaled by `PhaseIIICFoldDirectionBeta`, with an independent commandlet oracle. |
 | P1-3 Slab pull updates omega as axis*speed vector | Rejected with evidence | Thesis page image says both axis and speed are updated. Keep behavior; proof-strength issue is handled by oracle hardening. |
 | P1-4 Equal-age ocean-ocean polarity deferred silently | Scheduled before IIIH | Needs long-horizon/deferred-count gate or earlier check if polarity code is touched. |
 | P1-5 No-admissible negative uses synthetic evidence | Scheduled before IIIH | Remains acceptable as downstream diagnostic because reports state the limitation. A natural-geometry negative should be added before IIIH if feasible. |
@@ -53,6 +53,14 @@ Direct thesis page-image inspection for slab pull used `docs/Synthèse de terrai
 The hardening scan intentionally still finds high-severity heuristic hits in `CarrierLabVisualizationActor.cpp` and the editor panel because Stage 1.5/lab-policy remesh controls, multi-hit policy controls, and Phase II comparison/filter ledgers still exist. These are classified as `diagnostic/control only` for this tranche. They are not promoted to the paper-primary remesh path, and IIID.1/IIID.2 now fail if policy-resolved multi-hit selection influences their collision evidence.
 
 The remaining primary-remesh risk is therefore scheduled, not accepted: IIIE must implement the §3.3.2.3 paper-remesh path with subducting/colliding triangle filtering, continuous q1/q2, qGamma provenance, fail-loud unresolved multi-hit handling, and process-state reset. Until IIIE lands, `ApplyResampleEvent()` and manual `Lab Resample Now` remain labeled Stage 1.5/lab-policy output and must not be used as paper-primary evidence.
+
+## Pre-IIIE Cleanup Addendum
+
+The follow-on pre-IIIE cleanup tranche closes the three convergence-side audit findings that were left open after IIID:
+
+- Finding 9 is fixed by `docs/checkpoints/phase-iii-pre-iiie-thesis-cleanup.md` and the regenerated IIIC.3 report: fold direction now follows the thesis `beta * (s_i - s_j)` form rather than scaling by uplift magnitude.
+- Finding 20 is fixed by `docs/checkpoints/phase-iii-pre-iiie-thesis-cleanup.md` and the regenerated IIID.7 report: collision uplift radius now uses `r_c * sqrt(v/v_0) * A/A_0`.
+- Finding 33 is fixed by `docs/checkpoints/phase-iii-pre-iiie8-obduction-bridge.md`: continental-continental `CollisionCandidate` evidence now produces separate obduction marks and continuous uplift before the 300 km collision threshold, while event count and plate-local triangle count remain unchanged.
 
 ## IIID.3 Unblock Criteria
 

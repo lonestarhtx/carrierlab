@@ -902,6 +902,38 @@ struct FCarrierLabPhaseIIIC3UpliftAudit
 	TArray<FCarrierLabPhaseIIIC3UpliftAuditRecord> Records;
 };
 
+struct FCarrierLabPhaseIIICObductionUpliftAudit
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 PlateCount = 0;
+	int32 ResetSerial = 0;
+	bool bEnabled = false;
+	bool bUpliftEnabled = false;
+	int32 CollisionCandidateHitCount = 0;
+	int32 MarkCount = 0;
+	int32 DuplicateMarkCount = 0;
+	int32 InvalidMarkCount = 0;
+	int32 UpliftRecordCount = 0;
+	int32 UniqueUpliftedVertexCount = 0;
+	int32 SkippedNonContinentalVertexCount = 0;
+	int32 SkippedOutsideRadiusCount = 0;
+	int32 InvalidInputCount = 0;
+	double EffectRadiusKm = 1800.0;
+	double UpliftRateMmPerYear = 0.6;
+	double ReferenceVelocityMmPerYear = 100.0;
+	double FoldInfluenceBeta = 1.0;
+	double TrenchDepthKm = -10.0;
+	double ContinentalMaxElevationKm = 10.0;
+	double TotalAppliedDeltaKm = 0.0;
+	double MaxAppliedDeltaKm = 0.0;
+	FString ObductionMarkHash;
+	FString ObductionUpliftHash;
+	FString VisibleElevationHash;
+	FString CrustStateHash;
+	TArray<FCarrierLabPhaseIIIC3UpliftAuditRecord> Records;
+};
+
 struct FCarrierLabPhaseIIIC4SlabPullContributionRecord
 {
 	int32 MarkId = INDEX_NONE;
@@ -957,7 +989,8 @@ struct FCarrierLabPhaseIIIC4SlabPullAudit
 enum class ECarrierLabPhaseIIIC5ElevationLedgerClass : uint8
 {
 	TrenchVisibleElevation = 0,
-	OverridingUplift = 1
+	OverridingUplift = 1,
+	ObductionUplift = 2
 };
 
 struct FCarrierLabPhaseIIIC5ElevationLedgerRecord
@@ -1531,6 +1564,9 @@ public:
 	bool bEnablePhaseIIICOverridingPlateUplift = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	bool bEnablePhaseIIICObductionUpliftBridge = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICSubductionUpliftMmPerYear = 0.6;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
@@ -1711,6 +1747,7 @@ public:
 	bool GetPhaseIIIC1SubductingMarkAudit(FCarrierLabPhaseIIIC1SubductingMarkAudit& OutAudit) const;
 	bool GetPhaseIIIC2ElevationAudit(FCarrierLabPhaseIIIC2ElevationAudit& OutAudit) const;
 	bool GetPhaseIIIC3UpliftAudit(FCarrierLabPhaseIIIC3UpliftAudit& OutAudit) const;
+	bool GetPhaseIIICObductionUpliftAudit(FCarrierLabPhaseIIICObductionUpliftAudit& OutAudit) const;
 	bool GetPhaseIIIC4SlabPullAudit(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
 	bool BuildPhaseIIIC4SlabPullOracleFromCurrentState(FCarrierLabPhaseIIIC4SlabPullAudit& OutAudit) const;
 	bool GetPhaseIIIC5ElevationLedgerAudit(FCarrierLabPhaseIIIC5ElevationLedgerAudit& OutAudit) const;
@@ -1765,6 +1802,7 @@ public:
 		int32& OutPatchTriangleCount);
 	bool SetPlateElevationForTest(int32 PlateId, double ElevationKm);
 	bool SetPlateOceanicAgeForTest(int32 PlateId, double OceanicAgeMa);
+	int32 GetCarrierLocalTriangleCountForTest() const;
 	bool SeedPhaseIIIB3NonConvergentEvidenceForTest(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit);
 	bool SeedPhaseIIIB6SingleConvergentTriangleForTest(
 		int32 PreferredUnderPlateId,
@@ -1799,7 +1837,9 @@ private:
 	void FinalizePhaseIIIC5ElevationLedger();
 	double SumPlateVisibleElevationKm() const;
 	bool ApplyPhaseIIIC2ElevationSplitToMark(CarrierLab::FConvergenceSubductingTriangleMark& Mark);
+	void UpdatePhaseIIICObductionTriangleMarks();
 	void ApplyPhaseIIIC3OverridingPlateUplift();
+	void ApplyPhaseIIICObductionUplift();
 	void ApplyPhaseIIIC4SlabPull();
 	bool BuildPhaseIIID2CollisionGroupsFromTerranes(
 		const FCarrierLabPhaseIIID1TerraneAudit& TerraneAudit,
@@ -1871,6 +1911,7 @@ private:
 	double LastConvergenceMatrixBvhBuildSeconds = 0.0;
 	double LastConvergenceMatrixRayQuerySeconds = 0.0;
 	FCarrierLabPhaseIIIC3UpliftAudit LastPhaseIIIC3UpliftAudit;
+	FCarrierLabPhaseIIICObductionUpliftAudit LastPhaseIIICObductionUpliftAudit;
 	FCarrierLabPhaseIIIC4SlabPullAudit LastPhaseIIIC4SlabPullAudit;
 	FCarrierLabPhaseIIIC5ElevationLedgerAudit LastPhaseIIIC5ElevationLedgerAudit;
 	int32 CachedRenderMeshSampleCount = 0;

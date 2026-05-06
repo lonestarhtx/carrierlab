@@ -122,7 +122,7 @@ Names will evolve in code, but the separations are binding.
   per-step actor units, the increment is the raw tangent relative velocity step
   scaled by `PhaseIIICFoldDirectionBeta`, not by uplift magnitude.
 
-**Non-decisions:** IIIC does not implement continental collision (continental-continental contacts continue to be logged as candidates, not acted on). The distinct obduction continuous-uplift path is a pre-IIIE bridge item: current IIID collision/suture fixtures must not be used to claim that sub-threshold continental-continental obduction has been implemented.
+**Non-decisions:** IIIC does not implement continental collision topology (continental-continental contacts are logged as candidates, not sutured). The distinct obduction continuous-uplift path landed as the Pre-IIIE.8 bridge: sub-threshold continental-continental candidates can now uplift without topology mutation, while full remesh-time filtering/consumption remains IIIE-owned.
 
 ### IIID — Continental Collision
 

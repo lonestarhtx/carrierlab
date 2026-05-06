@@ -2041,7 +2041,7 @@ namespace
 		Report += TEXT("## Scope\n\n");
 		if (bIIIDCollisionMode)
 		{
-			Report += TEXT("This checkpoint exports filled Mollweide-style PNG artifacts before and after the existing IIID collision path mutates plate-local topology and applies IIID.7 uplift. The export path itself is read-only; the post-collision fixture intentionally invokes the already accepted IIID actor mutation so the resulting maps are visually inspectable. This checkpoint does not add new simulation behavior, resampling behavior, authority fallback patterns, projection repair, terrain displacement, or paper-remesh claims.\n\n");
+			Report += TEXT("This checkpoint exports filled Mollweide-style PNG artifacts before and after the existing IIID collision path mutates plate-local topology and applies IIID.7 uplift. The export path itself is read-only; the post-collision fixture intentionally invokes the already accepted IIID actor mutation so the resulting maps are visually inspectable. This checkpoint does not add new simulation behavior, resampling behavior, authority fallback patterns, projection-side correction, terrain displacement, or paper-remesh claims.\n\n");
 		}
 		else
 		{
