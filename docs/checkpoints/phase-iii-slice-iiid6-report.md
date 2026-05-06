@@ -1,12 +1,12 @@
 # Phase III Slice IIID.6 Report - Detach + Suture Topology Mutation
 
-Generated: `2026-05-03 18:22:48` UTC
+Generated: `2026-05-06 20:56:31` UTC
 
 ## Scope
 
 IIID.6 is the first IIID slice that mutates plate-local topology. It consumes the accepted IIID.4 Slab Break and IIID.5 Suture plans, applies exactly one collision event for the timestep, removes the terrane triangles from the source plate, adds the same terrane triangles to the destination plate, reinitializes boundary tracking, and invalidates convergence tracking so IIIB can recompute it next. It does not apply uplift, resample, change plate motion, displace terrain, or invoke the lab-policy remesh path.
 
-Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIID6/20260503T182152Z/metrics.jsonl`
+Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIID6/20260506T205555Z/metrics.jsonl`
 
 ## Gate Summary
 

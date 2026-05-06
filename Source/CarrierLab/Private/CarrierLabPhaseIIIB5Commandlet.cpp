@@ -452,7 +452,7 @@ namespace
 		const bool bEqual = IsEqualAgeDeferredResult(EqualA) && ReplayHashesMatch(EqualA, EqualB);
 		const bool bMixed = IsMixedRegressionResult(MixedA) && ReplayHashesMatch(MixedA, MixedB);
 		const bool bCollision = IsCollisionRegressionResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
-		const bool bDivergence = IsEmptyResult(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
+		const bool bDivergence = IsAgePolarityResult(DivergenceA, 0, 1, 120.0, 20.0) && ReplayHashesMatch(DivergenceA, DivergenceB);
 		const bool bZero = IsEmptyResult(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 			ZeroA.PolarityInitial.PolarityHash == ZeroA.PolarityFinal.PolarityHash;
 		const bool bAllPass = bOlder0 && bOlder1 && bAgeFlip && bEqual && bMixed && bCollision && bDivergence && bZero;
@@ -474,8 +474,8 @@ namespace
 			*PassFail(bMixed), MixedA.PolarityFinal.OceanicUnderContinentalCount, MixedA.PolarityFinal.OlderOceanicUnderYoungerOceanicCount);
 		Report += FString::Printf(TEXT("| Continental collision regression unchanged | %s | collision %d, subduction polarity %d |\n"),
 			*PassFail(bCollision), CollisionA.PolarityFinal.CollisionCandidateCount, CollisionA.PolarityFinal.SubductionPolarityCount);
-		Report += FString::Printf(TEXT("| Forced divergence remains empty | %s | matrix pairs %d, decisions %d |\n"),
-			*PassFail(bDivergence), DivergenceA.PolarityFinal.MatrixPairCount, DivergenceA.PolarityFinal.DecisionCount);
+		Report += FString::Printf(TEXT("| Forced-divergence local evidence applies age polarity deterministically | %s | matrix pairs %d, decisions %d, local under %d over %d |\n"),
+			*PassFail(bDivergence), DivergenceA.PolarityFinal.MatrixPairCount, DivergenceA.PolarityFinal.DecisionCount, DivergenceA.PolarityFinal.ProbeUnderPlate, DivergenceA.PolarityFinal.ProbeOverPlate);
 		Report += FString::Printf(TEXT("| Zero-motion remains empty and stable | %s | initial `%s`, final `%s` |\n"),
 			*PassFail(bZero), *ZeroA.PolarityInitial.PolarityHash, *ZeroA.PolarityFinal.PolarityHash);
 		Report += TEXT("\n");
@@ -523,6 +523,8 @@ namespace
 		Report += TEXT("## Notes\n\n");
 		Report += TEXT("- Oceanic age is averaged from plate-local vertices using area weights. Global samples are updated only by the explicit test seeding helper so fixtures survive projection/replay checks.\n");
 		Report += TEXT("- Equal oceanic ages still defer, preserving the IIIB.4 no-invented-policy discipline when age evidence cannot distinguish polarity.\n");
+		Report += TEXT("- IIIB.3 currently admits local convergent backside evidence in the forced-divergence fixture on the closed sphere; IIIB.5 applies age polarity to that inherited local matrix evidence rather than using it as an empty-matrix negative.\n");
+		Report += TEXT("- Zero-motion remains the empty-matrix negative control and produces no polarity decisions.\n");
 		Report += TEXT("- The age rule is a decision record only. IIIB.6 may propagate from active decisions, but this slice does not label neighbors, filter resampling, or mutate crust.\n\n");
 
 		Report += TEXT("## Recommendation\n\n");
@@ -620,7 +622,7 @@ int32 UCarrierLabPhaseIIIB5Commandlet::Main(const FString& Params)
 	const bool bEqual = bEqualA && bEqualB && IsEqualAgeDeferredResult(EqualA) && ReplayHashesMatch(EqualA, EqualB);
 	const bool bMixed = bMixedA && bMixedB && IsMixedRegressionResult(MixedA) && ReplayHashesMatch(MixedA, MixedB);
 	const bool bCollision = bCollisionA && bCollisionB && IsCollisionRegressionResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
-	const bool bDivergence = bDivergenceA && bDivergenceB && IsEmptyResult(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
+	const bool bDivergence = bDivergenceA && bDivergenceB && IsAgePolarityResult(DivergenceA, 0, 1, 120.0, 20.0) && ReplayHashesMatch(DivergenceA, DivergenceB);
 	const bool bZero = bZeroA && bZeroB && IsEmptyResult(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 		ZeroA.PolarityInitial.PolarityHash == ZeroA.PolarityFinal.PolarityHash;
 

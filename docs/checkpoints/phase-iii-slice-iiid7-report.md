@@ -2,7 +2,7 @@
 
 Status: PASS. This slice applies the thesis page-60 collision uplift formula after IIID.6 detach+suture topology mutation. It does not add remeshing, rifting, erosion, terrain displacement, ownership recovery, or projection repair.
 
-Output root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIID7/20260506T200550Z`
+Output root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIID7/20260506T205636Z`
 
 ## Source Check
 
@@ -37,8 +37,8 @@ Output root: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/Carrie
 
 | Fixture | Replay | Pass | Cached seconds | Uncached seconds | Destination hash | Slab-break hash | Suture hash |
 |---|---:|---:|---:|---:|---|---|---|
-| forced_collision_all_continental | 0 | PASS | 0.879865 | 1.319633 | `6ed4df42165e5b39` / `6ed4df42165e5b39` | `6b1382c0d8553ce7` / `6b1382c0d8553ce7` | `eedd023eef11e867` / `eedd023eef11e867` |
-| forced_collision_all_continental | 1 | PASS | 0.879046 | 1.315772 | `6ed4df42165e5b39` / `6ed4df42165e5b39` | `6b1382c0d8553ce7` / `6b1382c0d8553ce7` | `eedd023eef11e867` / `eedd023eef11e867` |
+| forced_collision_all_continental | 0 | PASS | 0.742082 | 1.115624 | `6ed4df42165e5b39` / `6ed4df42165e5b39` | `6b1382c0d8553ce7` / `6b1382c0d8553ce7` | `eedd023eef11e867` / `eedd023eef11e867` |
+| forced_collision_all_continental | 1 | PASS | 0.738692 | 1.105586 | `6ed4df42165e5b39` / `6ed4df42165e5b39` | `6b1382c0d8553ce7` / `6b1382c0d8553ce7` | `eedd023eef11e867` / `eedd023eef11e867` |
 | pure_oceanic_negative | 0 | SKIP | 0.000000 | 0.000000 | `` / `` | `` / `` | `` / `` |
 | pure_oceanic_negative | 1 | SKIP | 0.000000 | 0.000000 | `` / `` | `` / `` | `` / `` |
 

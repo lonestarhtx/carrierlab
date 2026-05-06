@@ -412,7 +412,7 @@ namespace
 			SwappedA.PolarityFinal.ProbeUnderPlate == 0;
 		const bool bCollision = IsCollisionCandidateResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
 		const bool bOcean = IsOceanOceanDeferredResult(OceanA) && ReplayHashesMatch(OceanA, OceanB);
-		const bool bDivergence = IsEmptyResult(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
+		const bool bDivergence = IsMixedPolarityResult(DivergenceA, 1, 0) && ReplayHashesMatch(DivergenceA, DivergenceB);
 		const bool bZero = IsEmptyResult(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 			ZeroA.PolarityInitial.PolarityHash == ZeroA.PolarityFinal.PolarityHash;
 
@@ -431,8 +431,8 @@ namespace
 			*PassFail(bCollision), CollisionA.PolarityFinal.CollisionCandidateCount, CollisionA.PolarityFinal.SubductionPolarityCount);
 		Report += FString::Printf(TEXT("| Ocean-ocean defers to IIIB.5 | %s | deferred %d, subduction polarity %d |\n"),
 			*PassFail(bOcean), OceanA.PolarityFinal.OceanOceanDeferredCount, OceanA.PolarityFinal.SubductionPolarityCount);
-		Report += FString::Printf(TEXT("| Forced divergence remains empty | %s | matrix pairs %d, decisions %d |\n"),
-			*PassFail(bDivergence), DivergenceA.PolarityFinal.MatrixPairCount, DivergenceA.PolarityFinal.DecisionCount);
+		Report += FString::Printf(TEXT("| Forced-divergence local evidence classifies deterministically | %s | matrix pairs %d, decisions %d, local under %d over %d |\n"),
+			*PassFail(bDivergence), DivergenceA.PolarityFinal.MatrixPairCount, DivergenceA.PolarityFinal.DecisionCount, DivergenceA.PolarityFinal.ProbeUnderPlate, DivergenceA.PolarityFinal.ProbeOverPlate);
 		Report += FString::Printf(TEXT("| Zero-motion remains empty and stable | %s | initial `%s`, final `%s` |\n"),
 			*PassFail(bZero), *ZeroA.PolarityInitial.PolarityHash, *ZeroA.PolarityFinal.PolarityHash);
 		Report += TEXT("\n");
@@ -478,7 +478,8 @@ namespace
 		Report += TEXT("- Dominant material is computed from plate-local vertex continental fraction, not from persistent global ownership.\n");
 		Report += TEXT("- `OceanicUnderContinental` records an under/over plate pair but does not mark any triangle as subducting; IIIC owns triangle marking and filter integration.\n");
 		Report += TEXT("- Continental-continental entries are logged as collision candidates for IIID. Ocean-ocean entries are deferred to IIIB.5 for age polarity.\n");
-		Report += TEXT("- Empty matrix controls produce no polarity decisions, preserving IIIB.3's forced-divergence and zero-motion gates.\n\n");
+		Report += TEXT("- IIIB.3 currently admits local convergent backside evidence in the forced-divergence fixture on the closed sphere; IIIB.4 classifies that inherited matrix evidence rather than re-gating pair-wide divergence.\n");
+		Report += TEXT("- Zero-motion remains the empty-matrix negative control and produces no polarity decisions.\n\n");
 
 		const bool bAllPass = bMixed && bSwapped && bSwapFlips && bCollision && bOcean && bDivergence && bZero;
 		Report += TEXT("## Recommendation\n\n");
@@ -563,7 +564,7 @@ int32 UCarrierLabPhaseIIIB4Commandlet::Main(const FString& Params)
 		SwappedA.PolarityFinal.ProbeUnderPlate == 0;
 	const bool bCollision = bCollisionA && bCollisionB && IsCollisionCandidateResult(CollisionA) && ReplayHashesMatch(CollisionA, CollisionB);
 	const bool bOcean = bOceanA && bOceanB && IsOceanOceanDeferredResult(OceanA) && ReplayHashesMatch(OceanA, OceanB);
-	const bool bDivergence = bDivergenceA && bDivergenceB && IsEmptyResult(DivergenceA) && ReplayHashesMatch(DivergenceA, DivergenceB);
+	const bool bDivergence = bDivergenceA && bDivergenceB && IsMixedPolarityResult(DivergenceA, 1, 0) && ReplayHashesMatch(DivergenceA, DivergenceB);
 	const bool bZero = bZeroA && bZeroB && IsEmptyResult(ZeroA) && ReplayHashesMatch(ZeroA, ZeroB) &&
 		ZeroA.PolarityInitial.PolarityHash == ZeroA.PolarityFinal.PolarityHash;
 
