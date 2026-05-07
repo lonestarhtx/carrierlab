@@ -441,8 +441,8 @@ namespace
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- IIIE.5 consumes fixture-owned per-global-vertex remesh assignment records, then partitions global TDS triangles into rebuilt plate-local triangulations; the future production cadence must supply these records from IIIE.3/IIIE.4 selection and gap-fill outputs.\n");
-		Report += TEXT("- All-same triangles are copied to that plate. Two-of-three mixed triangles use the IIIE.1 named majority lab policy. One-one-one triple-junction triangles remain unresolved stop-condition anomalies.\n");
-		Report += TEXT("- Plate-local topology is rebuilt by duplicate/re-index/re-compact from the global TDS assignment; no prior global owner, projection owner, centroid/random winner, or Stage 1.5 recovery path participates.\n");
+		Report += TEXT("- All-same triangles are copied to that plate. Two-of-three mixed triangles use the approved CarrierLab majority lab policy: when exactly two global TDS vertices assign to the same plate, that plate owns the rebuilt local triangle. This policy is deterministic, does not consult prior owner/projection state, and must be disclosed as lab policy rather than paper text. One-one-one triple-junction triangles remain unresolved stop-condition anomalies.\n");
+		Report += TEXT("- Plate-local topology is rebuilt by duplicate/re-index/re-compact from the global TDS assignment; no prior global owner, projection owner, arbitrary winner, or Stage 1.5 recovery path participates.\n");
 		Report += TEXT("- Remesh reset clears active convergence lists, distance-to-front records, subduction matrix state, true subduction marks, obduction-pending marks, and collision-pending keys, then advances the reset serial.\n");
 		Report += TEXT("- Plate geodetic motion is preserved byte-for-byte across topology rebuild. Generated IIIE.4 oceanic fields and q1/q2/qGamma event provenance are preserved in the remesh records, while `bPaperFaithfulZGammaProfile = false` remains a hold.\n");
 		Report += TEXT("- The focused CollisionPending gate may use a fixture-owned accepted IIID2 group record when the compact live detector setup produces no accepted group; it tests mapping from accepted group records into current-state ray invisibility, not the IIID detector itself.\n\n");
@@ -510,7 +510,7 @@ namespace
 		Report += TEXT("| Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |\n");
 		Report += TEXT("|---|---|---|---|\n");
 		Report += TEXT("| Rebuild plate-local topology from global TDS vertex assignments | IIIE.5 duplicates, re-indexes, and compacts local vertices/triangles from fixture-owned assignment records | Wire this helper into the future production remesh cadence so live selection/gap-fill records supply the assignments | Compact topology and duplicate-authority gates |\n");
-		Report += TEXT("| Mixed global-TDS triangles need explicit policy | All-same is direct; two-of-three majority is named lab policy; triple junction is a hold | Decide triple-junction handling only with paper citation or approved lab policy | Majority fixture and triple-junction hold fixture |\n");
+		Report += TEXT("| Mixed global-TDS triangles need explicit policy | All-same is direct; two-of-three majority is approved CarrierLab lab policy; triple junction is a hold | Implement triple-junction handling only with paper citation or explicit approved lab policy | Majority fixture and triple-junction hold fixture |\n");
 		Report += TEXT("| Preserve plate geodetic motion across remesh | Motion hash before/after remains identical | Keep later remesh cadence from recomputing motion authority from projection | Motion hash gate |\n");
 		Report += TEXT("| Reset process state at remesh | Active lists, distances, matrix state, subducting marks, obduction marks, and collision-pending keys reset to empty; reset serial advances | Later IIIB tracking must explicitly repopulate from geometry | Process reset fixture |\n");
 		Report += TEXT("| Preserve divergent gap provenance | IIIE.4 q1/q2/qGamma, generated fields, and zGamma hold flags survive topology rebuild records | Full remesh event must attach these records per generated vertex | Oceanic provenance fixture |\n");
@@ -521,10 +521,12 @@ namespace
 		Report += TEXT("|---|---|\n");
 		Report += TEXT("| Prior global sample owner/fraction fallback | Explicit per-record counter stays zero. |\n");
 		Report += TEXT("| Projection-derived ownership authority | Explicit per-record counter stays zero. |\n");
-		Report += TEXT("| Centroid/random/synthetic winner policy | Explicit per-record counter stays zero. |\n");
+		Report += TEXT("| Uncited remesh winner policy | Explicit per-record counter stays zero. |\n");
 		Report += TEXT("| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called; IIIE.5 uses a dedicated rebuild path rather than `RebuildPlateLocalStateFromSamples`. |\n");
 		Report += TEXT("| Silent unresolved multi-hit routing | Explicit counter stays zero; triple-junction topology anomalies are holds, not winners. |\n");
 		Report += TEXT("| zGamma paper-fidelity overclaim | Hold flag remains visible through generated records. |\n\n");
+		Report += TEXT("## Approved Lab Policy\n\n");
+		Report += TEXT("Two-of-three mixed global-TDS triangles are approved for IIIE live-cadence use as a narrow CarrierLab lab policy. The rule is only valid when exactly two vertices have the same post-remesh assigned plate and the third differs; the majority plate receives the rebuilt triangle. This approval does not extend to one-one-one triple junctions, unresolved ray multi-hits, prior-owner fallback, projection-derived ownership, or arbitrary winner policies.\n\n");
 
 		Report += TEXT("## Stop Conditions For IIIE.6+\n\n");
 		Report += TEXT("- Stop if a production remesh event calls the Stage 1.5 prior-owner/projection fallback path as primary IIIE authority.\n");

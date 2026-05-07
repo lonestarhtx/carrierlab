@@ -5,8 +5,8 @@ Verdict: PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED. This slice
 ## Scope
 
 - IIIE.5 consumes fixture-owned per-global-vertex remesh assignment records, then partitions global TDS triangles into rebuilt plate-local triangulations; the future production cadence must supply these records from IIIE.3/IIIE.4 selection and gap-fill outputs.
-- All-same triangles are copied to that plate. Two-of-three mixed triangles use the IIIE.1 named majority lab policy. One-one-one triple-junction triangles remain unresolved stop-condition anomalies.
-- Plate-local topology is rebuilt by duplicate/re-index/re-compact from the global TDS assignment; no prior global owner, projection owner, centroid/random winner, or Stage 1.5 recovery path participates.
+- All-same triangles are copied to that plate. Two-of-three mixed triangles use the approved CarrierLab majority lab policy: when exactly two global TDS vertices assign to the same plate, that plate owns the rebuilt local triangle. This policy is deterministic, does not consult prior owner/projection state, and must be disclosed as lab policy rather than paper text. One-one-one triple-junction triangles remain unresolved stop-condition anomalies.
+- Plate-local topology is rebuilt by duplicate/re-index/re-compact from the global TDS assignment; no prior global owner, projection owner, arbitrary winner, or Stage 1.5 recovery path participates.
 - Remesh reset clears active convergence lists, distance-to-front records, subduction matrix state, true subduction marks, obduction-pending marks, and collision-pending keys, then advances the reset serial.
 - Plate geodetic motion is preserved byte-for-byte across topology rebuild. Generated IIIE.4 oceanic fields and q1/q2/qGamma event provenance are preserved in the remesh records, while `bPaperFaithfulZGammaProfile = false` remains a hold.
 - The focused CollisionPending gate may use a fixture-owned accepted IIID2 group record when the compact live detector setup produces no accepted group; it tests mapping from accepted group records into current-state ray invisibility, not the IIID detector itself.
@@ -30,7 +30,7 @@ Verdict: PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED. This slice
 | Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |
 |---|---|---|---|
 | Rebuild plate-local topology from global TDS vertex assignments | IIIE.5 duplicates, re-indexes, and compacts local vertices/triangles from fixture-owned assignment records | Wire this helper into the future production remesh cadence so live selection/gap-fill records supply the assignments | Compact topology and duplicate-authority gates |
-| Mixed global-TDS triangles need explicit policy | All-same is direct; two-of-three majority is named lab policy; triple junction is a hold | Decide triple-junction handling only with paper citation or approved lab policy | Majority fixture and triple-junction hold fixture |
+| Mixed global-TDS triangles need explicit policy | All-same is direct; two-of-three majority is approved CarrierLab lab policy; triple junction is a hold | Implement triple-junction handling only with paper citation or explicit approved lab policy | Majority fixture and triple-junction hold fixture |
 | Preserve plate geodetic motion across remesh | Motion hash before/after remains identical | Keep later remesh cadence from recomputing motion authority from projection | Motion hash gate |
 | Reset process state at remesh | Active lists, distances, matrix state, subducting marks, obduction marks, and collision-pending keys reset to empty; reset serial advances | Later IIIB tracking must explicitly repopulate from geometry | Process reset fixture |
 | Preserve divergent gap provenance | IIIE.4 q1/q2/qGamma, generated fields, and zGamma hold flags survive topology rebuild records | Full remesh event must attach these records per generated vertex | Oceanic provenance fixture |
@@ -42,10 +42,14 @@ Verdict: PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED. This slice
 |---|---|
 | Prior global sample owner/fraction fallback | Explicit per-record counter stays zero. |
 | Projection-derived ownership authority | Explicit per-record counter stays zero. |
-| Centroid/random/synthetic winner policy | Explicit per-record counter stays zero. |
+| Uncited remesh winner policy | Explicit per-record counter stays zero. |
 | Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called; IIIE.5 uses a dedicated rebuild path rather than `RebuildPlateLocalStateFromSamples`. |
 | Silent unresolved multi-hit routing | Explicit counter stays zero; triple-junction topology anomalies are holds, not winners. |
 | zGamma paper-fidelity overclaim | Hold flag remains visible through generated records. |
+
+## Approved Lab Policy
+
+Two-of-three mixed global-TDS triangles are approved for IIIE live-cadence use as a narrow CarrierLab lab policy. The rule is only valid when exactly two vertices have the same post-remesh assigned plate and the third differs; the majority plate receives the rebuilt triangle. This approval does not extend to one-one-one triple junctions, unresolved ray multi-hits, prior-owner fallback, projection-derived ownership, or arbitrary winner policies.
 
 ## Stop Conditions For IIIE.6+
 

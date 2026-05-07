@@ -36,7 +36,7 @@ Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. Th
 |---|---|
 | Prior global owner/fraction fallback | Selection, generation, and topology counters remain zero. |
 | Projection-derived ownership authority | Topology projection-authority counter remains zero. |
-| Centroid/random/synthetic remesh winner | Policy-winner counters remain zero; no multi-hit route is consumed. |
+| Uncited remesh winner | Policy-winner counters remain zero; no multi-hit route is consumed. |
 | Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit; IIIE.5 rebuild remains the authority path. |
 | Unresolved multi-hit ridge generation | Not routed; IIIE.4 receives only no-hit and filter-exhausted divergent classes. |
 | zGamma paper-fidelity overclaim | Generated records preserve `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`. |
@@ -47,7 +47,7 @@ Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. Th
 | Decision | Status | Rationale |
 |---|---|---|
 | zGamma profile law | Deferred / named lab extension | Current sqrt-distance profile is geophysics-derived and realistic, but the paper/thesis do not provide a closed-form zGamma equation. |
-| Two-of-three mixed triangle majority | Deferred / named lab policy | IIIE.5 exposes the majority rule; consolidation must disclose it as lab policy unless a paper citation is found. |
+| Two-of-three mixed triangle majority | Approved CarrierLab lab policy | IIIE.5 exposes and gates the deterministic majority rule: if exactly two global-TDS vertices assign to one plate, that plate owns the rebuilt triangle. This is approved only as disclosed lab policy, not as paper text. |
 | One-one-one triple-junction topology | Deferred / hold | IIIE.5 leaves these unresolved rather than inventing authority. |
 | Continental overwrite by divergent ridge generation | Deferred / hold | IIIE.6 makes the ledger line visible and non-silent; production cadence policy remains a consolidation decision. |
 
@@ -58,10 +58,10 @@ Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. Th
 - Stop if Stage 1.5 owner/projection/recovery behavior becomes primary IIIE remesh authority.
 - Stop if post-rebuild IIIB tracking cannot seed active lists, distance records, matrix evidence, propagation, and closure from rebuilt plate-local topology.
 - Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.
-- Stop if majority or triple-junction topology policy is used without explicit consolidation disclosure.
+- Stop if the majority rule is described as paper-faithful rather than approved lab policy, or if any triple-junction topology policy is used without explicit approval and gates.
 
 ## Next Slice Boundary
 
-Next is IIIE consolidation: disclose the three named lab choices (geophysics-derived zGamma, two-of-three majority assignment, triple-junction hold) plus the new ridge-overwrite hold, rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio. Do not start IIIF rifting, IIIG per-step elevation evolution, or IIIH long-horizon validation until consolidation explicitly clears.
+Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, triple-junction handling, and ridge-overwrite handling), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio. Do not start IIIF rifting, IIIG per-step elevation evolution, or IIIH long-horizon validation until consolidation explicitly clears.
 
 Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIE6/phase-iii-slice-iiie6-metrics.jsonl`.
