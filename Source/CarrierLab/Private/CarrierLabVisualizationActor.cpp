@@ -41,6 +41,7 @@ namespace
 	constexpr int32 BoundarySearchRadiusBins = 2;
 	constexpr double PhaseIIIE4RidgePeakElevationKm = -1.0;
 	constexpr double PhaseIIIE4AbyssalElevationKm = -6.0;
+	constexpr double PhaseIIIE4RidgeProfileReferenceDistanceKm = EarthRadiusKm;
 
 	struct FCarrierLabVizCandidate
 	{
@@ -2424,17 +2425,21 @@ namespace
 		OutRecord.Alpha = ElevationDenominator > UE_DOUBLE_SMALL_NUMBER
 			? FMath::Clamp(OutRecord.RidgeDistanceKm / ElevationDenominator, 0.0, 1.0)
 			: 0.0;
-		// IIIE.4 named placeholder/deviation: thesis 3.3.2.1 names a ridge
-		// profile zGamma and thesis 3.3.2.3 defines qGamma, but the extracted
-		// local contract does not yet provide a closed-form zGamma curve.
-		// This linear alpha-parameterized profile preserves the Table 3.2
-		// ridge/abyssal constants for the audit slice only; a future slice must
-		// replace or justify the ridge-profile law before claiming full paper
-		// fidelity.
+		// Pre-IIIE.5.1 named placeholder/deviation: alpha remains only the thesis
+		// zBar/zGamma blend coefficient. zGamma uses a separate distance profile
+		// parameter so gap width cannot alter the generic ridge profile. The
+		// reference distance is a lab placeholder, not a paper-faithful law.
+		OutRecord.ZGammaProfileDistanceKm = OutRecord.RidgeDistanceKm;
+		OutRecord.ZGammaProfileReferenceDistanceKm = PhaseIIIE4RidgeProfileReferenceDistanceKm;
+		OutRecord.ZGammaProfileT = PhaseIIIE4RidgeProfileReferenceDistanceKm > UE_DOUBLE_SMALL_NUMBER
+			? FMath::Clamp(OutRecord.ZGammaProfileDistanceKm / PhaseIIIE4RidgeProfileReferenceDistanceKm, 0.0, 1.0)
+			: 0.0;
+		OutRecord.bUsedZGammaDistanceProfilePlaceholder = true;
+		OutRecord.bPaperFaithfulZGammaProfile = false;
 		OutRecord.ZGammaElevation = FMath::Lerp(
 			PhaseIIIE4RidgePeakElevationKm,
 			PhaseIIIE4AbyssalElevationKm,
-			OutRecord.Alpha);
+			OutRecord.ZGammaProfileT);
 		OutRecord.Elevation =
 			OutRecord.Alpha * OutRecord.ZBarElevation +
 			(1.0 - OutRecord.Alpha) * OutRecord.ZGammaElevation;

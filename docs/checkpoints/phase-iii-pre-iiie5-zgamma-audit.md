@@ -7,6 +7,17 @@ elevation oracle.
 
 This audit is written. It does not modify code or run commandlets.
 
+## Pre-IIIE.5.1 disposition
+
+Pre-IIIE.5.1 preserves this audit as the problem statement, but supersedes the
+original "defer concern #2 only in prose" disposition. The alpha double-use is
+now closed in code: `alpha` remains only the thesis blend coefficient, while
+`zGamma` uses a separate distance-profile parameter recorded as
+`ZGammaProfileT`. The ridge-profile law remains a named lab placeholder with
+`bPaperFaithfulZGammaProfile = false`; IIIE.5 may preserve it through topology
+rebuild, but no consolidation may claim paper-faithful generated elevation
+until a future slice replaces or justifies the profile law.
+
 ## Status
 
 **GAP.** Two distinct gaps are identified, one critical:

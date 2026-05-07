@@ -7,6 +7,16 @@ closes both, in one Codex-executable commit.
 
 This document is design only. No code or commandlet runs.
 
+## Pre-IIIE.5.1 supersession note
+
+Commit `886d7dd` executed the oracle-independence portion of this design and
+initially chose prose deferral for concern #2. Pre-IIIE.5.1 supersedes that
+second disposition: the alpha double-use is removed before IIIE.5 topology
+mutation starts. `zGamma` now has its own distance-profile parameter and an
+explicit same-ridge/different-gap-width gate. The profile remains a lab
+placeholder, with `bPaperFaithfulZGammaProfile = false`, until a later
+paper-cited or explicitly approved ridge-profile slice replaces it.
+
 ## Status
 
 **Design ready.** Incorporates three refinements from adversarial review:

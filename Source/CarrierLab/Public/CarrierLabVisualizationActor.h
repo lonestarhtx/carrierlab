@@ -737,12 +737,17 @@ struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
 	double Q2Elevation = 0.0;
 	double ZBarElevation = 0.0;
 	double ZGammaElevation = 0.0;
+	double ZGammaProfileDistanceKm = 0.0;
+	double ZGammaProfileReferenceDistanceKm = 0.0;
+	double ZGammaProfileT = 0.0;
 	double Elevation = 0.0;
 	double OceanicAge = 0.0;
 	double RidgeDirectionMagnitude = 0.0;
 	double RidgeDirectionRadialDot = 0.0;
 	double QGammaInputNorm = 0.0;
 	double QGammaUnitResidual = 0.0;
+	bool bUsedZGammaDistanceProfilePlaceholder = false;
+	bool bPaperFaithfulZGammaProfile = false;
 	FVector3d Q1UnitPosition = FVector3d::UnitZ();
 	FVector3d Q2UnitPosition = FVector3d::UnitZ();
 	FVector3d QGammaUnitPosition = FVector3d::UnitZ();
