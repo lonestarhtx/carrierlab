@@ -1909,7 +1909,7 @@ public:
 	double StepsPerSecond = 2.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Visualization")
-	ECarrierLabVisualizationLayer VisualizationLayer = ECarrierLabVisualizationLayer::PlateId;
+	ECarrierLabVisualizationLayer VisualizationLayer = ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Policy")
 	ECarrierLabMultiHitPolicy MultiHitPolicy = ECarrierLabMultiHitPolicy::Centroid;

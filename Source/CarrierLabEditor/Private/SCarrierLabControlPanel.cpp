@@ -245,6 +245,12 @@ ACarrierLabVisualizationActor* SCarrierLabControlPanel::GetCarrierActor(const bo
 		}
 	}
 
+	if (TargetActor.IsValid() && LatestDefaultsAppliedActor.Get() != TargetActor.Get())
+	{
+		ApplyLatestLiveDisplayDefaults(*TargetActor);
+		LatestDefaultsAppliedActor = TargetActor;
+	}
+
 	if (TargetActorCount > 1)
 	{
 		TargetWarningText = FString::Printf(TEXT("%d actors found, using %s."), TargetActorCount, *TargetSourceText);
@@ -255,6 +261,17 @@ ACarrierLabVisualizationActor* SCarrierLabControlPanel::GetCarrierActor(const bo
 	}
 
 	return TargetActor.Get();
+}
+
+void SCarrierLabControlPanel::ApplyLatestLiveDisplayDefaults(ACarrierLabVisualizationActor& Actor)
+{
+	bPendingAutoResample = false;
+	bPendingPhaseIIIProcess = true;
+	PendingLayer = ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary;
+
+	Actor.bEnableNaturalResamplingEvents = false;
+	Actor.ConfigurePhaseIIICProcessLayer(true, false);
+	Actor.SetVisualizationLayer(PendingLayer);
 }
 
 void SCarrierLabControlPanel::ApplyPanelConfigToActor(ACarrierLabVisualizationActor& Actor) const
@@ -1509,7 +1526,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 6.0f)
 		[
 			SNew(STextBlock)
-			.Text(LOCTEXT("MutationNote", "The resample button intentionally remains the legacy Stage 1.5 comparison path. IIIE remesh work is visible through the Phase III process layers, audits, and commandlet gates until the production cadence is promoted."))
+			.Text(LOCTEXT("MutationNote", "The workbench defaults to the latest Phase III process display: process layers on, slab pull off, legacy auto-resample off, and the IIIE summary layer selected. The manual resample button remains the legacy Stage 1.5 comparison path until the production cadence is promoted."))
 			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
 			.AutoWrapText(true)
 		]

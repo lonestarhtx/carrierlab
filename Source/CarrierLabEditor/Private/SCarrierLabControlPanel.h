@@ -111,6 +111,7 @@ private:
 	};
 
 	TWeakObjectPtr<ACarrierLabVisualizationActor> TargetActor;
+	TWeakObjectPtr<ACarrierLabVisualizationActor> LatestDefaultsAppliedActor;
 	TArray<TSharedPtr<int32>> ResolutionOptions;
 	TArray<TSharedPtr<ECarrierLabMultiHitPolicy>> PolicyOptions;
 	TArray<TSharedPtr<ECarrierLabVisualizationLayer>> LayerOptions;
@@ -134,6 +135,7 @@ private:
 	FString TargetWarningText;
 
 	ACarrierLabVisualizationActor* GetCarrierActor(const bool bCreateIfMissing);
+	void ApplyLatestLiveDisplayDefaults(ACarrierLabVisualizationActor& Actor);
 	void ApplyPanelConfigToActor(ACarrierLabVisualizationActor& Actor) const;
 	void RefreshTargetActor();
 	void CaptureLiveProjectionSnapshot();
