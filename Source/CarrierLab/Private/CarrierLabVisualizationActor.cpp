@@ -2424,6 +2424,13 @@ namespace
 		OutRecord.Alpha = ElevationDenominator > UE_DOUBLE_SMALL_NUMBER
 			? FMath::Clamp(OutRecord.RidgeDistanceKm / ElevationDenominator, 0.0, 1.0)
 			: 0.0;
+		// IIIE.4 named placeholder/deviation: thesis 3.3.2.1 names a ridge
+		// profile zGamma and thesis 3.3.2.3 defines qGamma, but the extracted
+		// local contract does not yet provide a closed-form zGamma curve.
+		// This linear alpha-parameterized profile preserves the Table 3.2
+		// ridge/abyssal constants for the audit slice only; a future slice must
+		// replace or justify the ridge-profile law before claiming full paper
+		// fidelity.
 		OutRecord.ZGammaElevation = FMath::Lerp(
 			PhaseIIIE4RidgePeakElevationKm,
 			PhaseIIIE4AbyssalElevationKm,
