@@ -12696,9 +12696,13 @@ FLinearColor ACarrierLabVisualizationActor::ColorForSampleLayer(
 	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
 		return DistanceToFrontColor(DistanceToFrontKmBySample.IsValidIndex(SampleId) ? DistanceToFrontKmBySample[SampleId] : -1.0);
 	case ECarrierLabVisualizationLayer::OceanicAgeHeatmap:
-		return State.Samples.IsValidIndex(SampleId)
+		if (!State.Samples.IsValidIndex(SampleId))
+		{
+			return FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+		}
+		return State.Samples[SampleId].ContinentalFraction <= 1.0e-6
 			? OceanicAgeColor(State.Samples[SampleId].OceanicAge)
-			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+			: DimMapBase(ContinentalColor(State.Samples[SampleId].ContinentalFraction));
 	case ECarrierLabVisualizationLayer::RidgeDirection:
 		return State.Samples.IsValidIndex(SampleId)
 			? RidgeDirectionColor(State.Samples[SampleId].RidgeDirection, State.Samples[SampleId].UnitPosition)
@@ -12883,7 +12887,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R legacy 1.5 resample | 1-9/0 layers | O ocean age | G ridge"),
+		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d legacy_auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R legacy 1.5 resample | 1-9/0 layers | O ocean age | G ridge"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,

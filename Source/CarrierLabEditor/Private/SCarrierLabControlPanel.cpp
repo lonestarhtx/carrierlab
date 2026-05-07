@@ -944,7 +944,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildTopStatusBar()
 		]
 		+ SGridPanel::Slot(3, 1)
 		[
-			BuildLabeledValue(LOCTEXT("StatusSpeedAuto", "Speed / Auto"), TAttribute<FText>::CreateLambda([this]()
+			BuildLabeledValue(LOCTEXT("StatusSpeedAuto", "Speed / Legacy Auto"), TAttribute<FText>::CreateLambda([this]()
 			{
 				if (!LiveProjection.bHasSnapshot)
 				{
@@ -1530,8 +1530,15 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 			})
 			[
 				SNew(STextBlock)
-				.Text(LOCTEXT("AutoResample", "Auto resample at observed-speed cadence"))
+				.Text(LOCTEXT("AutoResample", "Legacy auto-resample at observed-speed cadence (not IIIE primary)"))
 			]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, -2.0f, 0.0f, 6.0f)
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("AutoResampleWarning", "Use legacy auto-resample only as a comparison stress test. It can fragment the live diagnostic mesh and does not run the IIIE.6 selection -> gap-fill -> rebuild ledger path."))
+			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.72f, 0.28f, 1.0f)))
+			.AutoWrapText(true)
 		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)
 		[
@@ -1931,7 +1938,8 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 	return FText::FromString(FString::Printf(
 		TEXT("Source: Live Actor snapshot @ %s\n")
 		TEXT("actor: %s | initialized: %s | playing: %s | step: %d | next resample: %d | events: %d\n")
-		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | auto resample: %s | phase iii process: %s\n")
+		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | legacy auto resample: %s | phase iii process: %s\n")
+		TEXT("live remesh status: IIIE.6 audited cadence is commandlet-only; live auto-resample still uses the legacy/Phase II filtered path\n")
 		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | policy-resolved multi-hit: %d | boundary hits: %d | NaN/Inf: %d\n")
 		TEXT("phaseIII active=%d dist=%d matrix=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\n")
 		TEXT("crust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f] km max_age=%.3f Ma\n")
