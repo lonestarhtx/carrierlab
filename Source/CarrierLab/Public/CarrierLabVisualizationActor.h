@@ -23,7 +23,10 @@ enum class ECarrierLabVisualizationLayer : uint8
 	PhaseIIISummary UMETA(DisplayName = "Phase III Summary"),
 	ElevationHeatmap UMETA(DisplayName = "Elevation Heatmap"),
 	SubductionMask UMETA(DisplayName = "Subduction Mask"),
-	DistanceToFrontHeatmap UMETA(DisplayName = "Distance To Front Heatmap")
+	DistanceToFrontHeatmap UMETA(DisplayName = "Distance To Front Heatmap"),
+	OceanicAgeHeatmap UMETA(DisplayName = "Oceanic Age Heatmap"),
+	RidgeDirection UMETA(DisplayName = "Ridge Direction"),
+	PhaseIIIERemeshSummary UMETA(DisplayName = "Phase IIIE Remesh Summary")
 };
 
 UENUM(BlueprintType)
@@ -146,6 +149,54 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	FString LastRemeshMode;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIActiveBoundaryTriangleCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIDistanceToFrontRecordCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIISubductionMatrixPairCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIISubductionMatrixEvidenceCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIISubductionHitCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIISubductingMarkCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIObductionMarkCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIICollisionPendingTriangleCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIHistoricalElevationSampleCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIOceanicSampleCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIRidgeDirectionSampleCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIFoldDirectionSampleCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	int32 PhaseIIIConvergenceResetSerial = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	double PhaseIIIMinVisibleElevationKm = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	double PhaseIIIMaxVisibleElevationKm = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase III")
+	double PhaseIIIMaxOceanicAgeMa = 0.0;
 };
 
 struct FCarrierLabPhaseIIICostDriverStepAudit
@@ -1989,6 +2040,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowDistanceToFrontHeatmapLayer();
 
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowOceanicAgeHeatmapLayer();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowRidgeDirectionLayer();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowPhaseIIIERemeshSummaryLayer();
+
 	bool BuildVisualizationLayerMap(
 		ECarrierLabVisualizationLayer Layer,
 		TArray<FColor>& OutPixels,
@@ -2278,5 +2338,6 @@ private:
 	void ComputeDriftMetrics();
 	void ComputePlateBoundaryMask();
 	void ComputePhaseIIIObservabilityMasks();
+	void UpdatePhaseIIIVisibilityMetrics();
 	void UpdateLastHash();
 };

@@ -103,6 +103,12 @@ namespace
 			return TEXT("SubductionMask");
 		case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
 			return TEXT("DistanceToFrontHeatmap");
+		case ECarrierLabVisualizationLayer::OceanicAgeHeatmap:
+			return TEXT("OceanicAgeHeatmap");
+		case ECarrierLabVisualizationLayer::RidgeDirection:
+			return TEXT("RidgeDirection");
+		case ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary:
+			return TEXT("PhaseIIIERemeshSummary");
 		default:
 			return TEXT("UnknownLayer");
 		}
@@ -1572,9 +1578,15 @@ namespace
 		FLayerPixels PlateIdImage;
 		FLayerPixels CrustType;
 		FLayerPixels ElevationImage;
+		FLayerPixels OceanicAgeImage;
+		FLayerPixels RidgeDirectionImage;
+		FLayerPixels RemeshSummaryImage;
 		if (!CaptureLayer(ECarrierLabVisualizationLayer::PlateId, TEXT("PlateId"), TEXT("PLATE ID"), PlateIdImage) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("CrustType"), TEXT("CRUST TYPE"), CrustType) ||
-			!CaptureLayer(ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Elevation"), TEXT("ELEVATION"), ElevationImage))
+			!CaptureLayer(ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Elevation"), TEXT("ELEVATION"), ElevationImage) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::OceanicAgeHeatmap, TEXT("OceanicAge"), TEXT("OCEANIC AGE"), OceanicAgeImage) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::RidgeDirection, TEXT("RidgeDirection"), TEXT("RIDGE DIRECTION"), RidgeDirectionImage) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary, TEXT("PhaseIIIERemesh"), TEXT("IIIE REMESH"), RemeshSummaryImage))
 		{
 			return false;
 		}
@@ -1640,6 +1652,24 @@ namespace
 			return false;
 		}
 		Images.Add(ElevationImage);
+
+		if (!SaveImage(OceanicAgeImage))
+		{
+			return false;
+		}
+		Images.Add(OceanicAgeImage);
+
+		if (!SaveImage(RidgeDirectionImage))
+		{
+			return false;
+		}
+		Images.Add(RidgeDirectionImage);
+
+		if (!SaveImage(RemeshSummaryImage))
+		{
+			return false;
+		}
+		Images.Add(RemeshSummaryImage);
 
 		FLayerPixels Combined = CrustType;
 		Combined.Export.Layer = ECarrierLabVisualizationLayer::PhaseIIISummary;

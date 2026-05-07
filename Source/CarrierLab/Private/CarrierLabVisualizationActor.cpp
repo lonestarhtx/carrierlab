@@ -2981,6 +2981,10 @@ namespace
 			return FLinearColor(0.85f, 0.34f, 0.05f, 1.0f);
 		case 4:
 			return FLinearColor(0.42f, 0.42f, 0.46f, 1.0f);
+		case 5:
+			return FLinearColor(0.74f, 0.24f, 0.86f, 1.0f);
+		case 6:
+			return FLinearColor(0.96f, 0.10f, 0.20f, 1.0f);
 		default:
 			return FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
 		}
@@ -2997,6 +3001,74 @@ namespace
 			FLinearColor(0.06f, 0.74f, 0.92f, 1.0f),
 			FLinearColor(0.96f, 0.18f, 0.04f, 1.0f),
 			static_cast<float>(Alpha));
+	}
+
+	FLinearColor OceanicAgeColor(const double AgeMa)
+	{
+		if (!FMath::IsFinite(AgeMa) || AgeMa < 0.0)
+		{
+			return FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+		}
+		const double Alpha = FMath::Clamp(AgeMa / 150.0, 0.0, 1.0);
+		return FMath::Lerp(
+			FLinearColor(0.05f, 0.80f, 0.88f, 1.0f),
+			FLinearColor(0.02f, 0.05f, 0.40f, 1.0f),
+			static_cast<float>(Alpha));
+	}
+
+	FLinearColor RidgeDirectionColor(const FVector3d& Direction, const FVector3d& UnitPosition)
+	{
+		if (!FMath::IsFinite(Direction.X) ||
+			!FMath::IsFinite(Direction.Y) ||
+			!FMath::IsFinite(Direction.Z) ||
+			Direction.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			return FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+		}
+
+		const FVector3d Normal = NormalizeOrFallback(UnitPosition, FVector3d::UnitZ());
+		FVector3d East = FVector3d::CrossProduct(FVector3d::UnitZ(), Normal);
+		if (East.SquaredLength() <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			East = FVector3d::CrossProduct(FVector3d::UnitX(), Normal);
+		}
+		East.Normalize();
+		const FVector3d North = NormalizeOrFallback(FVector3d::CrossProduct(Normal, East), FVector3d::UnitY());
+		const FVector3d TangentDirection = RetangentAndNormalizeVectorField(Direction, Normal);
+		const double Angle = FMath::Atan2(
+			FVector3d::DotProduct(TangentDirection, North),
+			FVector3d::DotProduct(TangentDirection, East));
+		const uint8 Hue = static_cast<uint8>(FMath::RoundToInt(((Angle + UE_PI) / (2.0 * UE_PI)) * 255.0) & 255);
+		return FLinearColor::MakeFromHSV8(Hue, 190, 245);
+	}
+
+	FLinearColor RemeshSummaryColor(
+		const FLinearColor& Base,
+		const uint8 RoleMask,
+		const double ContinentalFraction,
+		const double OceanicAgeMa,
+		const double ElevationKm,
+		const FVector3d& RidgeDirection,
+		const FVector3d& UnitPosition)
+	{
+		FLinearColor Color = DimMapBase(Base);
+		if (ContinentalFraction <= 1.0e-6)
+		{
+			Color = BlendMapOverlay(Color, OceanicAgeColor(OceanicAgeMa), 0.46f);
+		}
+		if (FMath::Abs(ElevationKm) > 1.0e-9)
+		{
+			Color = BlendMapOverlay(Color, ElevationColor(ElevationKm), 0.42f);
+		}
+		if (RidgeDirection.SquaredLength() > UE_DOUBLE_SMALL_NUMBER)
+		{
+			Color = BlendMapOverlay(Color, RidgeDirectionColor(RidgeDirection, UnitPosition), 0.56f);
+		}
+		if (RoleMask != 0)
+		{
+			Color = BlendMapOverlay(Color, SubductionRoleColor(RoleMask), 0.76f);
+		}
+		return Color;
 	}
 }
 
@@ -10092,6 +10164,21 @@ void ACarrierLabVisualizationActor::ShowDistanceToFrontHeatmapLayer()
 	SetVisualizationLayer(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap);
 }
 
+void ACarrierLabVisualizationActor::ShowOceanicAgeHeatmapLayer()
+{
+	SetVisualizationLayer(ECarrierLabVisualizationLayer::OceanicAgeHeatmap);
+}
+
+void ACarrierLabVisualizationActor::ShowRidgeDirectionLayer()
+{
+	SetVisualizationLayer(ECarrierLabVisualizationLayer::RidgeDirection);
+}
+
+void ACarrierLabVisualizationActor::ShowPhaseIIIERemeshSummaryLayer()
+{
+	SetVisualizationLayer(ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary);
+}
+
 void ACarrierLabVisualizationActor::BindInputControls()
 {
 	APlayerController* PlayerController = GetWorld() != nullptr ? GetWorld()->GetFirstPlayerController() : nullptr;
@@ -10117,6 +10204,9 @@ void ACarrierLabVisualizationActor::BindInputControls()
 	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowElevationHeatmapLayer);
 	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowSubductionMaskLayer);
 	InputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowDistanceToFrontHeatmapLayer);
+	InputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowPhaseIIIERemeshSummaryLayer);
+	InputComponent->BindKey(EKeys::O, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowOceanicAgeHeatmapLayer);
+	InputComponent->BindKey(EKeys::G, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowRidgeDirectionLayer);
 }
 
 void ACarrierLabVisualizationActor::UpdateConvergenceTrackingDistances()
@@ -11932,6 +12022,87 @@ void ACarrierLabVisualizationActor::ComputePhaseIIIObservabilityMasks()
 		}
 		MarkTriangleVertices(State.Plates[Mark.PlateId], Mark.LocalTriangleId, 1);
 	}
+
+	for (const CarrierLab::FConvergenceObductionTriangleMark& Mark : State.ConvergenceObductionTriangleMarks)
+	{
+		if (!State.Plates.IsValidIndex(Mark.PlateId))
+		{
+			continue;
+		}
+		MarkTriangleVertices(State.Plates[Mark.PlateId], Mark.LocalTriangleId, 5);
+	}
+
+	for (const uint64 TriangleKey : State.ConvergenceCollisionPendingTriangleKeys)
+	{
+		const int32 PlateId = static_cast<int32>(TriangleKey >> 32);
+		const int32 LocalTriangleId = static_cast<int32>(TriangleKey & 0xffffffffull);
+		if (!State.Plates.IsValidIndex(PlateId))
+		{
+			continue;
+		}
+		MarkTriangleVertices(State.Plates[PlateId], LocalTriangleId, 6);
+	}
+}
+
+void ACarrierLabVisualizationActor::UpdatePhaseIIIVisibilityMetrics()
+{
+	CurrentMetrics.PhaseIIIActiveBoundaryTriangleCount = 0;
+	CurrentMetrics.PhaseIIIDistanceToFrontRecordCount = 0;
+	CurrentMetrics.PhaseIIISubductionMatrixPairCount = State.ConvergenceSubductionMatrixPairKeys.Num();
+	CurrentMetrics.PhaseIIISubductionMatrixEvidenceCount = State.ConvergenceSubductionMatrixEvidence.Num();
+	CurrentMetrics.PhaseIIISubductionHitCount = State.ConvergenceSubductionTriangleHits.Num();
+	CurrentMetrics.PhaseIIISubductingMarkCount = State.ConvergenceSubductingTriangleMarks.Num();
+	CurrentMetrics.PhaseIIIObductionMarkCount = State.ConvergenceObductionTriangleMarks.Num();
+	CurrentMetrics.PhaseIIICollisionPendingTriangleCount = State.ConvergenceCollisionPendingTriangleKeys.Num();
+	CurrentMetrics.PhaseIIIHistoricalElevationSampleCount = 0;
+	CurrentMetrics.PhaseIIIOceanicSampleCount = 0;
+	CurrentMetrics.PhaseIIIRidgeDirectionSampleCount = 0;
+	CurrentMetrics.PhaseIIIFoldDirectionSampleCount = 0;
+	CurrentMetrics.PhaseIIIConvergenceResetSerial = State.ConvergenceTrackingResetSerial;
+	CurrentMetrics.PhaseIIIMinVisibleElevationKm = 0.0;
+	CurrentMetrics.PhaseIIIMaxVisibleElevationKm = 0.0;
+	CurrentMetrics.PhaseIIIMaxOceanicAgeMa = 0.0;
+
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		CurrentMetrics.PhaseIIIActiveBoundaryTriangleCount += Plate.ActiveBoundaryTriangles.Num();
+		CurrentMetrics.PhaseIIIDistanceToFrontRecordCount += Plate.ActiveBoundaryTriangleDistancesKm.Num();
+	}
+
+	bool bHasElevation = false;
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (Sample.ContinentalFraction <= 1.0e-6)
+		{
+			++CurrentMetrics.PhaseIIIOceanicSampleCount;
+		}
+		if (Sample.RidgeDirection.SquaredLength() > UE_DOUBLE_SMALL_NUMBER)
+		{
+			++CurrentMetrics.PhaseIIIRidgeDirectionSampleCount;
+		}
+		if (Sample.FoldDirection.SquaredLength() > UE_DOUBLE_SMALL_NUMBER)
+		{
+			++CurrentMetrics.PhaseIIIFoldDirectionSampleCount;
+		}
+		if (Sample.HistoricalElevation != 0.0)
+		{
+			++CurrentMetrics.PhaseIIIHistoricalElevationSampleCount;
+		}
+		if (FMath::IsFinite(Sample.OceanicAge))
+		{
+			CurrentMetrics.PhaseIIIMaxOceanicAgeMa = FMath::Max(CurrentMetrics.PhaseIIIMaxOceanicAgeMa, Sample.OceanicAge);
+		}
+		if (FMath::IsFinite(Sample.Elevation))
+		{
+			CurrentMetrics.PhaseIIIMinVisibleElevationKm = bHasElevation
+				? FMath::Min(CurrentMetrics.PhaseIIIMinVisibleElevationKm, Sample.Elevation)
+				: Sample.Elevation;
+			CurrentMetrics.PhaseIIIMaxVisibleElevationKm = bHasElevation
+				? FMath::Max(CurrentMetrics.PhaseIIIMaxVisibleElevationKm, Sample.Elevation)
+				: Sample.Elevation;
+			bHasElevation = true;
+		}
+	}
 }
 
 bool ACarrierLabVisualizationActor::GetPhaseIIIProcessOverlayTriangles(
@@ -12058,6 +12229,18 @@ bool ACarrierLabVisualizationActor::GetPhaseIIIProcessOverlayTriangles(
 	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
 	{
 		AddTriangle(Mark.PlateId, Mark.LocalTriangleId, 1, -1.0, OutRoleTriangles);
+	}
+
+	for (const CarrierLab::FConvergenceObductionTriangleMark& Mark : State.ConvergenceObductionTriangleMarks)
+	{
+		AddTriangle(Mark.PlateId, Mark.LocalTriangleId, 5, -1.0, OutRoleTriangles);
+	}
+
+	for (const uint64 TriangleKey : State.ConvergenceCollisionPendingTriangleKeys)
+	{
+		const int32 PlateId = static_cast<int32>(TriangleKey >> 32);
+		const int32 LocalTriangleId = static_cast<int32>(TriangleKey & 0xffffffffull);
+		AddTriangle(PlateId, LocalTriangleId, 6, -1.0, OutRoleTriangles);
 	}
 
 	OutRoleTriangles.Sort([](
@@ -12211,6 +12394,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	const double BoundaryStartSeconds = FPlatformTime::Seconds();
 	ComputePlateBoundaryMask();
 	ComputePhaseIIIObservabilityMasks();
+	UpdatePhaseIIIVisibilityMetrics();
 	CurrentMetrics.BoundaryMaskSeconds = FPlatformTime::Seconds() - BoundaryStartSeconds;
 	CurrentMetrics.ProjectionSeconds = FPlatformTime::Seconds() - StartSeconds;
 	const double HashStartSeconds = FPlatformTime::Seconds();
@@ -12511,6 +12695,33 @@ FLinearColor ACarrierLabVisualizationActor::ColorForSampleLayer(
 		return SubductionRoleColor(SubductionRoleMask.IsValidIndex(SampleId) ? SubductionRoleMask[SampleId] : 0);
 	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
 		return DistanceToFrontColor(DistanceToFrontKmBySample.IsValidIndex(SampleId) ? DistanceToFrontKmBySample[SampleId] : -1.0);
+	case ECarrierLabVisualizationLayer::OceanicAgeHeatmap:
+		return State.Samples.IsValidIndex(SampleId)
+			? OceanicAgeColor(State.Samples[SampleId].OceanicAge)
+			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+	case ECarrierLabVisualizationLayer::RidgeDirection:
+		return State.Samples.IsValidIndex(SampleId)
+			? RidgeDirectionColor(State.Samples[SampleId].RidgeDirection, State.Samples[SampleId].UnitPosition)
+			: FLinearColor(0.02f, 0.05f, 0.09f, 1.0f);
+	case ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary:
+	{
+		const CarrierLab::FSphereSample* Sample = State.Samples.IsValidIndex(SampleId) ? &State.Samples[SampleId] : nullptr;
+		const double ContinentalFraction = RenderContinentalFractions.IsValidIndex(SampleId)
+			? RenderContinentalFractions[SampleId]
+			: (Sample != nullptr ? Sample->ContinentalFraction : 0.0);
+		const double ElevationKm = RenderElevations.IsValidIndex(SampleId)
+			? RenderElevations[SampleId]
+			: (Sample != nullptr ? Sample->Elevation : 0.0);
+		const uint8 RoleMask = SubductionRoleMask.IsValidIndex(SampleId) ? SubductionRoleMask[SampleId] : 0;
+		return RemeshSummaryColor(
+			ContinentalColor(ContinentalFraction),
+			RoleMask,
+			ContinentalFraction,
+			Sample != nullptr ? Sample->OceanicAge : 0.0,
+			ElevationKm,
+			Sample != nullptr ? Sample->RidgeDirection : FVector3d::ZeroVector,
+			Sample != nullptr ? Sample->UnitPosition : FVector3d::UnitZ());
+	}
 	case ECarrierLabVisualizationLayer::PlateId:
 	default:
 		return PlateColor(RenderPlateIds.IsValidIndex(SampleId) ? RenderPlateIds[SampleId] : INDEX_NONE);
@@ -12657,13 +12868,22 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
 		LayerName = TEXT("distance to front");
 		break;
+	case ECarrierLabVisualizationLayer::OceanicAgeHeatmap:
+		LayerName = TEXT("oceanic age heatmap");
+		break;
+	case ECarrierLabVisualizationLayer::RidgeDirection:
+		LayerName = TEXT("ridge direction");
+		break;
+	case ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary:
+		LayerName = TEXT("phase iiie remesh summary");
+		break;
 	case ECarrierLabVisualizationLayer::PlateId:
 	default:
 		break;
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase I Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\nremesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R lab resample | 1-8 layers"),
+		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R lab resample | 1-9/0 layers | O ocean age | G ridge"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -12684,12 +12904,30 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.LastNoBoundaryPairMissCount,
 		CurrentMetrics.PolicyResolvedMultiHitCount,
 		CurrentMetrics.NaNOrInfCount,
+		CurrentMetrics.PhaseIIIActiveBoundaryTriangleCount,
+		CurrentMetrics.PhaseIIIDistanceToFrontRecordCount,
+		CurrentMetrics.PhaseIIISubductionMatrixPairCount,
+		CurrentMetrics.PhaseIIISubductionMatrixEvidenceCount,
+		CurrentMetrics.PhaseIIISubductionHitCount,
+		CurrentMetrics.PhaseIIISubductingMarkCount,
+		CurrentMetrics.PhaseIIIObductionMarkCount,
+		CurrentMetrics.PhaseIIICollisionPendingTriangleCount,
+		CurrentMetrics.PhaseIIIConvergenceResetSerial,
+		CurrentMetrics.PhaseIIIOceanicSampleCount,
+		CurrentMetrics.PhaseIIIRidgeDirectionSampleCount,
+		CurrentMetrics.PhaseIIIFoldDirectionSampleCount,
+		CurrentMetrics.PhaseIIIHistoricalElevationSampleCount,
+		CurrentMetrics.PhaseIIIMinVisibleElevationKm,
+		CurrentMetrics.PhaseIIIMaxVisibleElevationKm,
+		CurrentMetrics.PhaseIIIMaxOceanicAgeMa,
 		CurrentMetrics.LastRemeshMode.IsEmpty() ? TEXT("none") : *CurrentMetrics.LastRemeshMode,
 		CurrentMetrics.AuthoritativeCAF,
 		CurrentMetrics.ProjectedCAF,
 		CurrentMetrics.DriftErrorMeanKm,
 		CurrentMetrics.DriftErrorP95Km,
 		*CurrentMetrics.LastHash,
+		*CurrentMetrics.CrustStateHash,
+		*CurrentMetrics.ConvergenceTrackingHash,
 		CurrentMetrics.ProjectionSeconds,
 		CurrentMetrics.BvhBuildSeconds,
 		CurrentMetrics.ProjectionQuerySeconds,
