@@ -454,6 +454,7 @@ namespace CarrierLab
 		State.ConvergenceSubductionMatrixEvidence.Reset();
 		State.ConvergenceSubductingTriangleMarks.Reset();
 		State.ConvergenceObductionTriangleMarks.Reset();
+		State.ConvergenceCollisionPendingTriangleKeys.Reset();
 		State.ConvergenceTrackingDistanceCullCount = 0;
 		State.ConvergenceSubductionMatrixRayTestCount = 0;
 		State.ConvergenceSubductionMatrixHitCount = 0;

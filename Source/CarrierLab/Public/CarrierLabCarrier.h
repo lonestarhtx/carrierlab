@@ -174,6 +174,7 @@ namespace CarrierLab
 		TArray<FConvergenceSubductionMatrixEvidence> ConvergenceSubductionMatrixEvidence;
 		TArray<FConvergenceSubductingTriangleMark> ConvergenceSubductingTriangleMarks;
 		TArray<FConvergenceObductionTriangleMark> ConvergenceObductionTriangleMarks;
+		TSet<uint64> ConvergenceCollisionPendingTriangleKeys;
 		int32 ConvergenceTrackingResetSerial = 0;
 		int32 ConvergenceTrackingDistanceCullCount = 0;
 		int32 ConvergenceSubductionMatrixRayTestCount = 0;

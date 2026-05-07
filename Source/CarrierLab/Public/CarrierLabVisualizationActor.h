@@ -754,6 +754,152 @@ struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
 	FVector3d RidgeDirection = FVector3d::ZeroVector;
 };
 
+enum class ECarrierLabPhaseIIIE5TriangleAssignmentClass : uint8
+{
+	AllVerticesSamePlate,
+	MajorityTwoOfThree,
+	UnresolvedTripleJunction,
+	Invalid
+};
+
+struct FCarrierLabPhaseIIIE5RemeshInputFixture
+{
+	bool bForceAllSamplesToPlateZero = false;
+	bool bSeedProcessStateBeforeRemesh = false;
+	bool bInjectGeneratedOceanicRecord = false;
+	int32 OverrideTriangleId = INDEX_NONE;
+	int32 OverridePlateA = INDEX_NONE;
+	int32 OverridePlateB = INDEX_NONE;
+	int32 OverridePlateC = INDEX_NONE;
+	FCarrierLabPhaseIIIE4OceanicGenerationRecord GeneratedOceanicRecord;
+};
+
+struct FCarrierLabPhaseIIIE5RemeshVertexRecord
+{
+	int32 SampleId = INDEX_NONE;
+	int32 AssignedPlateId = INDEX_NONE;
+	bool bResolvedSingleHit = false;
+	bool bDivergentGapRoute = false;
+	bool bGeneratedOceanicCrust = false;
+	bool bUnresolvedMultiHit = false;
+	bool bUsedPolicyWinner = false;
+	bool bUsedPriorOwnerFallback = false;
+	bool bUsedProjectionOwnerFallback = false;
+	bool bUsedZGammaDistanceProfilePlaceholder = false;
+	bool bPaperFaithfulZGammaProfile = false;
+	double ContinentalFraction = 0.0;
+	double Elevation = 0.0;
+	double HistoricalElevation = 0.0;
+	double OceanicAge = 0.0;
+	FVector3d RidgeDirection = FVector3d::ZeroVector;
+	FVector3d FoldDirection = FVector3d::ZeroVector;
+	FCarrierLabPhaseIIIE4OceanicGenerationRecord OceanicRecord;
+};
+
+struct FCarrierLabPhaseIIIE5TriangleRebuildRecord
+{
+	int32 GlobalTriangleId = INDEX_NONE;
+	int32 VertexA = INDEX_NONE;
+	int32 VertexB = INDEX_NONE;
+	int32 VertexC = INDEX_NONE;
+	int32 PlateA = INDEX_NONE;
+	int32 PlateB = INDEX_NONE;
+	int32 PlateC = INDEX_NONE;
+	int32 AssignedPlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	bool bBoundary = false;
+	ECarrierLabPhaseIIIE5TriangleAssignmentClass AssignmentClass = ECarrierLabPhaseIIIE5TriangleAssignmentClass::Invalid;
+};
+
+struct FCarrierLabPhaseIIIE5PlateRebuildRecord
+{
+	int32 PlateId = INDEX_NONE;
+	int32 SampleCount = 0;
+	int32 TriangleCount = 0;
+	int32 VertexCount = 0;
+	bool bLocalTriangleIndicesCompact = false;
+	bool bLocalVertexIndicesCompact = false;
+	bool bMotionPreserved = false;
+	FString TopologyHash;
+};
+
+struct FCarrierLabPhaseIIIE5ProcessResetAudit
+{
+	int32 ResetSerialBefore = 0;
+	int32 ResetSerialAfter = 0;
+	int32 ActiveTriangleCountBefore = 0;
+	int32 ActiveTriangleCountAfter = 0;
+	int32 DistanceRecordCountBefore = 0;
+	int32 DistanceRecordCountAfter = 0;
+	int32 MatrixPairCountBefore = 0;
+	int32 MatrixPairCountAfter = 0;
+	int32 MatrixEvidenceCountBefore = 0;
+	int32 MatrixEvidenceCountAfter = 0;
+	int32 SubductingMarkCountBefore = 0;
+	int32 SubductingMarkCountAfter = 0;
+	int32 ObductionMarkCountBefore = 0;
+	int32 ObductionMarkCountAfter = 0;
+	int32 CollisionPendingTriangleCountBefore = 0;
+	int32 CollisionPendingTriangleCountAfter = 0;
+	int32 DistanceToFrontRecordCountBefore = 0;
+	int32 DistanceToFrontRecordCountAfter = 0;
+	bool bResetSerialAdvanced = false;
+	bool bProcessStateEmptyAfter = false;
+};
+
+struct FCarrierLabPhaseIIIE5TopologyRebuildAudit
+{
+	bool bRan = false;
+	bool bApplied = false;
+	int32 SampleCount = 0;
+	int32 GlobalTriangleCount = 0;
+	int32 AssignedTriangleCount = 0;
+	int32 AllSameTriangleCount = 0;
+	int32 MajorityTriangleCount = 0;
+	int32 UnresolvedTripleJunctionCount = 0;
+	int32 InvalidTriangleCount = 0;
+	int32 MissingVertexAssignmentCount = 0;
+	int32 InvalidAssignedPlateCount = 0;
+	int32 GeneratedOceanicVertexCount = 0;
+	int32 PreservedGeneratedOceanicVertexCount = 0;
+	int32 PriorOwnerFallbackCount = 0;
+	int32 ProjectionOwnerFallbackCount = 0;
+	int32 PolicyWinnerCount = 0;
+	int32 UnresolvedMultiHitRoutedCount = 0;
+	bool bNoPriorOwnerFallback = false;
+	bool bNoProjectionOwnerFallback = false;
+	bool bNoPolicyWinner = false;
+	bool bNoUnresolvedMultiHitRouted = false;
+	bool bNoDuplicateTriangleAuthority = false;
+	bool bPlateLocalTopologyCompact = false;
+	bool bMotionPreserved = false;
+	bool bQProvenancePreserved = false;
+	bool bZGammaHoldPreserved = false;
+	bool bFixtureOwnedVertexAssignmentRecords = false;
+	FString MotionHashBefore;
+	FString MotionHashAfter;
+	FString TopologyHash;
+	FString AssignmentHash;
+	FCarrierLabPhaseIIIE5ProcessResetAudit ResetAudit;
+	TArray<FCarrierLabPhaseIIIE5TriangleRebuildRecord> TriangleRecords;
+	TArray<FCarrierLabPhaseIIIE5PlateRebuildRecord> PlateRecords;
+	TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord> VertexRecords;
+};
+
+struct FCarrierLabPhaseIIIE5CollisionPendingWireAudit
+{
+	bool bRan = false;
+	bool bSeededFromAcceptedCollisionGroups = false;
+	bool bUsedFixtureOwnedAcceptedGroup = false;
+	int32 AcceptedGroupCount = 0;
+	int32 PendingTriangleKeyCount = 0;
+	int32 FilteredCollisionPendingCount = 0;
+	int32 FilteredSubductingCount = 0;
+	int32 FilteredObductionPendingCount = 0;
+	FString GroupingHash;
+	FString SelectionHash;
+};
+
 struct FCarrierLabPhaseIIIB1TrackingAudit
 {
 	int32 Step = 0;
@@ -1926,6 +2072,13 @@ public:
 		const FVector3d& SamplePosition,
 		ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass,
 		FCarrierLabPhaseIIIE4OceanicGenerationRecord& OutRecord) const;
+	bool RunPhaseIIIE5TopologyRebuildFixtureForTest(
+		const FCarrierLabPhaseIIIE5RemeshInputFixture& Fixture,
+		FCarrierLabPhaseIIIE5TopologyRebuildAudit& OutAudit);
+	bool RunPhaseIIIE5CollisionPendingWireFixtureForTest(
+		FCarrierLabPhaseIIIE5CollisionPendingWireAudit& OutAudit,
+		FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutSelectionAudit,
+		double InterpenetrationThresholdKm = 300.0);
 	bool RunPhaseIIIE3FilteredRemeshSelectionAudit(FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit);
 	bool RunPhaseIIIE3FilteredRemeshSelectionAuditForSamples(
 		const TArray<int32>& SampleIds,

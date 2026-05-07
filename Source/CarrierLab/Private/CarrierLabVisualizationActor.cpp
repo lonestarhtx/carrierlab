@@ -2455,6 +2455,237 @@ namespace
 		OutRecord.bGeneratedOceanicCrust = true;
 	}
 
+	int32 CountPhaseIIIE5ActiveTriangles(const CarrierLab::FCarrierState& State)
+	{
+		int32 Count = 0;
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			Count += Plate.ActiveBoundaryTriangles.Num();
+		}
+		return Count;
+	}
+
+	int32 CountPhaseIIIE5ActiveDistanceRecords(const CarrierLab::FCarrierState& State)
+	{
+		int32 Count = 0;
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			Count += Plate.ActiveBoundaryTriangleDistancesKm.Num();
+		}
+		return Count;
+	}
+
+	int32 CountPhaseIIIE5DistanceToFrontRecords(const TArray<double>& DistancesKm)
+	{
+		int32 Count = 0;
+		for (const double DistanceKm : DistancesKm)
+		{
+			if (FMath::IsFinite(DistanceKm) && DistanceKm >= 0.0)
+			{
+				++Count;
+			}
+		}
+		return Count;
+	}
+
+	CarrierLab::FCarrierVertex MakePhaseIIIE5VertexFromSample(const CarrierLab::FSphereSample& Sample)
+	{
+		CarrierLab::FCarrierVertex Vertex;
+		Vertex.GlobalSampleId = Sample.Id;
+		Vertex.UnitPosition = Sample.UnitPosition;
+		Vertex.AreaWeight = Sample.AreaWeight;
+		Vertex.ContinentalFraction = Sample.ContinentalFraction;
+		Vertex.Elevation = Sample.Elevation;
+		Vertex.HistoricalElevation = Sample.HistoricalElevation;
+		Vertex.OceanicAge = Sample.OceanicAge;
+		Vertex.RidgeDirection = Sample.RidgeDirection;
+		Vertex.FoldDirection = Sample.FoldDirection;
+		Vertex.bHasHistoricalElevationSnapshot = false;
+		Vertex.bContinental = Sample.bContinental;
+		return Vertex;
+	}
+
+	int32 FindOrAddPhaseIIIE5LocalVertex(
+		CarrierLab::FCarrierPlate& Plate,
+		const CarrierLab::FSphereSample& Sample)
+	{
+		if (int32* Existing = Plate.GlobalSampleIdToLocalVertexId.Find(Sample.Id))
+		{
+			return *Existing;
+		}
+
+		const int32 LocalVertexId = Plate.Vertices.Add(MakePhaseIIIE5VertexFromSample(Sample));
+		Plate.GlobalSampleIdToLocalVertexId.Add(Sample.Id, LocalVertexId);
+		return LocalVertexId;
+	}
+
+	ECarrierLabPhaseIIIE5TriangleAssignmentClass ClassifyPhaseIIIE5TriangleAssignment(
+		const int32 PlateA,
+		const int32 PlateB,
+		const int32 PlateC,
+		int32& OutAssignedPlateId)
+	{
+		OutAssignedPlateId = INDEX_NONE;
+		if (PlateA == INDEX_NONE || PlateB == INDEX_NONE || PlateC == INDEX_NONE)
+		{
+			return ECarrierLabPhaseIIIE5TriangleAssignmentClass::Invalid;
+		}
+		if (PlateA == PlateB && PlateB == PlateC)
+		{
+			OutAssignedPlateId = PlateA;
+			return ECarrierLabPhaseIIIE5TriangleAssignmentClass::AllVerticesSamePlate;
+		}
+		if (PlateA == PlateB || PlateA == PlateC)
+		{
+			OutAssignedPlateId = PlateA;
+			return ECarrierLabPhaseIIIE5TriangleAssignmentClass::MajorityTwoOfThree;
+		}
+		if (PlateB == PlateC)
+		{
+			OutAssignedPlateId = PlateB;
+			return ECarrierLabPhaseIIIE5TriangleAssignmentClass::MajorityTwoOfThree;
+		}
+		return ECarrierLabPhaseIIIE5TriangleAssignmentClass::UnresolvedTripleJunction;
+	}
+
+	FString ComputePhaseIIIE5PlateTopologyHash(const CarrierLab::FCarrierPlate& Plate)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		HashMixString(Hash, TEXT("CarrierLab-IIIE5-plate-topology-v1"));
+		HashMix(Hash, static_cast<uint64>(Plate.PlateId + 1));
+		HashMix(Hash, static_cast<uint64>(Plate.Vertices.Num() + 1));
+		for (const CarrierLab::FCarrierVertex& Vertex : Plate.Vertices)
+		{
+			HashMix(Hash, static_cast<uint64>(Vertex.GlobalSampleId + 2));
+			HashMixDouble(Hash, Vertex.ContinentalFraction);
+			HashMixDouble(Hash, Vertex.Elevation);
+			HashMixDouble(Hash, Vertex.HistoricalElevation);
+			HashMixDouble(Hash, Vertex.OceanicAge);
+			HashMixDouble(Hash, Vertex.RidgeDirection.X);
+			HashMixDouble(Hash, Vertex.RidgeDirection.Y);
+			HashMixDouble(Hash, Vertex.RidgeDirection.Z);
+		}
+		HashMix(Hash, static_cast<uint64>(Plate.LocalTriangles.Num() + 1));
+		for (const CarrierLab::FCarrierPlateTriangle& Triangle : Plate.LocalTriangles)
+		{
+			HashMix(Hash, static_cast<uint64>(Triangle.SourceTriangleId + 2));
+			HashMix(Hash, static_cast<uint64>(Triangle.A + 2));
+			HashMix(Hash, static_cast<uint64>(Triangle.B + 2));
+			HashMix(Hash, static_cast<uint64>(Triangle.C + 2));
+			HashMix(Hash, Triangle.bBoundary ? 1ull : 0ull);
+		}
+		return HashToString(Hash);
+	}
+
+	void ResetPhaseIIIE5ProcessState(
+		CarrierLab::FCarrierState& State,
+		TArray<double>& DistanceToFrontKmBySample,
+		FCarrierLabPhaseIIIE5ProcessResetAudit& OutResetAudit)
+	{
+		OutResetAudit.ResetSerialBefore = State.ConvergenceTrackingResetSerial;
+		OutResetAudit.ActiveTriangleCountBefore = CountPhaseIIIE5ActiveTriangles(State);
+		OutResetAudit.DistanceRecordCountBefore = CountPhaseIIIE5ActiveDistanceRecords(State);
+		OutResetAudit.MatrixPairCountBefore = State.ConvergenceSubductionMatrixPairKeys.Num();
+		OutResetAudit.MatrixEvidenceCountBefore = State.ConvergenceSubductionMatrixEvidence.Num();
+		OutResetAudit.SubductingMarkCountBefore = State.ConvergenceSubductingTriangleMarks.Num();
+		OutResetAudit.ObductionMarkCountBefore = State.ConvergenceObductionTriangleMarks.Num();
+		OutResetAudit.CollisionPendingTriangleCountBefore = State.ConvergenceCollisionPendingTriangleKeys.Num();
+		OutResetAudit.DistanceToFrontRecordCountBefore = CountPhaseIIIE5DistanceToFrontRecords(DistanceToFrontKmBySample);
+
+		for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			Plate.ActiveBoundaryTriangles.Reset();
+			Plate.ActiveBoundaryTriangleDistancesKm.Reset();
+		}
+		State.ConvergenceSubductionMatrixPairKeys.Reset();
+		State.ConvergenceSubductionPolarityDecisions.Reset();
+		State.ConvergenceSubductionTriangleHits.Reset();
+		State.ConvergenceSubductionMatrixEvidence.Reset();
+		State.ConvergenceSubductingTriangleMarks.Reset();
+		State.ConvergenceObductionTriangleMarks.Reset();
+		State.ConvergenceCollisionPendingTriangleKeys.Reset();
+		State.ConvergenceTrackingDistanceCullCount = 0;
+		State.ConvergenceSubductionMatrixRayTestCount = 0;
+		State.ConvergenceSubductionMatrixHitCount = 0;
+		State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
+		State.ConvergenceSubductionMatrixNonConvergentHitCount = 0;
+		State.ConvergenceNeighborPropagationSeedCount = 0;
+		State.ConvergenceNeighborPropagationAddedCount = 0;
+		State.ConvergenceNeighborPropagationDuplicateCount = 0;
+		State.ConvergenceNeighborPropagationDistanceRejectedCount = 0;
+		State.ConvergenceNeighborPropagationInvalidCount = 0;
+		State.ConvergenceSubductingTriangleMarkDuplicateCount = 0;
+		State.ConvergenceSubductingTriangleMarkInvalidCount = 0;
+		State.ConvergenceObductionTriangleMarkDuplicateCount = 0;
+		State.ConvergenceObductionTriangleMarkInvalidCount = 0;
+		State.ConvergenceHistoricalElevationSnapshotCount = 0;
+		State.ConvergenceHistoricalElevationSnapshotVertexCount = 0;
+		State.ConvergenceHistoricalElevationDuplicateSnapshotCount = 0;
+		State.ConvergenceHistoricalElevationInvalidSnapshotCount = 0;
+		DistanceToFrontKmBySample.Init(-1.0, State.Samples.Num());
+		++State.ConvergenceTrackingResetSerial;
+
+		OutResetAudit.ResetSerialAfter = State.ConvergenceTrackingResetSerial;
+		OutResetAudit.ActiveTriangleCountAfter = CountPhaseIIIE5ActiveTriangles(State);
+		OutResetAudit.DistanceRecordCountAfter = CountPhaseIIIE5ActiveDistanceRecords(State);
+		OutResetAudit.MatrixPairCountAfter = State.ConvergenceSubductionMatrixPairKeys.Num();
+		OutResetAudit.MatrixEvidenceCountAfter = State.ConvergenceSubductionMatrixEvidence.Num();
+		OutResetAudit.SubductingMarkCountAfter = State.ConvergenceSubductingTriangleMarks.Num();
+		OutResetAudit.ObductionMarkCountAfter = State.ConvergenceObductionTriangleMarks.Num();
+		OutResetAudit.CollisionPendingTriangleCountAfter = State.ConvergenceCollisionPendingTriangleKeys.Num();
+		OutResetAudit.DistanceToFrontRecordCountAfter = CountPhaseIIIE5DistanceToFrontRecords(DistanceToFrontKmBySample);
+		OutResetAudit.bResetSerialAdvanced = OutResetAudit.ResetSerialAfter == OutResetAudit.ResetSerialBefore + 1;
+		OutResetAudit.bProcessStateEmptyAfter =
+			OutResetAudit.ActiveTriangleCountAfter == 0 &&
+			OutResetAudit.DistanceRecordCountAfter == 0 &&
+			OutResetAudit.MatrixPairCountAfter == 0 &&
+			OutResetAudit.MatrixEvidenceCountAfter == 0 &&
+			OutResetAudit.SubductingMarkCountAfter == 0 &&
+			OutResetAudit.ObductionMarkCountAfter == 0 &&
+			OutResetAudit.CollisionPendingTriangleCountAfter == 0 &&
+			OutResetAudit.DistanceToFrontRecordCountAfter == 0;
+	}
+
+	void BuildPhaseIIIE5AuditHashes(FCarrierLabPhaseIIIE5TopologyRebuildAudit& Audit)
+	{
+		uint64 AssignmentHash = 1469598103934665603ull;
+		HashMixString(AssignmentHash, TEXT("CarrierLab-IIIE5-remesh-assignment-v1"));
+		HashMix(AssignmentHash, static_cast<uint64>(Audit.VertexRecords.Num() + 1));
+		for (const FCarrierLabPhaseIIIE5RemeshVertexRecord& Record : Audit.VertexRecords)
+		{
+			HashMix(AssignmentHash, static_cast<uint64>(Record.SampleId + 2));
+			HashMix(AssignmentHash, static_cast<uint64>(Record.AssignedPlateId + 2));
+			HashMix(AssignmentHash, Record.bGeneratedOceanicCrust ? 1ull : 0ull);
+			HashMix(AssignmentHash, Record.bUsedPolicyWinner ? 1ull : 0ull);
+			HashMix(AssignmentHash, Record.bUsedPriorOwnerFallback ? 1ull : 0ull);
+			HashMix(AssignmentHash, Record.bUsedProjectionOwnerFallback ? 1ull : 0ull);
+			HashMixDouble(AssignmentHash, Record.ContinentalFraction);
+			HashMixDouble(AssignmentHash, Record.Elevation);
+			HashMixDouble(AssignmentHash, Record.OceanicAge);
+		}
+		Audit.AssignmentHash = HashToString(AssignmentHash);
+
+		uint64 TopologyHash = 1469598103934665603ull;
+		HashMixString(TopologyHash, TEXT("CarrierLab-IIIE5-topology-rebuild-v1"));
+		HashMixString(TopologyHash, Audit.AssignmentHash);
+		HashMix(TopologyHash, static_cast<uint64>(Audit.SampleCount + 1));
+		HashMix(TopologyHash, static_cast<uint64>(Audit.GlobalTriangleCount + 1));
+		HashMix(TopologyHash, static_cast<uint64>(Audit.AssignedTriangleCount + 1));
+		HashMix(TopologyHash, static_cast<uint64>(Audit.MajorityTriangleCount + 1));
+		HashMix(TopologyHash, static_cast<uint64>(Audit.UnresolvedTripleJunctionCount + 1));
+		for (const FCarrierLabPhaseIIIE5PlateRebuildRecord& PlateRecord : Audit.PlateRecords)
+		{
+			HashMix(TopologyHash, static_cast<uint64>(PlateRecord.PlateId + 1));
+			HashMix(TopologyHash, static_cast<uint64>(PlateRecord.VertexCount + 1));
+			HashMix(TopologyHash, static_cast<uint64>(PlateRecord.TriangleCount + 1));
+			HashMixString(TopologyHash, PlateRecord.TopologyHash);
+		}
+		HashMix(TopologyHash, Audit.ResetAudit.bProcessStateEmptyAfter ? 1ull : 0ull);
+		HashMix(TopologyHash, Audit.bMotionPreserved ? 1ull : 0ull);
+		HashMix(TopologyHash, Audit.bQProvenancePreserved ? 1ull : 0ull);
+		Audit.TopologyHash = HashToString(TopologyHash);
+	}
+
 	const FCarrierLabVizCandidate* FindCandidateForPlate(const TArray<FCarrierLabVizCandidate>& Candidates, const int32 PlateId)
 	{
 		for (const FCarrierLabVizCandidate& Candidate : Candidates)
@@ -4719,6 +4950,489 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE4DivergentOceanicFieldsFromCur
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
+	const FCarrierLabPhaseIIIE5RemeshInputFixture& Fixture,
+	FCarrierLabPhaseIIIE5TopologyRebuildAudit& OutAudit)
+{
+	OutAudit = FCarrierLabPhaseIIIE5TopologyRebuildAudit();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+
+	OutAudit.bRan = true;
+	OutAudit.SampleCount = State.Samples.Num();
+	OutAudit.GlobalTriangleCount = State.Triangles.Num();
+	OutAudit.MotionHashBefore = ComputeMotionStateHash(Motions);
+	OutAudit.bFixtureOwnedVertexAssignmentRecords = true;
+
+	TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord> VertexRecords;
+	VertexRecords.SetNum(State.Samples.Num());
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (!VertexRecords.IsValidIndex(Sample.Id))
+		{
+			++OutAudit.MissingVertexAssignmentCount;
+			continue;
+		}
+		FCarrierLabPhaseIIIE5RemeshVertexRecord& Record = VertexRecords[Sample.Id];
+		Record.SampleId = Sample.Id;
+		Record.AssignedPlateId = Fixture.bForceAllSamplesToPlateZero ? 0 : Sample.PlateId;
+		Record.bResolvedSingleHit = true;
+		Record.ContinentalFraction = Sample.ContinentalFraction;
+		Record.Elevation = Sample.Elevation;
+		Record.HistoricalElevation = Sample.HistoricalElevation;
+		Record.OceanicAge = Sample.OceanicAge;
+		Record.RidgeDirection = Sample.RidgeDirection;
+		Record.FoldDirection = Sample.FoldDirection;
+	}
+
+	int32 OverrideVerts[3] = { INDEX_NONE, INDEX_NONE, INDEX_NONE };
+	if (State.Triangles.IsValidIndex(Fixture.OverrideTriangleId))
+	{
+		const CarrierLab::FSphereTriangle& Triangle = State.Triangles[Fixture.OverrideTriangleId];
+		OverrideVerts[0] = Triangle.A;
+		OverrideVerts[1] = Triangle.B;
+		OverrideVerts[2] = Triangle.C;
+		const int32 OverridePlates[3] = { Fixture.OverridePlateA, Fixture.OverridePlateB, Fixture.OverridePlateC };
+		for (int32 Index = 0; Index < 3; ++Index)
+		{
+			if (VertexRecords.IsValidIndex(OverrideVerts[Index]) && State.Plates.IsValidIndex(OverridePlates[Index]))
+			{
+				VertexRecords[OverrideVerts[Index]].AssignedPlateId = OverridePlates[Index];
+			}
+		}
+	}
+
+	if (Fixture.bInjectGeneratedOceanicRecord)
+	{
+		const int32 TargetSampleId = OverrideVerts[0] != INDEX_NONE ? OverrideVerts[0] : 0;
+		if (VertexRecords.IsValidIndex(TargetSampleId))
+		{
+			FCarrierLabPhaseIIIE5RemeshVertexRecord& Record = VertexRecords[TargetSampleId];
+			Record.bResolvedSingleHit = false;
+			Record.bDivergentGapRoute = true;
+			Record.bGeneratedOceanicCrust = true;
+			Record.AssignedPlateId = State.Plates.IsValidIndex(Fixture.GeneratedOceanicRecord.AssignedPlateId)
+				? Fixture.GeneratedOceanicRecord.AssignedPlateId
+				: Record.AssignedPlateId;
+			Record.ContinentalFraction = 0.0;
+			Record.Elevation = Fixture.GeneratedOceanicRecord.Elevation;
+			Record.HistoricalElevation = 0.0;
+			Record.OceanicAge = Fixture.GeneratedOceanicRecord.OceanicAge;
+			Record.RidgeDirection = Fixture.GeneratedOceanicRecord.RidgeDirection;
+			Record.FoldDirection = FVector3d::ZeroVector;
+			Record.bUsedZGammaDistanceProfilePlaceholder = Fixture.GeneratedOceanicRecord.bUsedZGammaDistanceProfilePlaceholder;
+			Record.bPaperFaithfulZGammaProfile = Fixture.GeneratedOceanicRecord.bPaperFaithfulZGammaProfile;
+			Record.OceanicRecord = Fixture.GeneratedOceanicRecord;
+			Record.OceanicRecord.SampleId = TargetSampleId;
+		}
+	}
+
+	if (Fixture.bSeedProcessStateBeforeRemesh)
+	{
+		for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			if (!Plate.LocalTriangles.IsEmpty())
+			{
+				Plate.ActiveBoundaryTriangles.AddUnique(0);
+				if (Plate.ActiveBoundaryTriangleDistancesKm.Num() < Plate.ActiveBoundaryTriangles.Num())
+				{
+					Plate.ActiveBoundaryTriangleDistancesKm.Add(123.0);
+				}
+				break;
+			}
+		}
+		if (State.Plates.Num() >= 2)
+		{
+			State.ConvergenceSubductionMatrixPairKeys.Add(MakePlatePairKey(0, 1));
+			CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence =
+				State.ConvergenceSubductionMatrixEvidence.AddDefaulted_GetRef();
+			Evidence.EvidenceId = 0;
+			Evidence.PairKey = MakePlatePairKey(0, 1);
+			Evidence.PlateId = 0;
+			Evidence.OtherPlateId = 1;
+			Evidence.LocalTriangleId = 0;
+			Evidence.OtherLocalTriangleId = 0;
+			Evidence.bAccepted = true;
+
+			CarrierLab::FConvergenceSubductingTriangleMark& SubductingMark =
+				State.ConvergenceSubductingTriangleMarks.AddDefaulted_GetRef();
+			SubductingMark.MarkId = 0;
+			SubductingMark.PairKey = Evidence.PairKey;
+			SubductingMark.PlateId = 0;
+			SubductingMark.OtherPlateId = 1;
+			SubductingMark.LocalTriangleId = 0;
+
+			CarrierLab::FConvergenceObductionTriangleMark& ObductionMark =
+				State.ConvergenceObductionTriangleMarks.AddDefaulted_GetRef();
+			ObductionMark.MarkId = 0;
+			ObductionMark.PairKey = Evidence.PairKey;
+			ObductionMark.PlateId = 1;
+			ObductionMark.OtherPlateId = 0;
+			ObductionMark.LocalTriangleId = 0;
+			State.ConvergenceCollisionPendingTriangleKeys.Add(MakePlateTriangleKey(0, 0));
+		}
+		DistanceToFrontKmBySample.Init(321.0, State.Samples.Num());
+	}
+
+	FCarrierLabPhaseIIIE5ProcessResetAudit ResetBeforeRebuild;
+	ResetBeforeRebuild.ResetSerialBefore = State.ConvergenceTrackingResetSerial;
+	ResetBeforeRebuild.ActiveTriangleCountBefore = CountPhaseIIIE5ActiveTriangles(State);
+	ResetBeforeRebuild.DistanceRecordCountBefore = CountPhaseIIIE5ActiveDistanceRecords(State);
+	ResetBeforeRebuild.MatrixPairCountBefore = State.ConvergenceSubductionMatrixPairKeys.Num();
+	ResetBeforeRebuild.MatrixEvidenceCountBefore = State.ConvergenceSubductionMatrixEvidence.Num();
+	ResetBeforeRebuild.SubductingMarkCountBefore = State.ConvergenceSubductingTriangleMarks.Num();
+	ResetBeforeRebuild.ObductionMarkCountBefore = State.ConvergenceObductionTriangleMarks.Num();
+	ResetBeforeRebuild.CollisionPendingTriangleCountBefore = State.ConvergenceCollisionPendingTriangleKeys.Num();
+	ResetBeforeRebuild.DistanceToFrontRecordCountBefore = CountPhaseIIIE5DistanceToFrontRecords(DistanceToFrontKmBySample);
+
+	for (const FCarrierLabPhaseIIIE5RemeshVertexRecord& Record : VertexRecords)
+	{
+		OutAudit.PriorOwnerFallbackCount += Record.bUsedPriorOwnerFallback ? 1 : 0;
+		OutAudit.ProjectionOwnerFallbackCount += Record.bUsedProjectionOwnerFallback ? 1 : 0;
+		OutAudit.PolicyWinnerCount += Record.bUsedPolicyWinner ? 1 : 0;
+		OutAudit.UnresolvedMultiHitRoutedCount += Record.bUnresolvedMultiHit ? 1 : 0;
+		if (Record.bGeneratedOceanicCrust)
+		{
+			++OutAudit.GeneratedOceanicVertexCount;
+		}
+		if (!State.Samples.IsValidIndex(Record.SampleId))
+		{
+			++OutAudit.MissingVertexAssignmentCount;
+			continue;
+		}
+		if (!State.Plates.IsValidIndex(Record.AssignedPlateId))
+		{
+			++OutAudit.InvalidAssignedPlateCount;
+			continue;
+		}
+
+		CarrierLab::FSphereSample& Sample = State.Samples[Record.SampleId];
+		Sample.PlateId = Record.AssignedPlateId;
+		Sample.ContinentalFraction = FMath::Clamp(Record.ContinentalFraction, 0.0, 1.0);
+		Sample.Elevation = Record.Elevation;
+		Sample.HistoricalElevation = Record.HistoricalElevation;
+		Sample.OceanicAge = Record.OceanicAge;
+		Sample.RidgeDirection = RetangentAndNormalizeVectorField(Record.RidgeDirection, Sample.UnitPosition);
+		Sample.FoldDirection = RetangentAndNormalizeVectorField(Record.FoldDirection, Sample.UnitPosition);
+		Sample.bContinental = Sample.ContinentalFraction >= 0.5;
+	}
+
+	for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		Plate.SampleIds.Reset();
+		Plate.TriangleIds.Reset();
+		Plate.Vertices.Reset();
+		Plate.LocalTriangles.Reset();
+		Plate.ActiveBoundaryTriangles.Reset();
+		Plate.ActiveBoundaryTriangleDistancesKm.Reset();
+		Plate.GlobalSampleIdToLocalVertexId.Reset();
+	}
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		if (State.Plates.IsValidIndex(Sample.PlateId))
+		{
+			State.Plates[Sample.PlateId].SampleIds.Add(Sample.Id);
+		}
+	}
+
+	State.SampleRayCandidateTriangles.Reset();
+	State.SampleRayCandidateTriangles.SetNum(State.Samples.Num());
+	TMap<int32, int32> AssignedTriangleAuthorityCounts;
+	for (int32 TriangleId = 0; TriangleId < State.Triangles.Num(); ++TriangleId)
+	{
+		CarrierLab::FSphereTriangle& Triangle = State.Triangles[TriangleId];
+		FCarrierLabPhaseIIIE5TriangleRebuildRecord& TriangleRecord = OutAudit.TriangleRecords.AddDefaulted_GetRef();
+		TriangleRecord.GlobalTriangleId = TriangleId;
+		TriangleRecord.VertexA = Triangle.A;
+		TriangleRecord.VertexB = Triangle.B;
+		TriangleRecord.VertexC = Triangle.C;
+		TriangleRecord.PlateA = State.Samples.IsValidIndex(Triangle.A) ? State.Samples[Triangle.A].PlateId : INDEX_NONE;
+		TriangleRecord.PlateB = State.Samples.IsValidIndex(Triangle.B) ? State.Samples[Triangle.B].PlateId : INDEX_NONE;
+		TriangleRecord.PlateC = State.Samples.IsValidIndex(Triangle.C) ? State.Samples[Triangle.C].PlateId : INDEX_NONE;
+		TriangleRecord.bBoundary =
+			TriangleRecord.PlateA != TriangleRecord.PlateB ||
+			TriangleRecord.PlateB != TriangleRecord.PlateC;
+		Triangle.bBoundary = TriangleRecord.bBoundary;
+		TriangleRecord.AssignmentClass = ClassifyPhaseIIIE5TriangleAssignment(
+			TriangleRecord.PlateA,
+			TriangleRecord.PlateB,
+			TriangleRecord.PlateC,
+			TriangleRecord.AssignedPlateId);
+
+		switch (TriangleRecord.AssignmentClass)
+		{
+		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::AllVerticesSamePlate:
+			++OutAudit.AllSameTriangleCount;
+			break;
+		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::MajorityTwoOfThree:
+			++OutAudit.MajorityTriangleCount;
+			break;
+		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::UnresolvedTripleJunction:
+			++OutAudit.UnresolvedTripleJunctionCount;
+			break;
+		default:
+			++OutAudit.InvalidTriangleCount;
+			break;
+		}
+
+		if (!State.Plates.IsValidIndex(TriangleRecord.AssignedPlateId))
+		{
+			Triangle.PlateId = INDEX_NONE;
+			continue;
+		}
+
+		CarrierLab::FCarrierPlate& Plate = State.Plates[TriangleRecord.AssignedPlateId];
+		CarrierLab::FCarrierPlateTriangle LocalTriangle;
+		LocalTriangle.A = FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.A]);
+		LocalTriangle.B = FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.B]);
+		LocalTriangle.C = FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.C]);
+		LocalTriangle.SourceTriangleId = TriangleId;
+		LocalTriangle.bBoundary = TriangleRecord.bBoundary;
+		TriangleRecord.LocalTriangleId = Plate.LocalTriangles.Add(LocalTriangle);
+		Triangle.PlateId = TriangleRecord.AssignedPlateId;
+		Plate.TriangleIds.Add(TriangleId);
+		AssignedTriangleAuthorityCounts.FindOrAdd(TriangleId)++;
+		++OutAudit.AssignedTriangleCount;
+
+		const int32 SourceVerts[3] = { Triangle.A, Triangle.B, Triangle.C };
+		for (const int32 SourceVertexId : SourceVerts)
+		{
+			if (State.SampleRayCandidateTriangles.IsValidIndex(SourceVertexId))
+			{
+				State.SampleRayCandidateTriangles[SourceVertexId].Add(
+					CarrierLab::FCarrierRayTriangleRef{ Plate.PlateId, TriangleRecord.LocalTriangleId });
+			}
+		}
+	}
+
+	OutAudit.bNoDuplicateTriangleAuthority = true;
+	for (const TPair<int32, int32>& Pair : AssignedTriangleAuthorityCounts)
+	{
+		if (Pair.Value != 1)
+		{
+			OutAudit.bNoDuplicateTriangleAuthority = false;
+			break;
+		}
+	}
+
+	ResetPhaseIIIE5ProcessState(State, DistanceToFrontKmBySample, OutAudit.ResetAudit);
+	OutAudit.ResetAudit.ResetSerialBefore = ResetBeforeRebuild.ResetSerialBefore;
+	OutAudit.ResetAudit.ActiveTriangleCountBefore = ResetBeforeRebuild.ActiveTriangleCountBefore;
+	OutAudit.ResetAudit.DistanceRecordCountBefore = ResetBeforeRebuild.DistanceRecordCountBefore;
+	OutAudit.ResetAudit.MatrixPairCountBefore = ResetBeforeRebuild.MatrixPairCountBefore;
+	OutAudit.ResetAudit.MatrixEvidenceCountBefore = ResetBeforeRebuild.MatrixEvidenceCountBefore;
+	OutAudit.ResetAudit.SubductingMarkCountBefore = ResetBeforeRebuild.SubductingMarkCountBefore;
+	OutAudit.ResetAudit.ObductionMarkCountBefore = ResetBeforeRebuild.ObductionMarkCountBefore;
+	OutAudit.ResetAudit.CollisionPendingTriangleCountBefore = ResetBeforeRebuild.CollisionPendingTriangleCountBefore;
+	OutAudit.ResetAudit.DistanceToFrontRecordCountBefore = ResetBeforeRebuild.DistanceToFrontRecordCountBefore;
+
+	OutAudit.bPlateLocalTopologyCompact = true;
+	for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+	{
+		FCarrierLabPhaseIIIE5PlateRebuildRecord& PlateRecord = OutAudit.PlateRecords.AddDefaulted_GetRef();
+		PlateRecord.PlateId = Plate.PlateId;
+		PlateRecord.SampleCount = Plate.SampleIds.Num();
+		PlateRecord.TriangleCount = Plate.LocalTriangles.Num();
+		PlateRecord.VertexCount = Plate.Vertices.Num();
+		PlateRecord.bLocalTriangleIndicesCompact = true;
+		PlateRecord.bLocalVertexIndicesCompact = true;
+		for (const CarrierLab::FCarrierPlateTriangle& Triangle : Plate.LocalTriangles)
+		{
+			if (!Plate.Vertices.IsValidIndex(Triangle.A) ||
+				!Plate.Vertices.IsValidIndex(Triangle.B) ||
+				!Plate.Vertices.IsValidIndex(Triangle.C) ||
+				Triangle.A == Triangle.B ||
+				Triangle.B == Triangle.C ||
+				Triangle.C == Triangle.A)
+			{
+				PlateRecord.bLocalTriangleIndicesCompact = false;
+				PlateRecord.bLocalVertexIndicesCompact = false;
+			}
+		}
+		PlateRecord.TopologyHash = ComputePhaseIIIE5PlateTopologyHash(Plate);
+		PlateRecord.bMotionPreserved = true;
+		OutAudit.bPlateLocalTopologyCompact =
+			OutAudit.bPlateLocalTopologyCompact &&
+			PlateRecord.bLocalTriangleIndicesCompact &&
+			PlateRecord.bLocalVertexIndicesCompact;
+	}
+
+	OutAudit.bQProvenancePreserved = OutAudit.GeneratedOceanicVertexCount == 0;
+	OutAudit.bZGammaHoldPreserved = OutAudit.GeneratedOceanicVertexCount == 0;
+	for (const FCarrierLabPhaseIIIE5RemeshVertexRecord& Record : VertexRecords)
+	{
+		if (!Record.bGeneratedOceanicCrust)
+		{
+			continue;
+		}
+		if (!State.Plates.IsValidIndex(Record.AssignedPlateId))
+		{
+			continue;
+		}
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[Record.AssignedPlateId];
+		const int32* LocalVertexId = Plate.GlobalSampleIdToLocalVertexId.Find(Record.SampleId);
+		if (LocalVertexId == nullptr || !Plate.Vertices.IsValidIndex(*LocalVertexId))
+		{
+			continue;
+		}
+		const CarrierLab::FCarrierVertex& Vertex = Plate.Vertices[*LocalVertexId];
+		const bool bFieldsPreserved =
+			FMath::IsNearlyEqual(Vertex.Elevation, Record.Elevation, 1.0e-12) &&
+			FMath::IsNearlyEqual(Vertex.OceanicAge, Record.OceanicAge, 1.0e-12) &&
+			(Vertex.RidgeDirection - RetangentAndNormalizeVectorField(Record.RidgeDirection, Vertex.UnitPosition)).Size() <= 1.0e-9;
+		const bool bQProvenancePresent =
+			Record.OceanicRecord.bGeneratedOceanicCrust &&
+			Record.OceanicRecord.Q1PlateId != INDEX_NONE &&
+			Record.OceanicRecord.Q2PlateId != INDEX_NONE &&
+			Record.OceanicRecord.QGammaUnitResidual <= 1.0e-8;
+		const bool bZGammaHoldPresent =
+			Record.bUsedZGammaDistanceProfilePlaceholder &&
+			!Record.bPaperFaithfulZGammaProfile &&
+			Record.OceanicRecord.bUsedZGammaDistanceProfilePlaceholder &&
+			!Record.OceanicRecord.bPaperFaithfulZGammaProfile;
+		if (bFieldsPreserved && bQProvenancePresent)
+		{
+			++OutAudit.PreservedGeneratedOceanicVertexCount;
+		}
+		OutAudit.bQProvenancePreserved = OutAudit.bQProvenancePreserved || (bFieldsPreserved && bQProvenancePresent);
+		OutAudit.bZGammaHoldPreserved = OutAudit.bZGammaHoldPreserved || bZGammaHoldPresent;
+	}
+
+	OutAudit.MotionHashAfter = ComputeMotionStateHash(Motions);
+	OutAudit.bMotionPreserved = OutAudit.MotionHashBefore == OutAudit.MotionHashAfter;
+	for (FCarrierLabPhaseIIIE5PlateRebuildRecord& PlateRecord : OutAudit.PlateRecords)
+	{
+		PlateRecord.bMotionPreserved = OutAudit.bMotionPreserved;
+	}
+	OutAudit.bNoPriorOwnerFallback = OutAudit.PriorOwnerFallbackCount == 0;
+	OutAudit.bNoProjectionOwnerFallback = OutAudit.ProjectionOwnerFallbackCount == 0;
+	OutAudit.bNoPolicyWinner = OutAudit.PolicyWinnerCount == 0;
+	OutAudit.bNoUnresolvedMultiHitRouted = OutAudit.UnresolvedMultiHitRoutedCount == 0;
+	OutAudit.VertexRecords = MoveTemp(VertexRecords);
+	OutAudit.bApplied =
+		OutAudit.MissingVertexAssignmentCount == 0 &&
+		OutAudit.InvalidAssignedPlateCount == 0 &&
+		OutAudit.InvalidTriangleCount == 0 &&
+		OutAudit.UnresolvedTripleJunctionCount == 0 &&
+		OutAudit.bNoDuplicateTriangleAuthority &&
+		OutAudit.bPlateLocalTopologyCompact &&
+		OutAudit.ResetAudit.bResetSerialAdvanced &&
+		OutAudit.ResetAudit.bProcessStateEmptyAfter &&
+		OutAudit.bMotionPreserved &&
+		OutAudit.bNoPriorOwnerFallback &&
+		OutAudit.bNoProjectionOwnerFallback &&
+		OutAudit.bNoPolicyWinner &&
+		OutAudit.bNoUnresolvedMultiHitRouted;
+
+	BuildPhaseIIIE5AuditHashes(OutAudit);
+	bPlateRayMeshTopologyDirty = true;
+	bProjectionRayMeshTopologyDirty = true;
+	bRenderMeshTopologyDirty = true;
+	++CurrentMetrics.EventCount;
+	CurrentMetrics.LastRemeshMode = TEXT("phase_iii_e5_topology_rebuild_audit");
+	CaptureDriftReference();
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::RunPhaseIIIE5CollisionPendingWireFixtureForTest(
+	FCarrierLabPhaseIIIE5CollisionPendingWireAudit& OutAudit,
+	FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutSelectionAudit,
+	const double InterpenetrationThresholdKm)
+{
+	OutAudit = FCarrierLabPhaseIIIE5CollisionPendingWireAudit();
+	OutSelectionAudit = FCarrierLabPhaseIIIE3RemeshSelectionAudit();
+	if (!bInitialized && !InitializeCarrier())
+	{
+		return false;
+	}
+
+	FCarrierLabPhaseIIID1TerraneAudit TerraneAudit;
+	if (!DetectPhaseIIID1ConnectedTerranes(TerraneAudit))
+	{
+		return false;
+	}
+	FCarrierLabPhaseIIID2CollisionGroupingAudit GroupingAudit;
+	if (!BuildPhaseIIID2CollisionGroupsFromTerranes(TerraneAudit, GroupingAudit, InterpenetrationThresholdKm))
+	{
+		return false;
+	}
+
+	State.ConvergenceCollisionPendingTriangleKeys.Reset();
+	TArray<int32> SampleIds;
+	TArray<FCarrierLabPhaseIIID2CollisionGroupRecord> Groups = GroupingAudit.Groups;
+	const bool bHasAcceptedDetectedGroup = Groups.ContainsByPredicate([this](const FCarrierLabPhaseIIID2CollisionGroupRecord& Group)
+	{
+		return Group.bAccepted &&
+			State.Plates.IsValidIndex(Group.MaxDistanceSourcePlateId) &&
+			State.Plates[Group.MaxDistanceSourcePlateId].LocalTriangles.IsValidIndex(Group.MaxDistanceLocalTriangleId);
+	});
+	if (!bHasAcceptedDetectedGroup)
+	{
+		for (const CarrierLab::FCarrierPlate& Plate : State.Plates)
+		{
+			if (!Plate.LocalTriangles.IsEmpty())
+			{
+				FCarrierLabPhaseIIID2CollisionGroupRecord& FixtureGroup = Groups.AddDefaulted_GetRef();
+				FixtureGroup.GroupId = Groups.Num() - 1;
+				FixtureGroup.PairKey = State.Plates.Num() >= 2 ? MakePlatePairKey(0, 1) : 0;
+				FixtureGroup.PlateA = 0;
+				FixtureGroup.PlateB = State.Plates.Num() >= 2 ? 1 : 0;
+				FixtureGroup.CandidateRecordCount = 1;
+				FixtureGroup.ValidDistanceCount = 1;
+				FixtureGroup.MaxDistanceSourcePlateId = Plate.PlateId;
+				FixtureGroup.MaxDistanceOtherPlateId = FixtureGroup.PlateB;
+				FixtureGroup.MaxDistanceLocalTriangleId = 0;
+				FixtureGroup.MaxInterpenetrationKm = InterpenetrationThresholdKm;
+				FixtureGroup.ThresholdKm = InterpenetrationThresholdKm;
+				FixtureGroup.bAccepted = true;
+				FixtureGroup.GroupHash = TEXT("fixture-owned-accepted-iiid2-group");
+				OutAudit.bUsedFixtureOwnedAcceptedGroup = true;
+				break;
+			}
+		}
+	}
+
+	for (const FCarrierLabPhaseIIID2CollisionGroupRecord& Group : Groups)
+	{
+		if (!Group.bAccepted ||
+			!State.Plates.IsValidIndex(Group.MaxDistanceSourcePlateId) ||
+			!State.Plates[Group.MaxDistanceSourcePlateId].LocalTriangles.IsValidIndex(Group.MaxDistanceLocalTriangleId))
+		{
+			continue;
+		}
+		++OutAudit.AcceptedGroupCount;
+		State.ConvergenceCollisionPendingTriangleKeys.Add(
+			MakePlateTriangleKey(Group.MaxDistanceSourcePlateId, Group.MaxDistanceLocalTriangleId));
+		const CarrierLab::FCarrierPlate& Plate = State.Plates[Group.MaxDistanceSourcePlateId];
+		const CarrierLab::FCarrierPlateTriangle& Triangle = Plate.LocalTriangles[Group.MaxDistanceLocalTriangleId];
+		const int32 LocalVerts[3] = { Triangle.A, Triangle.B, Triangle.C };
+		for (const int32 LocalVertexId : LocalVerts)
+		{
+			if (Plate.Vertices.IsValidIndex(LocalVertexId))
+			{
+				SampleIds.AddUnique(Plate.Vertices[LocalVertexId].GlobalSampleId);
+			}
+		}
+	}
+	SampleIds.Sort();
+
+	OutAudit.bRan = true;
+	OutAudit.bSeededFromAcceptedCollisionGroups = !State.ConvergenceCollisionPendingTriangleKeys.IsEmpty();
+	OutAudit.PendingTriangleKeyCount = State.ConvergenceCollisionPendingTriangleKeys.Num();
+	OutAudit.GroupingHash = GroupingAudit.GroupingHash;
+	if (!SampleIds.IsEmpty())
+	{
+		RunPhaseIIIE3FilteredRemeshSelectionAuditForSamples(SampleIds, OutSelectionAudit);
+		OutAudit.FilteredCollisionPendingCount = OutSelectionAudit.FilteredCollisionPendingCount;
+		OutAudit.FilteredSubductingCount = OutSelectionAudit.FilteredSubductingCount;
+		OutAudit.FilteredObductionPendingCount = OutSelectionAudit.FilteredObductionPendingCount;
+		OutAudit.SelectionHash = OutSelectionAudit.SelectionHash;
+	}
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::RunPhaseIIIE3FilteredRemeshSelectionAudit(FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit)
 {
 	TArray<int32> SampleIds;
@@ -4801,6 +5515,10 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE3FilteredRemeshSelectionAuditFor
 			else if (ObductionTriangleKeys.Contains(TriangleKey))
 			{
 				Candidate.FilterReason = ECarrierLabPhaseIIIE3FilterReason::ObductionPending;
+			}
+			else if (State.ConvergenceCollisionPendingTriangleKeys.Contains(TriangleKey))
+			{
+				Candidate.FilterReason = ECarrierLabPhaseIIIE3FilterReason::CollisionPending;
 			}
 		}
 
@@ -7530,6 +8248,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSutureFromPlans(
 	State.ConvergenceSubductionMatrixEvidence.Reset();
 	State.ConvergenceSubductingTriangleMarks.Reset();
 	State.ConvergenceObductionTriangleMarks.Reset();
+	State.ConvergenceCollisionPendingTriangleKeys.Reset();
 	State.ConvergenceTrackingDistanceCullCount = 0;
 	State.ConvergenceSubductionMatrixRayTestCount = 0;
 	State.ConvergenceSubductionMatrixHitCount = 0;
@@ -7555,7 +8274,8 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIID6DetachAndSutureFromPlans(
 		State.ConvergenceSubductionTriangleHits.IsEmpty() &&
 		State.ConvergenceSubductionMatrixEvidence.IsEmpty() &&
 		State.ConvergenceSubductingTriangleMarks.IsEmpty() &&
-		State.ConvergenceObductionTriangleMarks.IsEmpty();
+		State.ConvergenceObductionTriangleMarks.IsEmpty() &&
+		State.ConvergenceCollisionPendingTriangleKeys.IsEmpty();
 
 	++CurrentMetrics.EventCount;
 	OutAudit.EventCountAfter = CurrentMetrics.EventCount;
@@ -8636,6 +9356,7 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB3NonConvergentEvidenceForTest(F
 	State.ConvergenceSubductionMatrixEvidence.Reset();
 	State.ConvergenceSubductingTriangleMarks.Reset();
 	State.ConvergenceObductionTriangleMarks.Reset();
+	State.ConvergenceCollisionPendingTriangleKeys.Reset();
 	State.ConvergenceSubductionMatrixRayTestCount = 1;
 	State.ConvergenceSubductionMatrixHitCount = 0;
 	State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
@@ -8767,6 +9488,7 @@ bool ACarrierLabVisualizationActor::SeedPhaseIIIB6SingleConvergentTriangleForTes
 			State.ConvergenceSubductionMatrixEvidence.Reset();
 			State.ConvergenceSubductingTriangleMarks.Reset();
 			State.ConvergenceObductionTriangleMarks.Reset();
+			State.ConvergenceCollisionPendingTriangleKeys.Reset();
 			State.ConvergenceSubductionMatrixRayTestCount = 0;
 			State.ConvergenceSubductionMatrixHitCount = 1;
 			State.ConvergenceSubductionMatrixBoundaryHitCount = 0;
