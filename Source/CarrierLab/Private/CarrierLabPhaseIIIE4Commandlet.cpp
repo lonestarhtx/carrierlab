@@ -18,7 +18,7 @@ namespace
 	constexpr double OceanicAgeTolerance = 1.0e-12;
 	constexpr double RidgePeakElevationKm = -1.0;
 	constexpr double AbyssalElevationKm = -6.0;
-	constexpr double RidgeProfileReferenceDistanceKm = EarthRadiusKm;
+	constexpr double ZGammaGeophysicsReferenceDistanceKm = 3000.0;
 
 	void HashMix(uint64& Hash, const uint64 Value)
 	{
@@ -74,6 +74,26 @@ namespace
 	double DistanceKm(const FVector3d& A, const FVector3d& B)
 	{
 		return EarthRadiusKm * UnitAngularDistanceRadians(NormalizeOrFallback(A, FVector3d::UnitX()), NormalizeOrFallback(B, FVector3d::UnitX()));
+	}
+
+	double ZGammaProfileTForDistanceKm(const double DistanceKmValue)
+	{
+		return ZGammaGeophysicsReferenceDistanceKm > UE_DOUBLE_SMALL_NUMBER
+			? FMath::Sqrt(FMath::Clamp(DistanceKmValue / ZGammaGeophysicsReferenceDistanceKm, 0.0, 1.0))
+			: 0.0;
+	}
+
+	double ZGammaForDistanceKm(const double DistanceKmValue)
+	{
+		return FMath::Lerp(
+			RidgePeakElevationKm,
+			AbyssalElevationKm,
+			ZGammaProfileTForDistanceKm(DistanceKmValue));
+	}
+
+	double BlendElevation(const double Alpha, const double ZBar, const double ZGamma)
+	{
+		return Alpha * ZBar + (1.0 - Alpha) * ZGamma;
 	}
 
 	FVector3d UnitFromLonLat(const double LonDeg, const double LatDeg)
@@ -219,7 +239,8 @@ namespace
 		FVector3d ExpectedRidgeDirection = FVector3d::ZeroVector;
 		FString ExpectedRecordHash;
 		bool bExpectDegenerateRidgeDirection = false;
-		bool bExpectZGammaDistanceProfilePlaceholder = true;
+		bool bExpectZGammaDistanceProfilePlaceholder = false;
+		bool bExpectZGammaGeophysicsDerivedProfile = true;
 		bool bExpectPaperFaithfulZGammaProfile = false;
 	};
 
@@ -295,11 +316,11 @@ namespace
 		Fixture.ExpectedNearestBoundaryDistanceKm = 2476.1714106209579;
 		Fixture.ExpectedAlpha = 0.30989739936914784;
 		Fixture.ExpectedZBar = -3.0;
-		Fixture.ExpectedZGamma = -1.872664625997166;
 		Fixture.ExpectedZGammaProfileDistanceKm = 1111.9492664455888;
-		Fixture.ExpectedZGammaProfileReferenceDistanceKm = RidgeProfileReferenceDistanceKm;
-		Fixture.ExpectedZGammaProfileT = 0.1745329251994332;
-		Fixture.ExpectedElevation = -2.2220229266174898;
+		Fixture.ExpectedZGammaProfileReferenceDistanceKm = ZGammaGeophysicsReferenceDistanceKm;
+		Fixture.ExpectedZGammaProfileT = ZGammaProfileTForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedZGamma = ZGammaForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d(0.0, 1.0, 0.0);
 	}
@@ -328,6 +349,7 @@ namespace
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d::ZeroVector;
 		Fixture.bExpectZGammaDistanceProfilePlaceholder = false;
+		Fixture.bExpectZGammaGeophysicsDerivedProfile = false;
 		Fixture.bExpectPaperFaithfulZGammaProfile = false;
 	}
 
@@ -341,6 +363,7 @@ namespace
 		HashMix(Hash, Record.bBoundaryPairFound ? 2ull : 1ull);
 		HashMix(Hash, Record.bNonSeparatingAnomaly ? 2ull : 1ull);
 		HashMix(Hash, Record.bUsedZGammaDistanceProfilePlaceholder ? 2ull : 1ull);
+		HashMix(Hash, Record.bUsedZGammaGeophysicsDerivedProfile ? 2ull : 1ull);
 		HashMix(Hash, Record.bPaperFaithfulZGammaProfile ? 2ull : 1ull);
 		HashMix(Hash, static_cast<uint64>(Record.Q1PlateId + 2));
 		HashMix(Hash, static_cast<uint64>(Record.Q2PlateId + 2));
@@ -396,6 +419,7 @@ namespace
 			OutResult.Record.Q2PlateId == Fixture.ExpectedQ2PlateId &&
 			OutResult.Record.AssignedPlateId == Fixture.ExpectedAssignedPlateId &&
 			OutResult.Record.bUsedZGammaDistanceProfilePlaceholder == Fixture.bExpectZGammaDistanceProfilePlaceholder &&
+			OutResult.Record.bUsedZGammaGeophysicsDerivedProfile == Fixture.bExpectZGammaGeophysicsDerivedProfile &&
 			OutResult.Record.bPaperFaithfulZGammaProfile == Fixture.bExpectPaperFaithfulZGammaProfile &&
 			(OutResult.Record.Q1UnitPosition - Fixture.ExpectedQ1).Size() <= VectorTolerance &&
 			(OutResult.Record.Q2UnitPosition - Fixture.ExpectedQ2).Size() <= VectorTolerance &&
@@ -473,7 +497,7 @@ namespace
 		Fixture.Sample = UnitFromLonLat(0.0, 10.0);
 		Fixture.SourceSelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
 		AddDefaultDivergentEdges(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("0532a906502dd2f6");
+		Fixture.ExpectedRecordHash = TEXT("32a28e51fcaf9160");
 		return Fixture;
 	}
 
@@ -483,7 +507,7 @@ namespace
 		Fixture.Name = TEXT("filter-exhausted divergent oceanic generation");
 		Fixture.Purpose = TEXT("a zero-valid-hit-after-filtering route creates the same paper fields without prior-owner fallback");
 		Fixture.SourceSelectionClass = ECarrierLabPhaseIIIE3SelectionClass::DivergentGapAfterFiltering;
-		Fixture.ExpectedRecordHash = TEXT("c86fa48aad744c88");
+		Fixture.ExpectedRecordHash = TEXT("c90b56f3d3fbe57e");
 		return Fixture;
 	}
 
@@ -507,8 +531,9 @@ namespace
 		Fixture.ExpectedElevation = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d::ZeroVector;
 		Fixture.bExpectZGammaDistanceProfilePlaceholder = false;
+		Fixture.bExpectZGammaGeophysicsDerivedProfile = false;
 		Fixture.bExpectPaperFaithfulZGammaProfile = false;
-		Fixture.ExpectedRecordHash = TEXT("f6b5b75d253f9abe");
+		Fixture.ExpectedRecordHash = TEXT("88944ad285a45615");
 		return Fixture;
 	}
 
@@ -522,7 +547,7 @@ namespace
 		Fixture.bExpectRejectedNonDivergentRoute = true;
 		Fixture.bExpectBoundaryPairFound = false;
 		SetEmptyBoundaryExpectations(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("9eecee807567c02a");
+		Fixture.ExpectedRecordHash = TEXT("3a44945e4d5ad4d1");
 		return Fixture;
 	}
 
@@ -537,7 +562,7 @@ namespace
 		Fixture.bExpectRejectedUnresolvedMultiHit = true;
 		Fixture.bExpectBoundaryPairFound = false;
 		SetEmptyBoundaryExpectations(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("c239c40acdaa3450");
+		Fixture.ExpectedRecordHash = TEXT("6c3bb0a64bbd3c63");
 		return Fixture;
 	}
 
@@ -551,7 +576,7 @@ namespace
 		Fixture.bExpectGenerated = false;
 		Fixture.bExpectBoundaryPairFound = false;
 		SetEmptyBoundaryExpectations(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("a4cee3c7316f545a");
+		Fixture.ExpectedRecordHash = TEXT("7ac6c1268fa36161");
 		return Fixture;
 	}
 
@@ -578,14 +603,14 @@ namespace
 		Fixture.ExpectedNearestBoundaryDistanceKm = 1756.1264009914842;
 		Fixture.ExpectedAlpha = 0.36315500952304419;
 		Fixture.ExpectedZBar = -2.1841524087793913;
-		Fixture.ExpectedZGamma = -1.7859166212220683;
 		Fixture.ExpectedZGammaProfileDistanceKm = 1001.4149587611595;
-		Fixture.ExpectedZGammaProfileReferenceDistanceKm = RidgeProfileReferenceDistanceKm;
-		Fixture.ExpectedZGammaProfileT = 0.15718332424441367;
-		Fixture.ExpectedElevation = -1.9305379424448652;
+		Fixture.ExpectedZGammaProfileReferenceDistanceKm = ZGammaGeophysicsReferenceDistanceKm;
+		Fixture.ExpectedZGammaProfileT = ZGammaProfileTForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedZGamma = ZGammaForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d(0.072673655516996297, 0.5520112177799954, -0.83066368359212817);
-		Fixture.ExpectedRecordHash = TEXT("253f98e95432a3dc");
+		Fixture.ExpectedRecordHash = TEXT("d77fbb140ef3f995");
 		return Fixture;
 	}
 
@@ -612,14 +637,14 @@ namespace
 		Fixture.ExpectedNearestBoundaryDistanceKm = 1885.4975636174381;
 		Fixture.ExpectedAlpha = 0.35726394919224691;
 		Fixture.ExpectedZBar = -2.7863621545622923;
-		Fixture.ExpectedZGamma = -1.822517050364965;
 		Fixture.ExpectedZGammaProfileDistanceKm = 1048.0512255750384;
-		Fixture.ExpectedZGammaProfileReferenceDistanceKm = RidgeProfileReferenceDistanceKm;
-		Fixture.ExpectedZGammaProfileT = 0.16450341007299299;
-		Fixture.ExpectedElevation = -2.1668641587001152;
+		Fixture.ExpectedZGammaProfileReferenceDistanceKm = ZGammaGeophysicsReferenceDistanceKm;
+		Fixture.ExpectedZGammaProfileT = ZGammaProfileTForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedZGamma = ZGammaForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d(0.0, 0.84984737297332824, -0.52702888217851274);
-		Fixture.ExpectedRecordHash = TEXT("5635bde78bb5f70d");
+		Fixture.ExpectedRecordHash = TEXT("abc50b7cd8593821");
 		return Fixture;
 	}
 
@@ -646,15 +671,15 @@ namespace
 		Fixture.ExpectedNearestBoundaryDistanceKm = 10007.543398010288;
 		Fixture.ExpectedAlpha = 0.0;
 		Fixture.ExpectedZBar = -3.0;
-		Fixture.ExpectedZGamma = -1.0;
 		Fixture.ExpectedZGammaProfileDistanceKm = 0.0;
-		Fixture.ExpectedZGammaProfileReferenceDistanceKm = RidgeProfileReferenceDistanceKm;
-		Fixture.ExpectedZGammaProfileT = 0.0;
-		Fixture.ExpectedElevation = -1.0;
+		Fixture.ExpectedZGammaProfileReferenceDistanceKm = ZGammaGeophysicsReferenceDistanceKm;
+		Fixture.ExpectedZGammaProfileT = ZGammaProfileTForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedZGamma = ZGammaForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d::ZeroVector;
 		Fixture.bExpectDegenerateRidgeDirection = true;
-		Fixture.ExpectedRecordHash = TEXT("4ee4002b0dbccfd6");
+		Fixture.ExpectedRecordHash = TEXT("c7f41eef236c1a71");
 		return Fixture;
 	}
 
@@ -681,14 +706,14 @@ namespace
 		Fixture.ExpectedNearestBoundaryDistanceKm = 4561.9343625246975;
 		Fixture.ExpectedAlpha = 0.1959767487595421;
 		Fixture.ExpectedZBar = -3.0;
-		Fixture.ExpectedZGamma = -1.872664625997166;
 		Fixture.ExpectedZGammaProfileDistanceKm = 1111.9492664455888;
-		Fixture.ExpectedZGammaProfileReferenceDistanceKm = RidgeProfileReferenceDistanceKm;
-		Fixture.ExpectedZGammaProfileT = 0.1745329251994332;
-		Fixture.ExpectedElevation = -2.0935961473558637;
+		Fixture.ExpectedZGammaProfileReferenceDistanceKm = ZGammaGeophysicsReferenceDistanceKm;
+		Fixture.ExpectedZGammaProfileT = ZGammaProfileTForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedZGamma = ZGammaForDistanceKm(Fixture.ExpectedZGammaProfileDistanceKm);
+		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d(0.0, 1.0, 0.0);
-		Fixture.ExpectedRecordHash = TEXT("2db178e0972a0f48");
+		Fixture.ExpectedRecordHash = TEXT("e831d7112bfc7f49");
 		return Fixture;
 	}
 
@@ -733,7 +758,7 @@ namespace
 	FString BuildJsonLine(const FFixtureResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"purpose\":%s,\"pass\":%s,\"query_returned\":%s,\"source_class\":%s,\"generated\":%s,\"boundary_pair_found\":%s,\"nonseparating_anomaly\":%s,\"rejected_nondivergent_route\":%s,\"rejected_unresolved_multi_hit\":%s,\"zgamma_distance_profile_placeholder\":%s,\"paper_faithful_zgamma_profile\":%s,\"q1_plate\":%d,\"q2_plate\":%d,\"assigned_plate\":%d,\"signed_separation_velocity\":%.12g,\"q1_distance_km\":%.12g,\"q2_distance_km\":%.12g,\"ridge_distance_km\":%.12g,\"nearest_boundary_distance_km\":%.12g,\"alpha\":%.12g,\"zbar\":%.12g,\"zgamma\":%.12g,\"zgamma_profile_distance_km\":%.12g,\"zgamma_profile_reference_distance_km\":%.12g,\"zgamma_profile_t\":%.12g,\"elevation\":%.12g,\"oceanic_age\":%.12g,\"ridge_direction_magnitude\":%.12g,\"ridge_radial_dot\":%.12g,\"q1_distance_residual_km\":%.12g,\"q2_distance_residual_km\":%.12g,\"ridge_distance_residual_km\":%.12g,\"nearest_boundary_distance_residual_km\":%.12g,\"qgamma_residual\":%.12g,\"alpha_residual\":%.12g,\"zbar_residual\":%.12g,\"zgamma_residual\":%.12g,\"zgamma_profile_distance_residual_km\":%.12g,\"zgamma_profile_reference_residual_km\":%.12g,\"zgamma_profile_t_residual\":%.12g,\"elevation_residual\":%.12g,\"oceanic_age_residual\":%.12g,\"ridge_direction_residual\":%.12g,\"record_hash\":%s,\"expected_record_hash\":%s,\"record_hash_match\":%s}"),
+			TEXT("{\"fixture\":%s,\"purpose\":%s,\"pass\":%s,\"query_returned\":%s,\"source_class\":%s,\"generated\":%s,\"boundary_pair_found\":%s,\"nonseparating_anomaly\":%s,\"rejected_nondivergent_route\":%s,\"rejected_unresolved_multi_hit\":%s,\"zgamma_distance_profile_placeholder\":%s,\"zgamma_geophysics_derived_profile\":%s,\"paper_faithful_zgamma_profile\":%s,\"q1_plate\":%d,\"q2_plate\":%d,\"assigned_plate\":%d,\"signed_separation_velocity\":%.12g,\"q1_distance_km\":%.12g,\"q2_distance_km\":%.12g,\"ridge_distance_km\":%.12g,\"nearest_boundary_distance_km\":%.12g,\"alpha\":%.12g,\"zbar\":%.12g,\"zgamma\":%.12g,\"zgamma_profile_distance_km\":%.12g,\"zgamma_profile_reference_distance_km\":%.12g,\"zgamma_profile_t\":%.12g,\"elevation\":%.12g,\"oceanic_age\":%.12g,\"ridge_direction_magnitude\":%.12g,\"ridge_radial_dot\":%.12g,\"q1_distance_residual_km\":%.12g,\"q2_distance_residual_km\":%.12g,\"ridge_distance_residual_km\":%.12g,\"nearest_boundary_distance_residual_km\":%.12g,\"qgamma_residual\":%.12g,\"alpha_residual\":%.12g,\"zbar_residual\":%.12g,\"zgamma_residual\":%.12g,\"zgamma_profile_distance_residual_km\":%.12g,\"zgamma_profile_reference_residual_km\":%.12g,\"zgamma_profile_t_residual\":%.12g,\"elevation_residual\":%.12g,\"oceanic_age_residual\":%.12g,\"ridge_direction_residual\":%.12g,\"record_hash\":%s,\"expected_record_hash\":%s,\"record_hash_match\":%s}"),
 			*JsonString(Result.Name),
 			*JsonString(Result.Purpose),
 			Result.bPass ? TEXT("true") : TEXT("false"),
@@ -745,6 +770,7 @@ namespace
 			Result.Record.bRejectedNonDivergentRoute ? TEXT("true") : TEXT("false"),
 			Result.Record.bRejectedUnresolvedMultiHit ? TEXT("true") : TEXT("false"),
 			Result.Record.bUsedZGammaDistanceProfilePlaceholder ? TEXT("true") : TEXT("false"),
+			Result.Record.bUsedZGammaGeophysicsDerivedProfile ? TEXT("true") : TEXT("false"),
 			Result.Record.bPaperFaithfulZGammaProfile ? TEXT("true") : TEXT("false"),
 			Result.Record.Q1PlateId,
 			Result.Record.Q2PlateId,
@@ -814,8 +840,8 @@ namespace
 		Report += TEXT("- Generated divergent crust has `OceanicAge = 0` and `RidgeDirection = retangent(normalize((p - qGamma) x p))`.\n");
 		Report += TEXT("- Elevation follows the local extraction contract `z = alpha * zBar(p) + (1 - alpha) * zGamma(p)`, with `alpha = dGamma / (dGamma + dPlate)`.\n");
 		Report += TEXT("- `zBar(p)` is compared against fixture-owned expected constants for distance interpolation between q1/q2 boundary elevations.\n");
-		Report += TEXT("- Pre-IIIE.5.1 closes the prior alpha double-use deviation: `alpha` is no longer used inside `zGamma`. The current `zGamma` is a separate distance-profile placeholder parameterized by `dGamma / EarthRadiusKm` and anchored to thesis Table 3.2 constants: ridge peak `-1 km`, abyssal plain `-6 km`.\n");
-		Report += TEXT("- `zGamma` remains a paper-fidelity hold. Thesis section 3.3.2.1 names a generic ridge profile and section 3.3.2.3 defines qGamma, but the local extraction has no closed-form zGamma curve. IIIE.5 may preserve this field through topology rebuild, but no consolidation may claim the ridge-profile law is paper-faithful until a future slice replaces or justifies it.\n");
+		Report += TEXT("- Pre-IIIE.6 replaces the Earth-radius linear placeholder with the accepted geophysics-derived extension `zGamma(dGamma) = z_e + (z_o - z_e) * sqrt(clamp(dGamma / 3000 km, 0, 1))`, anchored to thesis Table 3.2 constants: ridge peak `-1 km`, abyssal plain `-6 km`.\n");
+		Report += TEXT("- `zGamma` remains a paper-fidelity hold. Thesis section 3.3.2.1 names a generic ridge profile and section 3.3.2.3 defines qGamma, but the local extraction has no closed-form zGamma curve. Generated records therefore report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n");
 		Report += TEXT("- Resolved single-hit and unresolved multi-hit classes are rejected before field generation. Non-positive signed separating velocity is an anomaly, not a fallback.\n\n");
 
 		Report += TEXT("## Gates\n\n");
@@ -824,7 +850,7 @@ namespace
 		for (const FFixtureResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %s | class `%s`, generated `%d`, boundary `%d`, anomaly `%d`, rejected `%d/%d`, q1/q2 `%d/%d`, assigned `%d`, signed velocity `%.6g`, q dist residuals `%.3g/%.3g km`, ridge/nearest residuals `%.3g/%.3g km`, qGamma residual `%.3g`, alpha/elev residuals `%.3g/%.3g`, zGamma profile residuals `%.3g km/%.3g km/%.3g`, placeholder/paper `%d/%d`, ridge residual `%.3g`, radial dot `%.3g`, hash `%s`, expected `%s`, match `%d`. |\n"),
+				TEXT("| %s | %s | class `%s`, generated `%d`, boundary `%d`, anomaly `%d`, rejected `%d/%d`, q1/q2 `%d/%d`, assigned `%d`, signed velocity `%.6g`, q dist residuals `%.3g/%.3g km`, ridge/nearest residuals `%.3g/%.3g km`, qGamma residual `%.3g`, alpha/elev residuals `%.3g/%.3g`, zGamma profile residuals `%.3g km/%.3g km/%.3g`, placeholder/geophysics/paper `%d/%d/%d`, ridge residual `%.3g`, radial dot `%.3g`, hash `%s`, expected `%s`, match `%d`. |\n"),
 				*Result.Name,
 				*PassFail(Result.bPass),
 				*SelectionClassName(Result.Record.SourceSelectionClass),
@@ -848,6 +874,7 @@ namespace
 				Result.ZGammaProfileReferenceResidual,
 				Result.ZGammaProfileTResidual,
 				Result.Record.bUsedZGammaDistanceProfilePlaceholder ? 1 : 0,
+				Result.Record.bUsedZGammaGeophysicsDerivedProfile ? 1 : 0,
 				Result.Record.bPaperFaithfulZGammaProfile ? 1 : 0,
 				Result.RidgeDirectionResidual,
 				Result.RidgeRadialDot,
@@ -873,7 +900,7 @@ namespace
 			*PassFail(bReplayPass),
 			*ReplayHashA,
 			*ReplayHashB);
-		Report += TEXT("| zGamma paper-fidelity hold | hold | Generated records intentionally report `bUsedZGammaDistanceProfilePlaceholder=1` and `bPaperFaithfulZGammaProfile=0`; this is a topology-unblocking placeholder, not a paper-faithful ridge-profile claim. |\n");
+		Report += TEXT("| zGamma paper-fidelity hold | hold | Generated records intentionally report `bUsedZGammaDistanceProfilePlaceholder=0`, `bUsedZGammaGeophysicsDerivedProfile=1`, and `bPaperFaithfulZGammaProfile=0`; this is an accepted lab extension, not a paper-faithful ridge-profile claim. |\n");
 
 		Report += TEXT("\n## Contract Table\n\n");
 		Report += TEXT("| Paper / IIIE.1 requirement | CarrierLab support now | IIIE obligation still ahead | Gate needed |\n");
@@ -882,7 +909,7 @@ namespace
 		Report += TEXT("| q1/q2 are continuous nearest boundary points on different plates | IIIE.4 calls the IIIE.2 query and records q ids, edges, qGamma, distances, and elevations | Preserve this provenance when topology rebuild duplicates/re-indexes samples | Event-log row carries q1/q2/qGamma through rebuild |\n");
 		Report += TEXT("| New oceanic crust age is zero | Generation records `OceanicAge = 0` and gates residual against fixture-owned expected constants | Mutate global samples only inside the remesh event | Generated sample field residuals and record-hash regression |\n");
 		Report += TEXT("| Ridge direction is `(p - qGamma) x p` retangented/normalized | Generated records have non-zero tangent ridge vectors with near-zero radial dot | Preserve vector fields through duplicate/re-index/re-compact | Vector magnitude and radial-dot oracle |\n");
-		Report += TEXT("| zGamma is a ridge profile, not a second use of alpha | Pre-IIIE.5.1 records separate `ZGammaProfileT = dGamma / EarthRadiusKm` and gates same-ridge/different-gap invariance | Future slice must replace or justify the profile law before paper-fidelity consolidation | Paper-cited zGamma law or explicit lab-policy acceptance gate |\n");
+		Report += TEXT("| zGamma is a ridge profile, not a second use of alpha | Pre-IIIE.6 records separate `ZGammaProfileT = sqrt(dGamma / 3000 km)` and gates same-ridge/different-gap invariance | Keep the geophysics-derived profile labeled as lab policy unless a paper-cited law is recovered | Geophysics-profile flag and paper-fidelity hold gate |\n");
 		Report += TEXT("| Gap fill requires separating q1/q2 kinematics | Non-positive signed velocity reports an anomaly and does not generate | Use production plate motions at remesh cadence | Positive/negative velocity fixtures in remesh event |\n");
 		Report += TEXT("| Multiple valid hits are stop conditions | Resolved and unresolved non-gap classes are rejected before generation | Keep unresolved counts blocking primary remesh | Multi-hit rejection gate remains required |\n\n");
 
@@ -895,9 +922,9 @@ namespace
 		Report += TEXT("| Recovery/repair/backfill/retention/hysteresis/anchoring | Not used; rejected and anomalous routes remain non-generated. |\n");
 		Report += TEXT("| Silent unresolved multi-hit resolution | Forbidden; unresolved routes are rejected before oceanic generation. |\n\n");
 
-		Report += TEXT("## Stop Conditions For IIIE.5\n\n");
+		Report += TEXT("## Stop Conditions For IIIE.5+\n\n");
 		Report += TEXT("- Stop if topology rebuild routes resolved single-hit or unresolved multi-hit samples into divergent oceanic generation.\n");
-		Report += TEXT("- Stop if topology rebuild claims `zGamma` or generated elevation is fully paper-faithful while generated records still report `bPaperFaithfulZGammaProfile = false`.\n");
+		Report += TEXT("- Stop if topology rebuild claims `zGamma` or generated elevation is fully paper-faithful while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n");
 		Report += TEXT("- Stop if `zGamma` changes when `dGamma` is unchanged but gap width / nearest-boundary distance changes.\n");
 		Report += TEXT("- Stop if a non-positive q1/q2 separating velocity generates oceanic fields.\n");
 		Report += TEXT("- Stop if a missing two-plate boundary pair fabricates q1/q2, plate ownership, or elevation.\n");

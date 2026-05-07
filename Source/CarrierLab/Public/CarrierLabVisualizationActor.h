@@ -747,6 +747,7 @@ struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
 	double QGammaInputNorm = 0.0;
 	double QGammaUnitResidual = 0.0;
 	bool bUsedZGammaDistanceProfilePlaceholder = false;
+	bool bUsedZGammaGeophysicsDerivedProfile = false;
 	bool bPaperFaithfulZGammaProfile = false;
 	FVector3d Q1UnitPosition = FVector3d::UnitZ();
 	FVector3d Q2UnitPosition = FVector3d::UnitZ();
@@ -786,6 +787,7 @@ struct FCarrierLabPhaseIIIE5RemeshVertexRecord
 	bool bUsedPriorOwnerFallback = false;
 	bool bUsedProjectionOwnerFallback = false;
 	bool bUsedZGammaDistanceProfilePlaceholder = false;
+	bool bUsedZGammaGeophysicsDerivedProfile = false;
 	bool bPaperFaithfulZGammaProfile = false;
 	double ContinentalFraction = 0.0;
 	double Elevation = 0.0;

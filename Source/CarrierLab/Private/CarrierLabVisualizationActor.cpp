@@ -41,7 +41,7 @@ namespace
 	constexpr int32 BoundarySearchRadiusBins = 2;
 	constexpr double PhaseIIIE4RidgePeakElevationKm = -1.0;
 	constexpr double PhaseIIIE4AbyssalElevationKm = -6.0;
-	constexpr double PhaseIIIE4RidgeProfileReferenceDistanceKm = EarthRadiusKm;
+	constexpr double PhaseIIIE4ZGammaGeophysicsReferenceDistanceKm = 3000.0;
 
 	struct FCarrierLabVizCandidate
 	{
@@ -2425,16 +2425,16 @@ namespace
 		OutRecord.Alpha = ElevationDenominator > UE_DOUBLE_SMALL_NUMBER
 			? FMath::Clamp(OutRecord.RidgeDistanceKm / ElevationDenominator, 0.0, 1.0)
 			: 0.0;
-		// Pre-IIIE.5.1 named placeholder/deviation: alpha remains only the thesis
-		// zBar/zGamma blend coefficient. zGamma uses a separate distance profile
-		// parameter so gap width cannot alter the generic ridge profile. The
-		// reference distance is a lab placeholder, not a paper-faithful law.
+		// Named lab extension: alpha remains only the thesis zBar/zGamma blend
+		// coefficient. zGamma uses a geophysics-derived sqrt distance profile so
+		// gap width cannot alter the ridge profile, but this is not paper-faithful.
 		OutRecord.ZGammaProfileDistanceKm = OutRecord.RidgeDistanceKm;
-		OutRecord.ZGammaProfileReferenceDistanceKm = PhaseIIIE4RidgeProfileReferenceDistanceKm;
-		OutRecord.ZGammaProfileT = PhaseIIIE4RidgeProfileReferenceDistanceKm > UE_DOUBLE_SMALL_NUMBER
-			? FMath::Clamp(OutRecord.ZGammaProfileDistanceKm / PhaseIIIE4RidgeProfileReferenceDistanceKm, 0.0, 1.0)
+		OutRecord.ZGammaProfileReferenceDistanceKm = PhaseIIIE4ZGammaGeophysicsReferenceDistanceKm;
+		OutRecord.ZGammaProfileT = PhaseIIIE4ZGammaGeophysicsReferenceDistanceKm > UE_DOUBLE_SMALL_NUMBER
+			? FMath::Sqrt(FMath::Clamp(OutRecord.ZGammaProfileDistanceKm / PhaseIIIE4ZGammaGeophysicsReferenceDistanceKm, 0.0, 1.0))
 			: 0.0;
-		OutRecord.bUsedZGammaDistanceProfilePlaceholder = true;
+		OutRecord.bUsedZGammaDistanceProfilePlaceholder = false;
+		OutRecord.bUsedZGammaGeophysicsDerivedProfile = true;
 		OutRecord.bPaperFaithfulZGammaProfile = false;
 		OutRecord.ZGammaElevation = FMath::Lerp(
 			PhaseIIIE4RidgePeakElevationKm,
@@ -2659,6 +2659,9 @@ namespace
 			HashMix(AssignmentHash, Record.bUsedPolicyWinner ? 1ull : 0ull);
 			HashMix(AssignmentHash, Record.bUsedPriorOwnerFallback ? 1ull : 0ull);
 			HashMix(AssignmentHash, Record.bUsedProjectionOwnerFallback ? 1ull : 0ull);
+			HashMix(AssignmentHash, Record.bUsedZGammaDistanceProfilePlaceholder ? 1ull : 0ull);
+			HashMix(AssignmentHash, Record.bUsedZGammaGeophysicsDerivedProfile ? 1ull : 0ull);
+			HashMix(AssignmentHash, Record.bPaperFaithfulZGammaProfile ? 1ull : 0ull);
 			HashMixDouble(AssignmentHash, Record.ContinentalFraction);
 			HashMixDouble(AssignmentHash, Record.Elevation);
 			HashMixDouble(AssignmentHash, Record.OceanicAge);
@@ -2683,6 +2686,7 @@ namespace
 		HashMix(TopologyHash, Audit.ResetAudit.bProcessStateEmptyAfter ? 1ull : 0ull);
 		HashMix(TopologyHash, Audit.bMotionPreserved ? 1ull : 0ull);
 		HashMix(TopologyHash, Audit.bQProvenancePreserved ? 1ull : 0ull);
+		HashMix(TopologyHash, Audit.bZGammaHoldPreserved ? 1ull : 0ull);
 		Audit.TopologyHash = HashToString(TopologyHash);
 	}
 
@@ -5023,6 +5027,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
 			Record.RidgeDirection = Fixture.GeneratedOceanicRecord.RidgeDirection;
 			Record.FoldDirection = FVector3d::ZeroVector;
 			Record.bUsedZGammaDistanceProfilePlaceholder = Fixture.GeneratedOceanicRecord.bUsedZGammaDistanceProfilePlaceholder;
+			Record.bUsedZGammaGeophysicsDerivedProfile = Fixture.GeneratedOceanicRecord.bUsedZGammaGeophysicsDerivedProfile;
 			Record.bPaperFaithfulZGammaProfile = Fixture.GeneratedOceanicRecord.bPaperFaithfulZGammaProfile;
 			Record.OceanicRecord = Fixture.GeneratedOceanicRecord;
 			Record.OceanicRecord.SampleId = TargetSampleId;
@@ -5287,10 +5292,16 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
 			Record.OceanicRecord.Q1PlateId != INDEX_NONE &&
 			Record.OceanicRecord.Q2PlateId != INDEX_NONE &&
 			Record.OceanicRecord.QGammaUnitResidual <= 1.0e-8;
+		const bool bRecordZGammaExtension =
+			Record.bUsedZGammaDistanceProfilePlaceholder ||
+			Record.bUsedZGammaGeophysicsDerivedProfile;
+		const bool bOceanicZGammaExtension =
+			Record.OceanicRecord.bUsedZGammaDistanceProfilePlaceholder ||
+			Record.OceanicRecord.bUsedZGammaGeophysicsDerivedProfile;
 		const bool bZGammaHoldPresent =
-			Record.bUsedZGammaDistanceProfilePlaceholder &&
+			bRecordZGammaExtension &&
 			!Record.bPaperFaithfulZGammaProfile &&
-			Record.OceanicRecord.bUsedZGammaDistanceProfilePlaceholder &&
+			bOceanicZGammaExtension &&
 			!Record.OceanicRecord.bPaperFaithfulZGammaProfile;
 		if (bFieldsPreserved && bQProvenancePresent)
 		{

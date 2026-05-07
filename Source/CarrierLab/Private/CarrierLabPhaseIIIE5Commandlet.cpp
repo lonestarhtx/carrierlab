@@ -155,11 +155,11 @@ namespace
 		Record.NearestBoundaryDistanceKm = 350.0;
 		Record.Alpha = 120.0 / 470.0;
 		Record.ZBarElevation = -3.0;
-		Record.ZGammaElevation = -1.25;
+		Record.ZGammaElevation = -2.0;
 		Record.ZGammaProfileDistanceKm = 120.0;
-		Record.ZGammaProfileReferenceDistanceKm = 6371.0;
-		Record.ZGammaProfileT = 120.0 / 6371.0;
-		Record.Elevation = -1.6968085106382978;
+		Record.ZGammaProfileReferenceDistanceKm = 3000.0;
+		Record.ZGammaProfileT = 0.2;
+		Record.Elevation = -2.2553191489361701;
 		Record.OceanicAge = 0.0;
 		Record.Q1UnitPosition = FVector3d::UnitX();
 		Record.Q2UnitPosition = FVector3d::UnitY();
@@ -169,7 +169,8 @@ namespace
 		Record.RidgeDirection = FVector3d::UnitY();
 		Record.RidgeDirectionMagnitude = 1.0;
 		Record.RidgeDirectionRadialDot = 0.0;
-		Record.bUsedZGammaDistanceProfilePlaceholder = true;
+		Record.bUsedZGammaDistanceProfilePlaceholder = false;
+		Record.bUsedZGammaGeophysicsDerivedProfile = true;
 		Record.bPaperFaithfulZGammaProfile = false;
 		return Record;
 	}
@@ -436,7 +437,7 @@ namespace
 		Report += TEXT("# Phase IIIE.5 Topology Rebuild And Process Reset\n\n");
 		Report += TEXT("Verdict: ");
 		Report += bAllPass ? TEXT("PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED") : TEXT("FAIL / HOLD IIIE.6");
-		Report += TEXT(". This slice implements the remesh-side duplicate/re-index/re-compact topology rebuild, process-state reset, and current-state `CollisionPending` filter wiring. It does not implement a full production remesh cadence, optimize replay, solve unresolved multi-hit policy, or replace the IIIE.4 zGamma placeholder.\n\n");
+		Report += TEXT(". This slice implements the remesh-side duplicate/re-index/re-compact topology rebuild, process-state reset, and current-state `CollisionPending` filter wiring. It does not implement a full production remesh cadence, optimize replay, solve unresolved multi-hit policy, or claim the geophysics-derived IIIE.4 zGamma extension is paper-faithful.\n\n");
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- IIIE.5 consumes fixture-owned per-global-vertex remesh assignment records, then partitions global TDS triangles into rebuilt plate-local triangulations; the future production cadence must supply these records from IIIE.3/IIIE.4 selection and gap-fill outputs.\n");
@@ -503,7 +504,7 @@ namespace
 			*ReplayHashA,
 			*ReplayHashB);
 		Report += TEXT("| Inherited IIIB independent signature regression | pass | `CarrierLabPhaseIIID7` regression artifact remains the state-consuming signature token: computed/expected `bf8818a26ed7b1dc`. IIIE.5 adds reset gates rather than rerunning the expensive integrated signature in this focused slice. |\n");
-		Report += TEXT("| zGamma paper-fidelity hold | hold | IIIE.4 generated records are preserved with `bUsedZGammaDistanceProfilePlaceholder=1` and `bPaperFaithfulZGammaProfile=0`; topology may preserve them, but no report may claim the ridge-profile law is paper-faithful yet. |\n\n");
+		Report += TEXT("| zGamma paper-fidelity hold | hold | IIIE.4 generated records are preserved with `bUsedZGammaDistanceProfilePlaceholder=0`, `bUsedZGammaGeophysicsDerivedProfile=1`, and `bPaperFaithfulZGammaProfile=0`; topology may preserve them, but no report may claim the ridge-profile law is paper-faithful. |\n\n");
 
 		Report += TEXT("## Contract Table\n\n");
 		Report += TEXT("| Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |\n");
@@ -531,10 +532,10 @@ namespace
 		Report += TEXT("- Stop if active convergence lists, distance-to-front records, subduction matrix state, subducting marks, obduction marks, or collision-pending keys remain non-empty immediately after remesh reset.\n");
 		Report += TEXT("- Stop if plate motion hashes change during topology rebuild.\n");
 		Report += TEXT("- Stop if IIIE.4 generated vertices lose q1/q2/qGamma, signed velocity, age, elevation, ridge direction, or zGamma hold evidence during duplicate/re-index/re-compact.\n");
-		Report += TEXT("- Stop if reports claim paper-faithful zGamma while generated records still report `bPaperFaithfulZGammaProfile = false`.\n\n");
+		Report += TEXT("- Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n\n");
 
 		Report += TEXT("## Next Slice Boundary\n\n");
-		Report += TEXT("IIIE.6 should be the remesh ledger/reframe slice: connect selection, divergent field generation, topology rebuild, and reset records into an event-level audit without adding optimization, new q1/q2 policy, ridge-profile replacement, rifting, erosion, or long-horizon validation. The ridge-profile law replacement remains owed before IIIH.0.\n\n");
+		Report += TEXT("IIIE.6 should be the remesh ledger/reframe slice: connect selection, divergent field generation, topology rebuild, and reset records into an event-level audit without adding optimization, new q1/q2 policy, further ridge-profile replacement, rifting, erosion, or long-horizon validation. The zGamma profile remains a geophysics-derived lab extension unless a paper-cited closed form is recovered.\n\n");
 		Report += FString::Printf(TEXT("Metrics: `%s`.\n"), *MetricsPath);
 		return Report;
 	}

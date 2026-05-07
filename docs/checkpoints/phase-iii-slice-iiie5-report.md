@@ -1,6 +1,6 @@
 # Phase IIIE.5 Topology Rebuild And Process Reset
 
-Verdict: PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED. This slice implements the remesh-side duplicate/re-index/re-compact topology rebuild, process-state reset, and current-state `CollisionPending` filter wiring. It does not implement a full production remesh cadence, optimize replay, solve unresolved multi-hit policy, or replace the IIIE.4 zGamma placeholder.
+Verdict: PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED. This slice implements the remesh-side duplicate/re-index/re-compact topology rebuild, process-state reset, and current-state `CollisionPending` filter wiring. It does not implement a full production remesh cadence, optimize replay, solve unresolved multi-hit policy, or claim the geophysics-derived IIIE.4 zGamma extension is paper-faithful.
 
 ## Scope
 
@@ -15,15 +15,15 @@ Verdict: PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED. This slice
 
 | Gate | Result | Evidence |
 |---|---:|---|
-| Single-plate duplicate/re-index/re-compact | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `92/0/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `fc0b65aab6baf337/fc0b65aab6baf337`, reset serial `0->1`, active `0->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `2b37d0b3a7afcc9b`. |
-| Mixed triangle majority assignment | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `86/6/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `fb352eafaff07806/fb352eafaff07806`, reset serial `0->1`, active `35->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `f5e9c76b88c01d88`. |
-| Triple-junction unresolved anomaly | hold | applied `0`, samples `48`, global/assigned triangles `92/90`, all-same/majority/triple `82/8/2`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `fb352eafaff07806/fb352eafaff07806`, reset serial `0->1`, active `35->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `575458ebc333cfd4`. |
-| Process-state reset at remesh | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `92/0/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `7a543f62177386b1/7a543f62177386b1`, reset serial `0->1`, active `25->0`, matrix `1->0`, pending collision `1->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `fd2305a108163d61`. |
-| IIIE.4 provenance preservation | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `92/0/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `7a543f62177386b1/7a543f62177386b1`, reset serial `0->1`, active `24->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `1/1`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `9c1011a383ae0420`. |
+| Single-plate duplicate/re-index/re-compact | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `92/0/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `fc0b65aab6baf337/fc0b65aab6baf337`, reset serial `0->1`, active `0->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `bb6321c5cd05d087`. |
+| Mixed triangle majority assignment | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `86/6/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `fb352eafaff07806/fb352eafaff07806`, reset serial `0->1`, active `35->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `430892147bfcc6a0`. |
+| Triple-junction unresolved anomaly | hold | applied `0`, samples `48`, global/assigned triangles `92/90`, all-same/majority/triple `82/8/2`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `fb352eafaff07806/fb352eafaff07806`, reset serial `0->1`, active `35->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `2fb52527c293051d`. |
+| Process-state reset at remesh | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `92/0/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `7a543f62177386b1/7a543f62177386b1`, reset serial `0->1`, active `25->0`, matrix `1->0`, pending collision `1->0`, generated/preserved `0/0`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `3523e86485c22afc`. |
+| IIIE.4 provenance preservation | pass | applied `1`, samples `48`, global/assigned triangles `92/92`, all-same/majority/triple `92/0/0`, compact `1`, duplicate-authority `1`, fixture assignments `1`, motion `7a543f62177386b1/7a543f62177386b1`, reset serial `0->1`, active `24->0`, matrix `0->0`, pending collision `0->0`, generated/preserved `1/1`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, hash `bf910c65a29bb27e`. |
 | CollisionPending current-state wiring | pass | accepted groups `1`, fixture-owned accepted group `1`, pending triangle keys `1`, filters sub/obd/coll `0/0/2`, policy/prior `0/0`, grouping `61e26f7c77aade0c`, selection `a6d6ae2e3727d152`. |
-| Same-seed topology replay | pass | Replay topology hashes `f5e9c76b88c01d88` and `f5e9c76b88c01d88`. |
+| Same-seed topology replay | pass | Replay topology hashes `430892147bfcc6a0` and `430892147bfcc6a0`. |
 | Inherited IIIB independent signature regression | pass | `CarrierLabPhaseIIID7` regression artifact remains the state-consuming signature token: computed/expected `bf8818a26ed7b1dc`. IIIE.5 adds reset gates rather than rerunning the expensive integrated signature in this focused slice. |
-| zGamma paper-fidelity hold | hold | IIIE.4 generated records are preserved with `bUsedZGammaDistanceProfilePlaceholder=1` and `bPaperFaithfulZGammaProfile=0`; topology may preserve them, but no report may claim the ridge-profile law is paper-faithful yet. |
+| zGamma paper-fidelity hold | hold | IIIE.4 generated records are preserved with `bUsedZGammaDistanceProfilePlaceholder=0`, `bUsedZGammaGeophysicsDerivedProfile=1`, and `bPaperFaithfulZGammaProfile=0`; topology may preserve them, but no report may claim the ridge-profile law is paper-faithful. |
 
 ## Contract Table
 
@@ -54,10 +54,10 @@ Verdict: PASS / IIIE.6 UNBLOCKED; ZGAMMA PAPER-FIDELITY HOLD CARRIED. This slice
 - Stop if active convergence lists, distance-to-front records, subduction matrix state, subducting marks, obduction marks, or collision-pending keys remain non-empty immediately after remesh reset.
 - Stop if plate motion hashes change during topology rebuild.
 - Stop if IIIE.4 generated vertices lose q1/q2/qGamma, signed velocity, age, elevation, ridge direction, or zGamma hold evidence during duplicate/re-index/re-compact.
-- Stop if reports claim paper-faithful zGamma while generated records still report `bPaperFaithfulZGammaProfile = false`.
+- Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.
 
 ## Next Slice Boundary
 
-IIIE.6 should be the remesh ledger/reframe slice: connect selection, divergent field generation, topology rebuild, and reset records into an event-level audit without adding optimization, new q1/q2 policy, ridge-profile replacement, rifting, erosion, or long-horizon validation. The ridge-profile law replacement remains owed before IIIH.0.
+IIIE.6 should be the remesh ledger/reframe slice: connect selection, divergent field generation, topology rebuild, and reset records into an event-level audit without adding optimization, new q1/q2 policy, further ridge-profile replacement, rifting, erosion, or long-horizon validation. The zGamma profile remains a geophysics-derived lab extension unless a paper-cited closed form is recovered.
 
 Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIE5/phase-iii-slice-iiie5-metrics.jsonl`.
