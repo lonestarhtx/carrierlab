@@ -810,6 +810,7 @@ enum class ECarrierLabPhaseIIIE5TriangleAssignmentClass : uint8
 {
 	AllVerticesSamePlate,
 	MajorityTwoOfThree,
+	TripleJunctionCentroidSplit,
 	UnresolvedTripleJunction,
 	Invalid
 };
@@ -862,6 +863,7 @@ struct FCarrierLabPhaseIIIE5TriangleRebuildRecord
 	int32 PlateC = INDEX_NONE;
 	int32 AssignedPlateId = INDEX_NONE;
 	int32 LocalTriangleId = INDEX_NONE;
+	int32 LocalTriangleCount = 0;
 	bool bBoundary = false;
 	ECarrierLabPhaseIIIE5TriangleAssignmentClass AssignmentClass = ECarrierLabPhaseIIIE5TriangleAssignmentClass::Invalid;
 };
@@ -911,6 +913,9 @@ struct FCarrierLabPhaseIIIE5TopologyRebuildAudit
 	int32 AssignedTriangleCount = 0;
 	int32 AllSameTriangleCount = 0;
 	int32 MajorityTriangleCount = 0;
+	int32 TripleJunctionCentroidSplitCount = 0;
+	int32 TripleJunctionCentroidSplitLocalTriangleCount = 0;
+	int32 TripleJunctionCentroidSplitSyntheticVertexCount = 0;
 	int32 UnresolvedTripleJunctionCount = 0;
 	int32 InvalidTriangleCount = 0;
 	int32 MissingVertexAssignmentCount = 0;
@@ -926,6 +931,7 @@ struct FCarrierLabPhaseIIIE5TopologyRebuildAudit
 	bool bNoPolicyWinner = false;
 	bool bNoUnresolvedMultiHitRouted = false;
 	bool bNoDuplicateTriangleAuthority = false;
+	bool bTripleJunctionCentroidSplitApplied = false;
 	bool bPlateLocalTopologyCompact = false;
 	bool bMotionPreserved = false;
 	bool bQProvenancePreserved = false;

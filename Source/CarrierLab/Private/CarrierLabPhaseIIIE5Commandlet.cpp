@@ -48,6 +48,8 @@ namespace
 			return TEXT("all-same");
 		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::MajorityTwoOfThree:
 			return TEXT("majority-two-of-three");
+		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::TripleJunctionCentroidSplit:
+			return TEXT("triple-junction-centroid-split");
 		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::UnresolvedTripleJunction:
 			return TEXT("unresolved-triple-junction");
 		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::Invalid:
@@ -184,7 +186,7 @@ namespace
 		FCarrierLabPhaseIIIE5RemeshInputFixture Fixture;
 		bool bExpectApplied = true;
 		bool bExpectMajority = false;
-		bool bExpectTripleJunctionHold = false;
+		bool bExpectTripleJunctionSplit = false;
 		bool bExpectProcessResetSeed = false;
 		bool bExpectOceanicPreservation = false;
 	};
@@ -237,15 +239,15 @@ namespace
 	FTopologyFixtureSpec MakeTripleJunctionFixture()
 	{
 		FTopologyFixtureSpec Spec;
-		Spec.Name = TEXT("Triple-junction unresolved anomaly");
-		Spec.Purpose = TEXT("One-one-one mixed global triangles remain stop-condition anomalies rather than being assigned by projection or prior owner.");
+		Spec.Name = TEXT("Triple-junction centroid split");
+		Spec.Purpose = TEXT("One-one-one mixed global triangles are subdivided into per-plate centroid wedges without a whole-triangle winner.");
 		Spec.Fixture.bForceAllSamplesToPlateZero = true;
 		Spec.Fixture.OverrideTriangleId = 0;
 		Spec.Fixture.OverridePlateA = 0;
 		Spec.Fixture.OverridePlateB = 1;
 		Spec.Fixture.OverridePlateC = 2;
-		Spec.bExpectApplied = false;
-		Spec.bExpectTripleJunctionHold = true;
+		Spec.bExpectApplied = true;
+		Spec.bExpectTripleJunctionSplit = true;
 		return Spec;
 	}
 
@@ -292,12 +294,14 @@ namespace
 		const bool bRan = Actor->RunPhaseIIIE5TopologyRebuildFixtureForTest(Spec.Fixture, OutResult.Audit);
 		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
 		OutResult.bRan = bRan && OutResult.Audit.bRan;
-		OutResult.bHold = Spec.bExpectTripleJunctionHold && OutResult.Audit.UnresolvedTripleJunctionCount > 0;
+		OutResult.bHold = false;
 
 		const bool bAppliedMatches = Spec.bExpectApplied == OutResult.Audit.bApplied;
 		const bool bMajorityMatches = !Spec.bExpectMajority || OutResult.Audit.MajorityTriangleCount > 0;
-		const bool bTripleMatches = !Spec.bExpectTripleJunctionHold ||
-			(OutResult.Audit.UnresolvedTripleJunctionCount > 0 && !OutResult.Audit.bApplied);
+		const bool bTripleMatches = !Spec.bExpectTripleJunctionSplit ||
+			(OutResult.Audit.TripleJunctionCentroidSplitCount > 0 &&
+				OutResult.Audit.UnresolvedTripleJunctionCount == 0 &&
+				OutResult.Audit.bTripleJunctionCentroidSplitApplied);
 		const bool bResetSeedMatches = !Spec.bExpectProcessResetSeed ||
 			(OutResult.Audit.ResetAudit.ActiveTriangleCountBefore > 0 &&
 				OutResult.Audit.ResetAudit.MatrixPairCountBefore > 0 &&
@@ -371,7 +375,7 @@ namespace
 	FString BuildTopologyJsonLine(const FTopologyFixtureResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"pass\":%s,\"hold\":%s,\"applied\":%s,\"samples\":%d,\"global_triangles\":%d,\"assigned_triangles\":%d,\"majority_triangles\":%d,\"unresolved_triple_junctions\":%d,\"generated_vertices\":%d,\"preserved_generated_vertices\":%d,\"prior_owner_fallback\":%d,\"projection_owner_fallback\":%d,\"policy_winner\":%d,\"fixture_owned_vertex_assignments\":%s,\"reset_serial_before\":%d,\"reset_serial_after\":%d,\"active_before\":%d,\"active_after\":%d,\"matrix_pairs_before\":%d,\"matrix_pairs_after\":%d,\"collision_pending_before\":%d,\"collision_pending_after\":%d,\"motion_before\":%s,\"motion_after\":%s,\"assignment_hash\":%s,\"topology_hash\":%s}"),
+			TEXT("{\"fixture\":%s,\"pass\":%s,\"hold\":%s,\"applied\":%s,\"samples\":%d,\"global_triangles\":%d,\"assigned_triangles\":%d,\"majority_triangles\":%d,\"triple_centroid_splits\":%d,\"triple_split_local_triangles\":%d,\"unresolved_triple_junctions\":%d,\"generated_vertices\":%d,\"preserved_generated_vertices\":%d,\"prior_owner_fallback\":%d,\"projection_owner_fallback\":%d,\"policy_winner\":%d,\"fixture_owned_vertex_assignments\":%s,\"reset_serial_before\":%d,\"reset_serial_after\":%d,\"active_before\":%d,\"active_after\":%d,\"matrix_pairs_before\":%d,\"matrix_pairs_after\":%d,\"collision_pending_before\":%d,\"collision_pending_after\":%d,\"motion_before\":%s,\"motion_after\":%s,\"assignment_hash\":%s,\"topology_hash\":%s}"),
 			*JsonString(Result.Name),
 			Result.bPass ? TEXT("true") : TEXT("false"),
 			Result.bHold ? TEXT("true") : TEXT("false"),
@@ -380,6 +384,8 @@ namespace
 			Result.Audit.GlobalTriangleCount,
 			Result.Audit.AssignedTriangleCount,
 			Result.Audit.MajorityTriangleCount,
+			Result.Audit.TripleJunctionCentroidSplitCount,
+			Result.Audit.TripleJunctionCentroidSplitLocalTriangleCount,
 			Result.Audit.UnresolvedTripleJunctionCount,
 			Result.Audit.GeneratedOceanicVertexCount,
 			Result.Audit.PreservedGeneratedOceanicVertexCount,
@@ -441,7 +447,8 @@ namespace
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- IIIE.5 consumes fixture-owned per-global-vertex remesh assignment records, then partitions global TDS triangles into rebuilt plate-local triangulations; the future production cadence must supply these records from IIIE.3/IIIE.4 selection and gap-fill outputs.\n");
-		Report += TEXT("- All-same triangles are copied to that plate. Two-of-three mixed triangles use the approved CarrierLab majority lab policy: when exactly two global TDS vertices assign to the same plate, that plate owns the rebuilt local triangle. This policy is deterministic, does not consult prior owner/projection state, and must be disclosed as lab policy rather than paper text. One-one-one triple-junction triangles remain unresolved stop-condition anomalies.\n");
+		Report += TEXT("- All-same triangles are copied to that plate. Two-of-three mixed triangles use the approved CarrierLab majority lab policy: when exactly two global TDS vertices assign to the same plate, that plate owns the rebuilt local triangle. This policy is deterministic, does not consult prior owner/projection state, and must be disclosed as lab policy rather than paper text.\n");
+		Report += TEXT("- One-one-one triple-junction triangles use an approved CarrierLab centroid-split lab policy: the global triangle receives no whole-triangle winner, and each incident plate receives two boundary wedge triangles built from its original vertex, edge midpoints, and the spherical triangle centroid. Synthetic split vertices carry interpolated fields but no global sample ownership.\n");
 		Report += TEXT("- Plate-local topology is rebuilt by duplicate/re-index/re-compact from the global TDS assignment; no prior global owner, projection owner, arbitrary winner, or Stage 1.5 recovery path participates.\n");
 		Report += TEXT("- Remesh reset clears active convergence lists, distance-to-front records, subduction matrix state, true subduction marks, obduction-pending marks, and collision-pending keys, then advances the reset serial.\n");
 		Report += TEXT("- Plate geodetic motion is preserved byte-for-byte across topology rebuild. Generated IIIE.4 oceanic fields and q1/q2/qGamma event provenance are preserved in the remesh records, while `bPaperFaithfulZGammaProfile = false` remains a hold.\n");
@@ -453,7 +460,7 @@ namespace
 		for (const FTopologyFixtureResult& Result : TopologyResults)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %s | applied `%d`, samples `%d`, global/assigned triangles `%d/%d`, all-same/majority/triple `%d/%d/%d`, compact `%d`, duplicate-authority `%d`, fixture assignments `%d`, motion `%s/%s`, reset serial `%d->%d`, active `%d->%d`, matrix `%d->%d`, pending collision `%d->%d`, generated/preserved `%d/%d`, policy/prior/projection `%d/%d/%d`, q/zGamma `%d/%d`, hash `%s`. |\n"),
+				TEXT("| %s | %s | applied `%d`, samples `%d`, global/assigned triangles `%d/%d`, all-same/majority/split/unresolved `%d/%d/%d/%d`, split local/synth `%d/%d`, compact `%d`, duplicate-authority `%d`, fixture assignments `%d`, motion `%s/%s`, reset serial `%d->%d`, active `%d->%d`, matrix `%d->%d`, pending collision `%d->%d`, generated/preserved `%d/%d`, policy/prior/projection `%d/%d/%d`, q/zGamma `%d/%d`, hash `%s`. |\n"),
 				*Result.Name,
 				*HoldPassFail(Result.bPass, Result.bHold),
 				Result.Audit.bApplied ? 1 : 0,
@@ -462,7 +469,10 @@ namespace
 				Result.Audit.AssignedTriangleCount,
 				Result.Audit.AllSameTriangleCount,
 				Result.Audit.MajorityTriangleCount,
+				Result.Audit.TripleJunctionCentroidSplitCount,
 				Result.Audit.UnresolvedTripleJunctionCount,
+				Result.Audit.TripleJunctionCentroidSplitLocalTriangleCount,
+				Result.Audit.TripleJunctionCentroidSplitSyntheticVertexCount,
 				Result.Audit.bPlateLocalTopologyCompact ? 1 : 0,
 				Result.Audit.bNoDuplicateTriangleAuthority ? 1 : 0,
 				Result.Audit.bFixtureOwnedVertexAssignmentRecords ? 1 : 0,
@@ -510,7 +520,7 @@ namespace
 		Report += TEXT("| Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |\n");
 		Report += TEXT("|---|---|---|---|\n");
 		Report += TEXT("| Rebuild plate-local topology from global TDS vertex assignments | IIIE.5 duplicates, re-indexes, and compacts local vertices/triangles from fixture-owned assignment records | Wire this helper into the future production remesh cadence so live selection/gap-fill records supply the assignments | Compact topology and duplicate-authority gates |\n");
-		Report += TEXT("| Mixed global-TDS triangles need explicit policy | All-same is direct; two-of-three majority is approved CarrierLab lab policy; triple junction is a hold | Implement triple-junction handling only with paper citation or explicit approved lab policy | Majority fixture and triple-junction hold fixture |\n");
+		Report += TEXT("| Mixed global-TDS triangles need explicit policy | All-same is direct; two-of-three majority and one-one-one centroid split are approved CarrierLab lab policies | Consolidation must disclose both policies as lab extensions, not paper text | Majority fixture and centroid-split fixture |\n");
 		Report += TEXT("| Preserve plate geodetic motion across remesh | Motion hash before/after remains identical | Keep later remesh cadence from recomputing motion authority from projection | Motion hash gate |\n");
 		Report += TEXT("| Reset process state at remesh | Active lists, distances, matrix state, subducting marks, obduction marks, and collision-pending keys reset to empty; reset serial advances | Later IIIB tracking must explicitly repopulate from geometry | Process reset fixture |\n");
 		Report += TEXT("| Preserve divergent gap provenance | IIIE.4 q1/q2/qGamma, generated fields, and zGamma hold flags survive topology rebuild records | Full remesh event must attach these records per generated vertex | Oceanic provenance fixture |\n");
@@ -523,14 +533,14 @@ namespace
 		Report += TEXT("| Projection-derived ownership authority | Explicit per-record counter stays zero. |\n");
 		Report += TEXT("| Uncited remesh winner policy | Explicit per-record counter stays zero. |\n");
 		Report += TEXT("| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called; IIIE.5 uses a dedicated rebuild path rather than `RebuildPlateLocalStateFromSamples`. |\n");
-		Report += TEXT("| Silent unresolved multi-hit routing | Explicit counter stays zero; triple-junction topology anomalies are holds, not winners. |\n");
+		Report += TEXT("| Silent unresolved multi-hit routing | Explicit counter stays zero; triple-junction topology uses centroid subdivision, not a ray multi-hit winner. |\n");
 		Report += TEXT("| zGamma paper-fidelity overclaim | Hold flag remains visible through generated records. |\n\n");
 		Report += TEXT("## Approved Lab Policy\n\n");
-		Report += TEXT("Two-of-three mixed global-TDS triangles are approved for IIIE live-cadence use as a narrow CarrierLab lab policy. The rule is only valid when exactly two vertices have the same post-remesh assigned plate and the third differs; the majority plate receives the rebuilt triangle. This approval does not extend to one-one-one triple junctions, unresolved ray multi-hits, prior-owner fallback, projection-derived ownership, or arbitrary winner policies.\n\n");
+		Report += TEXT("Two-of-three mixed global-TDS triangles are approved for IIIE live-cadence use as a narrow CarrierLab lab policy. The rule is only valid when exactly two vertices have the same post-remesh assigned plate and the third differs; the majority plate receives the rebuilt triangle. One-one-one mixed global-TDS triangles are separately approved for IIIE live-cadence use as centroid-split topology: each incident plate receives two local boundary wedge triangles and the global triangle receives no single authoritative winner. These approvals do not extend to unresolved ray multi-hits, prior-owner fallback, projection-derived ownership, or arbitrary winner policies.\n\n");
 
 		Report += TEXT("## Stop Conditions For IIIE.6+\n\n");
 		Report += TEXT("- Stop if a production remesh event calls the Stage 1.5 prior-owner/projection fallback path as primary IIIE authority.\n");
-		Report += TEXT("- Stop if one-one-one triple-junction triangles are assigned without paper citation or explicit approved lab policy.\n");
+		Report += TEXT("- Stop if one-one-one triple-junction triangles receive a whole-triangle winner instead of centroid-split subdivision or an explicit future policy.\n");
 		Report += TEXT("- Stop if active convergence lists, distance-to-front records, subduction matrix state, subducting marks, obduction marks, or collision-pending keys remain non-empty immediately after remesh reset.\n");
 		Report += TEXT("- Stop if plate motion hashes change during topology rebuild.\n");
 		Report += TEXT("- Stop if IIIE.4 generated vertices lose q1/q2/qGamma, signed velocity, age, elevation, ridge direction, or zGamma hold evidence during duplicate/re-index/re-compact.\n");

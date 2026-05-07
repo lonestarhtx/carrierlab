@@ -592,7 +592,7 @@ namespace
 		Report += TEXT("# Phase IIIE.6 Remesh Ledger Reframe And Cadence Wire-Up\n\n");
 		Report += TEXT("Verdict: ");
 		Report += bAllPass ? TEXT("PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED") : TEXT("FAIL / HOLD IIIE CONSOLIDATION");
-		Report += TEXT(". This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and ridge overwrite, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, resolve triple-junction policy, claim zGamma's profile law is paper-sourced, or retire legacy comparison code.\n\n");
+		Report += TEXT(". This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and ridge overwrite, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, claim zGamma's profile law is paper-sourced, or retire legacy comparison code.\n\n");
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- The event audit consumes only IIIE.3 routes that are legal for IIIE.4: no-hit divergent gaps and filter-exhausted divergent gaps. Unresolved multi-hit selection classes remain stop conditions and are not routed to ocean generation.\n");
@@ -682,7 +682,7 @@ namespace
 		Report += TEXT("|---|---|---|\n");
 		Report += TEXT("| zGamma profile law | Deferred / named lab extension | Current sqrt-distance profile is geophysics-derived and realistic, but the paper/thesis do not provide a closed-form zGamma equation. |\n");
 		Report += TEXT("| Two-of-three mixed triangle majority | Approved CarrierLab lab policy | IIIE.5 exposes and gates the deterministic majority rule: if exactly two global-TDS vertices assign to one plate, that plate owns the rebuilt triangle. This is approved only as disclosed lab policy, not as paper text. |\n");
-		Report += TEXT("| One-one-one triple-junction topology | Deferred / hold | IIIE.5 leaves these unresolved rather than inventing authority. |\n");
+		Report += TEXT("| One-one-one triple-junction topology | Approved CarrierLab centroid-split lab policy | IIIE.5 subdivides one-one-one global triangles into per-plate centroid wedges without a whole-triangle winner. |\n");
 		Report += TEXT("| Continental overwrite by divergent ridge generation | Deferred / hold | IIIE.6 makes the ledger line visible and non-silent; production cadence policy remains a consolidation decision. |\n\n");
 
 		Report += TEXT("## Stop Conditions For IIIE Consolidation+\n\n");
@@ -691,7 +691,7 @@ namespace
 		Report += TEXT("- Stop if Stage 1.5 owner/projection/recovery behavior becomes primary IIIE remesh authority.\n");
 		Report += TEXT("- Stop if post-rebuild IIIB tracking cannot seed active lists, distance records, matrix evidence, propagation, and closure from rebuilt plate-local topology.\n");
 		Report += TEXT("- Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n");
-		Report += TEXT("- Stop if the majority rule is described as paper-faithful rather than approved lab policy, or if any triple-junction topology policy is used without explicit approval and gates.\n\n");
+		Report += TEXT("- Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.\n\n");
 
 		Report += TEXT("## Next Slice Boundary\n\n");
 		Report += TEXT("Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, triple-junction handling, and ridge-overwrite handling), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio. Do not start IIIF rifting, IIIG per-step elevation evolution, or IIIH long-horizon validation until consolidation explicitly clears.\n\n");

@@ -2519,6 +2519,79 @@ namespace
 		return LocalVertexId;
 	}
 
+	int32 AddPhaseIIIE5SyntheticLocalVertex(
+		CarrierLab::FCarrierPlate& Plate,
+		const FVector3d& UnitPosition,
+		const TArray<int32>& SourceSampleIds,
+		const TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord>& VertexRecords,
+		const CarrierLab::FCarrierState& State)
+	{
+		CarrierLab::FCarrierVertex Vertex;
+		Vertex.GlobalSampleId = INDEX_NONE;
+		Vertex.UnitPosition = NormalizeOrFallback(UnitPosition, FVector3d::UnitZ());
+		if (SourceSampleIds.IsEmpty())
+		{
+			return Plate.Vertices.Add(Vertex);
+		}
+
+		double AreaWeight = 0.0;
+		double ContinentalFraction = 0.0;
+		double Elevation = 0.0;
+		double HistoricalElevation = 0.0;
+		double OceanicAge = 0.0;
+		FVector3d RidgeDirection = FVector3d::ZeroVector;
+		FVector3d FoldDirection = FVector3d::ZeroVector;
+		int32 SourceCount = 0;
+		for (const int32 SampleId : SourceSampleIds)
+		{
+			if (!State.Samples.IsValidIndex(SampleId) || !VertexRecords.IsValidIndex(SampleId))
+			{
+				continue;
+			}
+			const CarrierLab::FSphereSample& Sample = State.Samples[SampleId];
+			const FCarrierLabPhaseIIIE5RemeshVertexRecord& Record = VertexRecords[SampleId];
+			AreaWeight += Sample.AreaWeight;
+			ContinentalFraction += Record.ContinentalFraction;
+			Elevation += Record.Elevation;
+			HistoricalElevation += Record.HistoricalElevation;
+			OceanicAge += Record.OceanicAge;
+			RidgeDirection += Record.RidgeDirection;
+			FoldDirection += Record.FoldDirection;
+			++SourceCount;
+		}
+
+		if (SourceCount > 0)
+		{
+			const double InvCount = 1.0 / static_cast<double>(SourceCount);
+			Vertex.AreaWeight = AreaWeight * InvCount;
+			Vertex.ContinentalFraction = FMath::Clamp(ContinentalFraction * InvCount, 0.0, 1.0);
+			Vertex.Elevation = Elevation * InvCount;
+			Vertex.HistoricalElevation = HistoricalElevation * InvCount;
+			Vertex.OceanicAge = OceanicAge * InvCount;
+			Vertex.RidgeDirection = RetangentAndNormalizeVectorField(RidgeDirection * InvCount, Vertex.UnitPosition);
+			Vertex.FoldDirection = RetangentAndNormalizeVectorField(FoldDirection * InvCount, Vertex.UnitPosition);
+			Vertex.bContinental = Vertex.ContinentalFraction >= 0.5;
+		}
+		return Plate.Vertices.Add(Vertex);
+	}
+
+	int32 AddPhaseIIIE5LocalTriangle(
+		CarrierLab::FCarrierPlate& Plate,
+		const int32 SourceTriangleId,
+		const int32 A,
+		const int32 B,
+		const int32 C,
+		const bool bBoundary)
+	{
+		CarrierLab::FCarrierPlateTriangle LocalTriangle;
+		LocalTriangle.A = A;
+		LocalTriangle.B = B;
+		LocalTriangle.C = C;
+		LocalTriangle.SourceTriangleId = SourceTriangleId;
+		LocalTriangle.bBoundary = bBoundary;
+		return Plate.LocalTriangles.Add(LocalTriangle);
+	}
+
 	ECarrierLabPhaseIIIE5TriangleAssignmentClass ClassifyPhaseIIIE5TriangleAssignment(
 		const int32 PlateA,
 		const int32 PlateB,
@@ -2545,7 +2618,7 @@ namespace
 			OutAssignedPlateId = PlateB;
 			return ECarrierLabPhaseIIIE5TriangleAssignmentClass::MajorityTwoOfThree;
 		}
-		return ECarrierLabPhaseIIIE5TriangleAssignmentClass::UnresolvedTripleJunction;
+		return ECarrierLabPhaseIIIE5TriangleAssignmentClass::TripleJunctionCentroidSplit;
 	}
 
 	FString ComputePhaseIIIE5PlateTopologyHash(const CarrierLab::FCarrierPlate& Plate)
@@ -2675,6 +2748,9 @@ namespace
 		HashMix(TopologyHash, static_cast<uint64>(Audit.GlobalTriangleCount + 1));
 		HashMix(TopologyHash, static_cast<uint64>(Audit.AssignedTriangleCount + 1));
 		HashMix(TopologyHash, static_cast<uint64>(Audit.MajorityTriangleCount + 1));
+		HashMix(TopologyHash, static_cast<uint64>(Audit.TripleJunctionCentroidSplitCount + 1));
+		HashMix(TopologyHash, static_cast<uint64>(Audit.TripleJunctionCentroidSplitLocalTriangleCount + 1));
+		HashMix(TopologyHash, static_cast<uint64>(Audit.TripleJunctionCentroidSplitSyntheticVertexCount + 1));
 		HashMix(TopologyHash, static_cast<uint64>(Audit.UnresolvedTripleJunctionCount + 1));
 		for (const FCarrierLabPhaseIIIE5PlateRebuildRecord& PlateRecord : Audit.PlateRecords)
 		{
@@ -5248,12 +5324,118 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
 		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::MajorityTwoOfThree:
 			++OutAudit.MajorityTriangleCount;
 			break;
+		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::TripleJunctionCentroidSplit:
+			++OutAudit.TripleJunctionCentroidSplitCount;
+			break;
 		case ECarrierLabPhaseIIIE5TriangleAssignmentClass::UnresolvedTripleJunction:
 			++OutAudit.UnresolvedTripleJunctionCount;
 			break;
 		default:
 			++OutAudit.InvalidTriangleCount;
 			break;
+		}
+
+		if (TriangleRecord.AssignmentClass == ECarrierLabPhaseIIIE5TriangleAssignmentClass::TripleJunctionCentroidSplit)
+		{
+			const int32 SourceVerts[3] = { Triangle.A, Triangle.B, Triangle.C };
+			const int32 SourcePlates[3] = { TriangleRecord.PlateA, TriangleRecord.PlateB, TriangleRecord.PlateC };
+			const FVector3d SourcePositions[3] =
+			{
+				State.Samples.IsValidIndex(Triangle.A) ? State.Samples[Triangle.A].UnitPosition : FVector3d::UnitX(),
+				State.Samples.IsValidIndex(Triangle.B) ? State.Samples[Triangle.B].UnitPosition : FVector3d::UnitY(),
+				State.Samples.IsValidIndex(Triangle.C) ? State.Samples[Triangle.C].UnitPosition : FVector3d::UnitZ()
+			};
+			const FVector3d EdgeMidpoints[3] =
+			{
+				NormalizeOrFallback(SourcePositions[0] + SourcePositions[1], SourcePositions[0]),
+				NormalizeOrFallback(SourcePositions[1] + SourcePositions[2], SourcePositions[1]),
+				NormalizeOrFallback(SourcePositions[2] + SourcePositions[0], SourcePositions[2])
+			};
+			const FVector3d Centroid = NormalizeOrFallback(
+				SourcePositions[0] + SourcePositions[1] + SourcePositions[2],
+				SourcePositions[0]);
+
+			bool bSplitOk = true;
+			int32 FirstLocalTriangleId = INDEX_NONE;
+			int32 LocalTriangleCount = 0;
+			int32 SyntheticVertexCount = 0;
+			for (int32 Corner = 0; Corner < 3; ++Corner)
+			{
+				const int32 PlateId = SourcePlates[Corner];
+				if (!State.Plates.IsValidIndex(PlateId) || !State.Samples.IsValidIndex(SourceVerts[Corner]))
+				{
+					bSplitOk = false;
+					break;
+				}
+
+				CarrierLab::FCarrierPlate& Plate = State.Plates[PlateId];
+				const int32 Next = (Corner + 1) % 3;
+				const int32 Prev = (Corner + 2) % 3;
+				const int32 CornerVertexId = FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[SourceVerts[Corner]]);
+				const int32 NextMidpointVertexId = AddPhaseIIIE5SyntheticLocalVertex(
+					Plate,
+					EdgeMidpoints[Corner],
+					TArray<int32>{ SourceVerts[Corner], SourceVerts[Next] },
+					VertexRecords,
+					State);
+				const int32 CentroidVertexId = AddPhaseIIIE5SyntheticLocalVertex(
+					Plate,
+					Centroid,
+					TArray<int32>{ SourceVerts[0], SourceVerts[1], SourceVerts[2] },
+					VertexRecords,
+					State);
+				const int32 PrevMidpointVertexId = AddPhaseIIIE5SyntheticLocalVertex(
+					Plate,
+					EdgeMidpoints[Prev],
+					TArray<int32>{ SourceVerts[Prev], SourceVerts[Corner] },
+					VertexRecords,
+					State);
+				SyntheticVertexCount += 3;
+
+				const int32 LocalA = AddPhaseIIIE5LocalTriangle(
+					Plate,
+					TriangleId,
+					CornerVertexId,
+					NextMidpointVertexId,
+					CentroidVertexId,
+					true);
+				const int32 LocalB = AddPhaseIIIE5LocalTriangle(
+					Plate,
+					TriangleId,
+					CornerVertexId,
+					CentroidVertexId,
+					PrevMidpointVertexId,
+					true);
+				if (FirstLocalTriangleId == INDEX_NONE)
+				{
+					FirstLocalTriangleId = LocalA;
+					TriangleRecord.AssignedPlateId = PlateId;
+				}
+				LocalTriangleCount += 2;
+				Plate.TriangleIds.AddUnique(TriangleId);
+				if (State.SampleRayCandidateTriangles.IsValidIndex(SourceVerts[Corner]))
+				{
+					State.SampleRayCandidateTriangles[SourceVerts[Corner]].Add(
+						CarrierLab::FCarrierRayTriangleRef{ Plate.PlateId, LocalA });
+					State.SampleRayCandidateTriangles[SourceVerts[Corner]].Add(
+						CarrierLab::FCarrierRayTriangleRef{ Plate.PlateId, LocalB });
+				}
+			}
+
+			if (!bSplitOk)
+			{
+				++OutAudit.InvalidTriangleCount;
+				Triangle.PlateId = INDEX_NONE;
+				continue;
+			}
+
+			TriangleRecord.LocalTriangleId = FirstLocalTriangleId;
+			TriangleRecord.LocalTriangleCount = LocalTriangleCount;
+			Triangle.PlateId = INDEX_NONE;
+			++OutAudit.AssignedTriangleCount;
+			OutAudit.TripleJunctionCentroidSplitLocalTriangleCount += LocalTriangleCount;
+			OutAudit.TripleJunctionCentroidSplitSyntheticVertexCount += SyntheticVertexCount;
+			continue;
 		}
 
 		if (!State.Plates.IsValidIndex(TriangleRecord.AssignedPlateId))
@@ -5263,13 +5445,14 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
 		}
 
 		CarrierLab::FCarrierPlate& Plate = State.Plates[TriangleRecord.AssignedPlateId];
-		CarrierLab::FCarrierPlateTriangle LocalTriangle;
-		LocalTriangle.A = FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.A]);
-		LocalTriangle.B = FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.B]);
-		LocalTriangle.C = FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.C]);
-		LocalTriangle.SourceTriangleId = TriangleId;
-		LocalTriangle.bBoundary = TriangleRecord.bBoundary;
-		TriangleRecord.LocalTriangleId = Plate.LocalTriangles.Add(LocalTriangle);
+		TriangleRecord.LocalTriangleId = AddPhaseIIIE5LocalTriangle(
+			Plate,
+			TriangleId,
+			FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.A]),
+			FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.B]),
+			FindOrAddPhaseIIIE5LocalVertex(Plate, State.Samples[Triangle.C]),
+			TriangleRecord.bBoundary);
+		TriangleRecord.LocalTriangleCount = 1;
 		Triangle.PlateId = TriangleRecord.AssignedPlateId;
 		Plate.TriangleIds.Add(TriangleId);
 		AssignedTriangleAuthorityCounts.FindOrAdd(TriangleId)++;
@@ -5395,12 +5578,18 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
 	OutAudit.bNoProjectionOwnerFallback = OutAudit.ProjectionOwnerFallbackCount == 0;
 	OutAudit.bNoPolicyWinner = OutAudit.PolicyWinnerCount == 0;
 	OutAudit.bNoUnresolvedMultiHitRouted = OutAudit.UnresolvedMultiHitRoutedCount == 0;
+	OutAudit.bTripleJunctionCentroidSplitApplied =
+		OutAudit.TripleJunctionCentroidSplitCount == 0 ||
+		(OutAudit.UnresolvedTripleJunctionCount == 0 &&
+			OutAudit.TripleJunctionCentroidSplitLocalTriangleCount == OutAudit.TripleJunctionCentroidSplitCount * 6 &&
+			OutAudit.TripleJunctionCentroidSplitSyntheticVertexCount == OutAudit.TripleJunctionCentroidSplitCount * 9);
 	OutAudit.VertexRecords = MoveTemp(VertexRecords);
 	OutAudit.bApplied =
 		OutAudit.MissingVertexAssignmentCount == 0 &&
 		OutAudit.InvalidAssignedPlateCount == 0 &&
 		OutAudit.InvalidTriangleCount == 0 &&
 		OutAudit.UnresolvedTripleJunctionCount == 0 &&
+		OutAudit.bTripleJunctionCentroidSplitApplied &&
 		OutAudit.bNoDuplicateTriangleAuthority &&
 		OutAudit.bPlateLocalTopologyCompact &&
 		OutAudit.ResetAudit.bResetSerialAdvanced &&

@@ -1,6 +1,6 @@
 # Phase IIIE.6 Remesh Ledger Reframe And Cadence Wire-Up
 
-Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and ridge overwrite, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, resolve triple-junction policy, claim zGamma's profile law is paper-sourced, or retire legacy comparison code.
+Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and ridge overwrite, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, claim zGamma's profile law is paper-sourced, or retire legacy comparison code.
 
 ## Scope
 
@@ -14,10 +14,10 @@ Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. Th
 
 | Gate | Result | Evidence |
 |---|---:|---|
-| No-hit live remesh event ledger | pass | selection `no-hit divergent gap`, raw/post-filter `0/0`, generated `1`, q1/q2 `0/1`, new oceanic `1` (`1.000` sample-eq), overwritten `0` (`0.000` continental fraction), ledger reconciles `1`, reset `0->1`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, geophysics/paper zGamma `1/0`, topology `f4e282af487e88e7`, event `fe3f48c75fc1381a`. |
-| Filter-exhausted continental overwrite hold | hold | selection `divergent gap after filtering`, raw/post-filter `2/0`, generated `1`, q1/q2 `0/1`, new oceanic `0` (`0.000` sample-eq), overwritten `1` (`1.000` continental fraction), ledger reconciles `1`, reset `0->1`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, geophysics/paper zGamma `1/0`, topology `f9a8e8b58238b830`, event `486f11b2febb008f`. |
-| Post-rebuild IIIB tracking gate | pass | topology `f23cd4346fd0480b`, reset `0->1`, seed plate/local `0/170`, other `1`, active `2`, distances `2`, matrix pairs `1`, accepted positive `1`, propagation seed/added `1/1`, closure reset `1`, hash `219f4be735724106`. |
-| Same-seed remesh-event replay | pass | Event hashes `fe3f48c75fc1381a` and `fe3f48c75fc1381a`. |
+| No-hit live remesh event ledger | pass | selection `no-hit divergent gap`, raw/post-filter `0/0`, generated `1`, q1/q2 `0/1`, new oceanic `1` (`1.000` sample-eq), overwritten `0` (`0.000` continental fraction), ledger reconciles `1`, reset `0->1`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, geophysics/paper zGamma `1/0`, topology `4f877056e71d554d`, event `95c03bd57d42aea2`. |
+| Filter-exhausted continental overwrite hold | hold | selection `divergent gap after filtering`, raw/post-filter `2/0`, generated `1`, q1/q2 `0/1`, new oceanic `0` (`0.000` sample-eq), overwritten `1` (`1.000` continental fraction), ledger reconciles `1`, reset `0->1`, policy/prior/projection `0/0/0`, q/zGamma `1/1`, geophysics/paper zGamma `1/0`, topology `0416d15119dbe58a`, event `9a618a6bd8429baa`. |
+| Post-rebuild IIIB tracking gate | pass | topology `df45ff4c3c0e85a0`, reset `0->1`, seed plate/local `0/170`, other `1`, active `2`, distances `2`, matrix pairs `1`, accepted positive `1`, propagation seed/added `1/1`, closure reset `1`, hash `f2cca799add92f9e`. |
+| Same-seed remesh-event replay | pass | Event hashes `95c03bd57d42aea2` and `95c03bd57d42aea2`. |
 
 ## Contract Table
 
@@ -48,7 +48,7 @@ Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. Th
 |---|---|---|
 | zGamma profile law | Deferred / named lab extension | Current sqrt-distance profile is geophysics-derived and realistic, but the paper/thesis do not provide a closed-form zGamma equation. |
 | Two-of-three mixed triangle majority | Approved CarrierLab lab policy | IIIE.5 exposes and gates the deterministic majority rule: if exactly two global-TDS vertices assign to one plate, that plate owns the rebuilt triangle. This is approved only as disclosed lab policy, not as paper text. |
-| One-one-one triple-junction topology | Deferred / hold | IIIE.5 leaves these unresolved rather than inventing authority. |
+| One-one-one triple-junction topology | Approved CarrierLab centroid-split lab policy | IIIE.5 subdivides one-one-one global triangles into per-plate centroid wedges without a whole-triangle winner. |
 | Continental overwrite by divergent ridge generation | Deferred / hold | IIIE.6 makes the ledger line visible and non-silent; production cadence policy remains a consolidation decision. |
 
 ## Stop Conditions For IIIE Consolidation+
@@ -58,7 +58,7 @@ Verdict: PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED. Th
 - Stop if Stage 1.5 owner/projection/recovery behavior becomes primary IIIE remesh authority.
 - Stop if post-rebuild IIIB tracking cannot seed active lists, distance records, matrix evidence, propagation, and closure from rebuilt plate-local topology.
 - Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.
-- Stop if the majority rule is described as paper-faithful rather than approved lab policy, or if any triple-junction topology policy is used without explicit approval and gates.
+- Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.
 
 ## Next Slice Boundary
 
