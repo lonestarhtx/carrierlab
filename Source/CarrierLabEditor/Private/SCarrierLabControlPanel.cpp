@@ -148,7 +148,10 @@ void SCarrierLabControlPanel::Construct(const FArguments& InArgs)
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::PhaseIIISummary),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::ElevationHeatmap),
 		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::SubductionMask),
-		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap)
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::DistanceToFrontHeatmap),
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::OceanicAgeHeatmap),
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::RidgeDirection),
+		MakeShared<ECarrierLabVisualizationLayer>(ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary)
 	};
 
 	RefreshTargetActor();
@@ -261,6 +264,7 @@ void SCarrierLabControlPanel::ApplyPanelConfigToActor(ACarrierLabVisualizationAc
 	Actor.Seed = PendingSeed;
 	Actor.StepsPerSecond = PendingStepRate;
 	Actor.bEnableNaturalResamplingEvents = bPendingAutoResample;
+	Actor.ConfigurePhaseIIICProcessLayer(bPendingPhaseIIIProcess, false);
 	Actor.SetMultiHitPolicy(PendingPolicy);
 	Actor.SetVisualizationLayer(PendingLayer);
 }
@@ -1487,8 +1491,8 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 			+ SUniformGridPanel::Slot(3, 0)
 			[
 				BuildActionButton(
-					LOCTEXT("ResampleNow", "Lab Resample Now"),
-					LOCTEXT("ResampleNowDetail", "Stage 1.5 lab-policy remesh."),
+					LOCTEXT("ResampleNow", "Legacy Stage 1.5 Resample"),
+					LOCTEXT("ResampleNowDetail", "Comparison-only lab remesh; not the IIIE primary path."),
 					MutationColor(),
 					FOnClicked::CreateSP(this, &SCarrierLabControlPanel::OnResampleClicked),
 					true)
@@ -1505,7 +1509,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 6.0f)
 		[
 			SNew(STextBlock)
-			.Text(LOCTEXT("MutationNote", "Lab Resample Now mutates carrier state through the Stage 1.5 lab-policy remesh path until IIIE replaces it. It is not paper-primary evidence."))
+			.Text(LOCTEXT("MutationNote", "The resample button intentionally remains the legacy Stage 1.5 comparison path. IIIE remesh work is visible through the Phase III process layers, audits, and commandlet gates until the production cadence is promoted."))
 			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
 			.AutoWrapText(true)
 		]
@@ -1527,6 +1531,28 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("AutoResample", "Auto resample at observed-speed cadence"))
+			]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)
+		[
+			SNew(SCheckBox)
+			.IsChecked_Lambda([this]()
+			{
+				return bPendingPhaseIIIProcess ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			})
+			.OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState)
+			{
+				bPendingPhaseIIIProcess = NewState == ECheckBoxState::Checked;
+				if (ACarrierLabVisualizationActor* Actor = GetCarrierActor(false))
+				{
+					Actor->ConfigurePhaseIIICProcessLayer(bPendingPhaseIIIProcess, false);
+					Actor->RefreshPhaseIIIMetricsForTest();
+					CaptureLiveProjectionSnapshot();
+				}
+			})
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("PhaseIIIProcessVisible", "Phase III process on step (IIIB-IIID + elevation; slab pull off)"))
 			]
 		]
 		+ SVerticalBox::Slot().AutoHeight()
@@ -1905,11 +1931,13 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 	return FText::FromString(FString::Printf(
 		TEXT("Source: Live Actor snapshot @ %s\n")
 		TEXT("actor: %s | initialized: %s | playing: %s | step: %d | next resample: %d | events: %d\n")
-		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | auto resample: %s\n")
+		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | auto resample: %s | phase iii process: %s\n")
 		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | policy-resolved multi-hit: %d | boundary hits: %d | NaN/Inf: %d\n")
+		TEXT("phaseIII active=%d dist=%d matrix=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\n")
+		TEXT("crust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f] km max_age=%.3f Ma\n")
 		TEXT("last remesh mode: %s\n")
 		TEXT("Auth CAF: %.6f | Projected CAF: %.6f | drift mean: %.9f km | drift p95: %.9f km\n")
-		TEXT("projection hash: %s | state hash: %s"),
+		TEXT("projection hash: %s | state hash: %s | crust hash: %s | convergence hash: %s"),
 		*FormatTimestamp(LiveProjection.CapturedAt),
 		*LiveProjection.ActorLabel,
 		LiveProjection.bInitialized ? TEXT("yes") : TEXT("no"),
@@ -1921,6 +1949,7 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		Metrics.CadenceDeltaTMa,
 		Metrics.ObservedMaxPlateSpeedMmPerYear,
 		bPendingAutoResample ? TEXT("on") : TEXT("off"),
+		bPendingPhaseIIIProcess ? TEXT("on") : TEXT("off"),
 		Metrics.SampleCount,
 		Metrics.PlateCount,
 		*PercentString(Metrics.RawMissCount, Metrics.SampleCount),
@@ -1930,13 +1959,31 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		Metrics.PolicyResolvedMultiHitCount,
 		Metrics.BoundaryHitCount,
 		Metrics.NaNOrInfCount,
+		Metrics.PhaseIIIActiveBoundaryTriangleCount,
+		Metrics.PhaseIIIDistanceToFrontRecordCount,
+		Metrics.PhaseIIISubductionMatrixPairCount,
+		Metrics.PhaseIIISubductionMatrixEvidenceCount,
+		Metrics.PhaseIIISubductionHitCount,
+		Metrics.PhaseIIISubductingMarkCount,
+		Metrics.PhaseIIIObductionMarkCount,
+		Metrics.PhaseIIICollisionPendingTriangleCount,
+		Metrics.PhaseIIIConvergenceResetSerial,
+		Metrics.PhaseIIIOceanicSampleCount,
+		Metrics.PhaseIIIRidgeDirectionSampleCount,
+		Metrics.PhaseIIIFoldDirectionSampleCount,
+		Metrics.PhaseIIIHistoricalElevationSampleCount,
+		Metrics.PhaseIIIMinVisibleElevationKm,
+		Metrics.PhaseIIIMaxVisibleElevationKm,
+		Metrics.PhaseIIIMaxOceanicAgeMa,
 		Metrics.LastRemeshMode.IsEmpty() ? TEXT("none") : *Metrics.LastRemeshMode,
 		Metrics.AuthoritativeCAF,
 		Metrics.ProjectedCAF,
 		Metrics.DriftErrorMeanKm,
 		Metrics.DriftErrorP95Km,
 		*Metrics.LastHash,
-		*Metrics.StateHash));
+		*Metrics.StateHash,
+		*Metrics.CrustStateHash,
+		*Metrics.ConvergenceTrackingHash));
 }
 
 FText SCarrierLabControlPanel::GetLiveTimingText() const
@@ -2162,6 +2209,12 @@ FString SCarrierLabControlPanel::LayerToString(const ECarrierLabVisualizationLay
 		return TEXT("SubductionMask");
 	case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
 		return TEXT("DistanceToFront");
+	case ECarrierLabVisualizationLayer::OceanicAgeHeatmap:
+		return TEXT("OceanicAge");
+	case ECarrierLabVisualizationLayer::RidgeDirection:
+		return TEXT("RidgeDirection");
+	case ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary:
+		return TEXT("PhaseIIIERemesh");
 	case ECarrierLabVisualizationLayer::PlateId:
 	default:
 		return TEXT("PlateId");

@@ -125,8 +125,9 @@ private:
 	int32 PendingSeed = 42;
 	double PendingStepRate = 2.0;
 	bool bPendingAutoResample = false;
+	bool bPendingPhaseIIIProcess = true;
 	ECarrierLabMultiHitPolicy PendingPolicy = ECarrierLabMultiHitPolicy::Centroid;
-	ECarrierLabVisualizationLayer PendingLayer = ECarrierLabVisualizationLayer::PlateId;
+	ECarrierLabVisualizationLayer PendingLayer = ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary;
 	double LastLiveRefreshSeconds = -1000.0;
 	int32 TargetActorCount = 0;
 	FString TargetSourceText;
