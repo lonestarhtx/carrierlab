@@ -789,6 +789,8 @@ struct FCarrierLabPhaseIIIE5RemeshVertexRecord
 	bool bUsedZGammaDistanceProfilePlaceholder = false;
 	bool bUsedZGammaGeophysicsDerivedProfile = false;
 	bool bPaperFaithfulZGammaProfile = false;
+	double PreRemeshContinentalFraction = 0.0;
+	double PreRemeshElevation = 0.0;
 	double ContinentalFraction = 0.0;
 	double Elevation = 0.0;
 	double HistoricalElevation = 0.0;
@@ -2081,6 +2083,7 @@ public:
 		FCarrierLabPhaseIIIE5CollisionPendingWireAudit& OutAudit,
 		FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutSelectionAudit,
 		double InterpenetrationThresholdKm = 300.0);
+	bool RefreshPhaseIIIMetricsForTest();
 	bool RunPhaseIIIE3FilteredRemeshSelectionAudit(FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit);
 	bool RunPhaseIIIE3FilteredRemeshSelectionAuditForSamples(
 		const TArray<int32>& SampleIds,

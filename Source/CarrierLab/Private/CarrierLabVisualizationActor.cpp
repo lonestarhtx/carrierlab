@@ -4983,6 +4983,8 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
 		Record.SampleId = Sample.Id;
 		Record.AssignedPlateId = Fixture.bForceAllSamplesToPlateZero ? 0 : Sample.PlateId;
 		Record.bResolvedSingleHit = true;
+		Record.PreRemeshContinentalFraction = Sample.ContinentalFraction;
+		Record.PreRemeshElevation = Sample.Elevation;
 		Record.ContinentalFraction = Sample.ContinentalFraction;
 		Record.Elevation = Sample.Elevation;
 		Record.HistoricalElevation = Sample.HistoricalElevation;
@@ -5441,6 +5443,16 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5CollisionPendingWireFixtureForT
 		OutAudit.FilteredObductionPendingCount = OutSelectionAudit.FilteredObductionPendingCount;
 		OutAudit.SelectionHash = OutSelectionAudit.SelectionHash;
 	}
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::RefreshPhaseIIIMetricsForTest()
+{
+	if (!bInitialized)
+	{
+		return false;
+	}
+	ProjectCurrentCarrier();
 	return true;
 }
 
