@@ -265,11 +265,11 @@ ACarrierLabVisualizationActor* SCarrierLabControlPanel::GetCarrierActor(const bo
 
 void SCarrierLabControlPanel::ApplyLatestLiveDisplayDefaults(ACarrierLabVisualizationActor& Actor)
 {
-	bPendingAutoResample = false;
+	bPendingAutoResample = true;
 	bPendingPhaseIIIProcess = true;
 	PendingLayer = ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary;
 
-	Actor.bEnableNaturalResamplingEvents = false;
+	Actor.bEnableNaturalResamplingEvents = true;
 	Actor.ConfigurePhaseIIICProcessLayer(true, false);
 	Actor.SetVisualizationLayer(PendingLayer);
 }
@@ -654,7 +654,7 @@ FReply SCarrierLabControlPanel::OnResampleClicked()
 	if (ACarrierLabVisualizationActor* Actor = GetCarrierActor(false))
 	{
 		ApplyPanelConfigToActor(*Actor);
-		Actor->ApplyResampleEvent();
+		Actor->ApplyPhaseIIIELiveRemeshEvent();
 		CaptureLiveProjectionSnapshot();
 	}
 	return FReply::Handled();
@@ -961,7 +961,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildTopStatusBar()
 		]
 		+ SGridPanel::Slot(3, 1)
 		[
-			BuildLabeledValue(LOCTEXT("StatusSpeedAuto", "Speed / Legacy Auto"), TAttribute<FText>::CreateLambda([this]()
+			BuildLabeledValue(LOCTEXT("StatusSpeedAuto", "Speed / IIIE Auto"), TAttribute<FText>::CreateLambda([this]()
 			{
 				if (!LiveProjection.bHasSnapshot)
 				{
@@ -1508,8 +1508,8 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 			+ SUniformGridPanel::Slot(3, 0)
 			[
 				BuildActionButton(
-					LOCTEXT("ResampleNow", "Legacy Stage 1.5 Resample"),
-					LOCTEXT("ResampleNowDetail", "Comparison-only lab remesh; not the IIIE primary path."),
+					LOCTEXT("ResampleNow", "Run IIIE.6 Remesh"),
+					LOCTEXT("ResampleNowDetail", "Audited IIIE selection, gap fill, rebuild, and ledger path."),
 					MutationColor(),
 					FOnClicked::CreateSP(this, &SCarrierLabControlPanel::OnResampleClicked),
 					true)
@@ -1526,7 +1526,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 6.0f)
 		[
 			SNew(STextBlock)
-			.Text(LOCTEXT("MutationNote", "The workbench defaults to the latest Phase III process display: process layers on, slab pull off, legacy auto-resample off, and the IIIE summary layer selected. The manual resample button remains the legacy Stage 1.5 comparison path until the production cadence is promoted."))
+			.Text(LOCTEXT("MutationNote", "The workbench defaults to the promoted IIIE.6 live path: process layers on, slab pull off, auto-remesh on at observed-speed cadence, and the IIIE summary layer selected. Unresolved multi-hit classes still hold fail-loud instead of falling back to Stage 1.5 policy."))
 			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.25f, 1.0f)))
 			.AutoWrapText(true)
 		]
@@ -1547,13 +1547,13 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildCarrierControls()
 			})
 			[
 				SNew(STextBlock)
-				.Text(LOCTEXT("AutoResample", "Legacy auto-resample at observed-speed cadence (not IIIE primary)"))
+				.Text(LOCTEXT("AutoResample", "Auto IIIE.6 remesh at observed-speed cadence"))
 			]
 		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, -2.0f, 0.0f, 6.0f)
 		[
 			SNew(STextBlock)
-			.Text(LOCTEXT("AutoResampleWarning", "Use legacy auto-resample only as a comparison stress test. It can fragment the live diagnostic mesh and does not run the IIIE.6 selection -> gap-fill -> rebuild ledger path."))
+			.Text(LOCTEXT("AutoResampleWarning", "Live remesh now uses the IIIE.6 audited chain. If unresolved multi-hit samples remain, the event records a hold instead of applying a policy winner."))
 			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.72f, 0.28f, 1.0f)))
 			.AutoWrapText(true)
 		]
@@ -1768,7 +1768,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildPolicySelector()
 	return SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)
 		[
-			SNew(STextBlock).Text(LOCTEXT("Policy", "Multi-hit policy"))
+			SNew(STextBlock).Text(LOCTEXT("Policy", "Legacy 1.5 policy"))
 		]
 		+ SHorizontalBox::Slot().FillWidth(1.0f)
 		[
@@ -1955,9 +1955,10 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 	return FText::FromString(FString::Printf(
 		TEXT("Source: Live Actor snapshot @ %s\n")
 		TEXT("actor: %s | initialized: %s | playing: %s | step: %d | next resample: %d | events: %d\n")
-		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | legacy auto resample: %s | phase iii process: %s\n")
-		TEXT("live remesh status: IIIE.6 audited cadence is commandlet-only; live auto-resample still uses the legacy/Phase II filtered path\n")
+		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | IIIE auto remesh: %s | phase iii process: %s\n")
+		TEXT("live remesh: IIIE.6 selection -> gap-fill -> topology rebuild -> ledger; unresolved multi-hit holds fail-loud\n")
 		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | policy-resolved multi-hit: %d | boundary hits: %d | NaN/Inf: %d\n")
+		TEXT("iiie last gen/apply/rift/hold/tj=%d/%d/%d/%d/%d\n")
 		TEXT("phaseIII active=%d dist=%d matrix=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\n")
 		TEXT("crust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f] km max_age=%.3f Ma\n")
 		TEXT("last remesh mode: %s\n")
@@ -1984,6 +1985,11 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		Metrics.PolicyResolvedMultiHitCount,
 		Metrics.BoundaryHitCount,
 		Metrics.NaNOrInfCount,
+		Metrics.PhaseIIIELastGeneratedCandidateCount,
+		Metrics.PhaseIIIELastAppliedGeneratedCount,
+		Metrics.PhaseIIIELastRiftingPendingCount,
+		Metrics.PhaseIIIELastUnresolvedMultiHitHoldCount,
+		Metrics.PhaseIIIELastTripleJunctionSplitCount,
 		Metrics.PhaseIIIActiveBoundaryTriangleCount,
 		Metrics.PhaseIIIDistanceToFrontRecordCount,
 		Metrics.PhaseIIISubductionMatrixPairCount,

@@ -837,13 +837,13 @@ namespace
 		FString Report;
 		Report += TEXT("# Phase IIIE Diagnostic Contact Sheets\n\n");
 		Report += TEXT("Verdict: ");
-		Report += bOverallPass ? TEXT("PASS / DIAGNOSTIC CONTACT SHEETS WRITTEN; LIVE PROMOTION STILL HELD") : TEXT("FAIL / HOLD DIAGNOSTIC CONTACT SHEETS");
-		Report += TEXT(". This checkpoint exports dedicated diagnostic PNG contact sheets for the IIIE.3 -> IIIE.4 -> IIIE.5 -> IIIE.6 bounded chain as it exists today. It does not promote IIIE.6 into live cadence; majority assignment, triple-junction splitting, and continental rifting-pending routing are now visible as audited prerequisites.\n\n");
+		Report += bOverallPass ? TEXT("PASS / DIAGNOSTIC CONTACT SHEETS WRITTEN FOR PROMOTED IIIE.6 CHAIN") : TEXT("FAIL / HOLD DIAGNOSTIC CONTACT SHEETS");
+		Report += TEXT(". This checkpoint exports dedicated diagnostic PNG contact sheets for the IIIE.3 -> IIIE.4 -> IIIE.5 -> IIIE.6 bounded chain as it exists today. It is a visual regression diagnostic for the promoted IIIE.6 cadence; it does not itself mutate the editor's live actor, relax unresolved multi-hit holds, or claim images are proof.\n\n");
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- The export runs the same bounded IIIE.6 event cases: no-hit divergent ocean creation and filter-exhausted continental rifting-pending route.\n");
 		Report += TEXT("- Each replay writes pre-state maps, a selection/generation card, post-rebuild maps, and a ledger card into one contact sheet.\n");
-		Report += TEXT("- The commandlet deliberately leaves live auto-resampling on the existing comparison path. These images are diagnostic artifacts for the audited helper chain, not proof and not a production-cadence claim.\n");
+		Report += TEXT("- The commandlet is a read-only export diagnostic; live auto-remesh promotion is owned by the IIIE.6 commandlet/report, not by these images.\n");
 		Report += TEXT("- The filter-exhausted continental case now records `rifting pending`: IIIE.4 provenance is visible, but no generated oceanic record is applied over continental material.\n\n");
 
 		Report += TEXT("## Gates\n\n");
@@ -922,8 +922,8 @@ namespace
 		Report += TEXT("- The maps are human-spatial diagnostics only. The commandlet gates determinism, read-only export, no forbidden fallback counters, and expected ledger classification; it does not replace the numeric IIIE.2-6 commandlets.\n\n");
 
 		Report += TEXT("## Next Required Work\n\n");
-		Report += TEXT("1. Promote IIIE.6 to live cadence only through the audited chain, with unresolved multi-hit classes still fail-loud.\n");
-		Report += TEXT("2. Keep the contact-sheet export as a regression diagnostic after live promotion.\n\n");
+		Report += TEXT("1. Keep the contact-sheet export as a regression diagnostic after live promotion.\n");
+		Report += TEXT("2. Use IIIE consolidation, not visual inspection alone, to disclose lab-policy choices and rerun the numeric gate chain.\n\n");
 		Report += FString::Printf(TEXT("Metrics: `%s`.\n"), *MetricsPath);
 		return Report;
 	}

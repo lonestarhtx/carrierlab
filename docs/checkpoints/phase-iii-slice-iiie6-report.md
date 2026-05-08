@@ -1,6 +1,6 @@
 # Phase IIIE.6 Remesh Ledger Reframe And Cadence Wire-Up
 
-Verdict: PASS / IIIE LIVE PROMOTION PREREQUISITES CLEARED; RIFTING-PENDING ROUTE ACTIVE. This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.
+Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, closes the post-rebuild IIIB tracking discontinuity, and promotes the actor's live natural remesh cadence onto the guarded IIIE.6 path. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.
 
 ## Scope
 
@@ -9,6 +9,8 @@ Verdict: PASS / IIIE LIVE PROMOTION PREREQUISITES CLEARED; RIFTING-PENDING ROUTE
 - The material ledger is reframed into two explicit divergent-generation lines: `new oceanic creation` when the pre-remesh continental fraction is effectively zero, and `rifting pending` when IIIE.4 computes divergent provenance over pre-existing continental material.
 - `rifting pending` is a no-overwrite handoff to IIIF, not a hidden correction and not a claim that rifting has been implemented. The generated q1/q2/qGamma and zGamma provenance remains event evidence, but the oceanic record is not injected into IIIE.5 topology rebuild over continental material.
 - The post-rebuild IIIB gate seeds convergence tracking after IIIE.5 topology rebuild/reset, then checks IIIB active lists, distance records, subduction matrix evidence, neighbor propagation, and hash closure on the rebuilt local topology.
+
+- The live actor now defaults to the IIIE remesh summary layer, Phase III process layers on, and auto-remesh routed through `ApplyPhaseIIIELiveRemeshEvent`; the legacy Stage 1.5 resample method and legacy multi-hit policy selector remain comparison-only surfaces.
 
 ## Gates
 
@@ -19,16 +21,20 @@ Verdict: PASS / IIIE LIVE PROMOTION PREREQUISITES CLEARED; RIFTING-PENDING ROUTE
 | Post-rebuild IIIB tracking gate | pass | topology `df45ff4c3c0e85a0`, reset `0->1`, seed plate/local `0/170`, other `1`, active `2`, distances `2`, matrix pairs `1`, accepted positive `1`, propagation seed/added `1/1`, closure reset `1`, hash `f2cca799add92f9e`. |
 | Same-seed remesh-event replay | pass | Event hashes `99b2957f76910bf5` and `99b2957f76910bf5`. |
 
+| Live actor IIIE.6 promotion smoke | pass | applied `0`, events `0->0`, samples/plates `96/1`, gen/apply/rift/hold/tj `0/0/0/73/0`, policy `0`, mode `phase_iii_e6_live_hold_unresolved_multi_hit_73`, crust `8b7758c51944a162->8b7758c51944a162`. |
+
 ## Contract Table
 
 | Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |
 |---|---|---|---|
-| Zero valid ray hits become divergent gap fill | No-hit IIIE.3 records route through IIIE.4 q1/q2/qGamma and then IIIE.5 rebuild/reset | Production cadence still needs scheduling around the natural remesh timestep | No-hit live remesh event ledger |
+| Zero valid ray hits become divergent gap fill | No-hit IIIE.3 records route through IIIE.4 q1/q2/qGamma and then IIIE.5 rebuild/reset | Live cadence now calls the guarded IIIE.6 path; unresolved multi-hit classes still hold fail-loud | No-hit live remesh event ledger |
 | Filter-exhausted hits become divergent gap fill only after process-state filtering | Filter-exhausted records route through the same provenance computation and preserve filter provenance via the IIIE.3 selection class | Collision/remesh same-step ordering remains the IIIE.1 convention: collision/suture authorization before remesh filtering | Filter-exhausted rifting-pending route |
 | New oceanic crust must be ledgered distinctly | IIIE.6 records `new oceanic creation` as an applied generated-ocean ledger line when pre-remesh continental material is absent | Convert this audit line into production material-ledger accounting when full cadence mutates live state | Ledger reconciliation columns |
 | Ridge generation must not silently overwrite continental material | IIIE.6 routes continental divergent generation to `rifting pending` and demonstrates in the fixture that the generated oceanic record is not applied to topology | IIIF must later consume or replace the pending route with a rifting implementation | Rifting-pending fixture |
 | Plate-local topology rebuild/reset must be the event continuation | IIIE.6 feeds generated records into the IIIE.5 duplicate/re-index/re-compact helper and observes reset in the same event gate | Keep Stage 1.5 recovery out of the primary path | Topology hash and reset columns |
 | IIIB tracking must work after rebuild | A post-rebuild actor seeds IIIB tracking from rebuilt local topology and checks active lists, distances, matrix evidence, propagation, and hash closure | Consolidation should still rerun the `CarrierLabPhaseIIID7` computed-vs-expected regression separately; this local gate only closes the topology boundary discontinuity | Post-rebuild IIIB tracking gate |
+
+| Live actor remesh must use the latest IIIE path by default | `ApplyNaturalResampleEvent`, the R key, and the workbench remesh button route through `ApplyPhaseIIIELiveRemeshEvent`; the workbench defaults auto-remesh on and IIIE summary visible | Consolidation should exercise a default multi-plate run and accept fail-loud holds where unresolved multi-hit classes still exist | Live actor promotion smoke |
 
 ## Forbidden Policy Checks
 
@@ -37,7 +43,7 @@ Verdict: PASS / IIIE LIVE PROMOTION PREREQUISITES CLEARED; RIFTING-PENDING ROUTE
 | Prior global owner/fraction fallback | Selection, generation, and topology counters remain zero. |
 | Projection-derived ownership authority | Topology projection-authority counter remains zero. |
 | Uncited remesh winner | Policy-winner counters remain zero; no multi-hit route is consumed. |
-| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit; IIIE.5 rebuild remains the authority path. |
+| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit or promoted live natural cadence; IIIE.5 rebuild remains the authority path. |
 | Unresolved multi-hit ridge generation | Not routed; IIIE.4 receives only no-hit and filter-exhausted divergent classes. |
 | zGamma paper-fidelity overclaim | Generated records preserve `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`. |
 | Silent continental overwrite by divergent ridge generation | Replaced by an explicit `rifting pending` ledger route; overwritten count remains zero. |
@@ -60,8 +66,10 @@ Verdict: PASS / IIIE LIVE PROMOTION PREREQUISITES CLEARED; RIFTING-PENDING ROUTE
 - Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.
 - Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.
 
+- Stop if the actor workbench, R key, or natural remesh cadence calls Stage 1.5 as the default live remesh path.
+
 ## Next Slice Boundary
 
-Next is guarded IIIE.6 live-cadence promotion: route the live natural remesh event through the bounded IIIE.3/IIIE.4/IIIE.5/IIIE.6 chain, keep unresolved multi-hit classes fail-loud, and show the latest Phase III surfaces by default. IIIE consolidation should then disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.
+Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.
 
 Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIE6/phase-iii-slice-iiie6-metrics.jsonl`.

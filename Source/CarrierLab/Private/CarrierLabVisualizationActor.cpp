@@ -42,6 +42,7 @@ namespace
 	constexpr double PhaseIIIE4RidgePeakElevationKm = -1.0;
 	constexpr double PhaseIIIE4AbyssalElevationKm = -6.0;
 	constexpr double PhaseIIIE4ZGammaGeophysicsReferenceDistanceKm = 3000.0;
+	constexpr double PhaseIIIEContinentalOverwriteThreshold = 1.0e-4;
 
 	struct FCarrierLabVizCandidate
 	{
@@ -5116,119 +5117,131 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE5TopologyRebuildFixtureForTest(
 	OutAudit.SampleCount = State.Samples.Num();
 	OutAudit.GlobalTriangleCount = State.Triangles.Num();
 	OutAudit.MotionHashBefore = ComputeMotionStateHash(Motions);
-	OutAudit.bFixtureOwnedVertexAssignmentRecords = true;
+	OutAudit.bFixtureOwnedVertexAssignmentRecords = !Fixture.bUseExplicitVertexRecords;
 
 	TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord> VertexRecords;
-	VertexRecords.SetNum(State.Samples.Num());
-	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	if (Fixture.bUseExplicitVertexRecords)
 	{
-		if (!VertexRecords.IsValidIndex(Sample.Id))
+		VertexRecords = Fixture.ExplicitVertexRecords;
+		if (VertexRecords.Num() != State.Samples.Num())
 		{
 			++OutAudit.MissingVertexAssignmentCount;
-			continue;
+			VertexRecords.SetNum(State.Samples.Num());
 		}
-		FCarrierLabPhaseIIIE5RemeshVertexRecord& Record = VertexRecords[Sample.Id];
-		Record.SampleId = Sample.Id;
-		Record.AssignedPlateId = Fixture.bForceAllSamplesToPlateZero ? 0 : Sample.PlateId;
-		Record.bResolvedSingleHit = true;
-		Record.PreRemeshContinentalFraction = Sample.ContinentalFraction;
-		Record.PreRemeshElevation = Sample.Elevation;
-		Record.ContinentalFraction = Sample.ContinentalFraction;
-		Record.Elevation = Sample.Elevation;
-		Record.HistoricalElevation = Sample.HistoricalElevation;
-		Record.OceanicAge = Sample.OceanicAge;
-		Record.RidgeDirection = Sample.RidgeDirection;
-		Record.FoldDirection = Sample.FoldDirection;
 	}
-
-	int32 OverrideVerts[3] = { INDEX_NONE, INDEX_NONE, INDEX_NONE };
-	if (State.Triangles.IsValidIndex(Fixture.OverrideTriangleId))
+	else
 	{
-		const CarrierLab::FSphereTriangle& Triangle = State.Triangles[Fixture.OverrideTriangleId];
-		OverrideVerts[0] = Triangle.A;
-		OverrideVerts[1] = Triangle.B;
-		OverrideVerts[2] = Triangle.C;
-		const int32 OverridePlates[3] = { Fixture.OverridePlateA, Fixture.OverridePlateB, Fixture.OverridePlateC };
-		for (int32 Index = 0; Index < 3; ++Index)
+		VertexRecords.SetNum(State.Samples.Num());
+		for (const CarrierLab::FSphereSample& Sample : State.Samples)
 		{
-			if (VertexRecords.IsValidIndex(OverrideVerts[Index]) && State.Plates.IsValidIndex(OverridePlates[Index]))
+			if (!VertexRecords.IsValidIndex(Sample.Id))
 			{
-				VertexRecords[OverrideVerts[Index]].AssignedPlateId = OverridePlates[Index];
+				++OutAudit.MissingVertexAssignmentCount;
+				continue;
 			}
+			FCarrierLabPhaseIIIE5RemeshVertexRecord& Record = VertexRecords[Sample.Id];
+			Record.SampleId = Sample.Id;
+			Record.AssignedPlateId = Fixture.bForceAllSamplesToPlateZero ? 0 : Sample.PlateId;
+			Record.bResolvedSingleHit = true;
+			Record.PreRemeshContinentalFraction = Sample.ContinentalFraction;
+			Record.PreRemeshElevation = Sample.Elevation;
+			Record.ContinentalFraction = Sample.ContinentalFraction;
+			Record.Elevation = Sample.Elevation;
+			Record.HistoricalElevation = Sample.HistoricalElevation;
+			Record.OceanicAge = Sample.OceanicAge;
+			Record.RidgeDirection = Sample.RidgeDirection;
+			Record.FoldDirection = Sample.FoldDirection;
 		}
-	}
 
-	if (Fixture.bInjectGeneratedOceanicRecord)
-	{
-		const int32 TargetSampleId = OverrideVerts[0] != INDEX_NONE ? OverrideVerts[0] : 0;
-		if (VertexRecords.IsValidIndex(TargetSampleId))
+		int32 OverrideVerts[3] = { INDEX_NONE, INDEX_NONE, INDEX_NONE };
+		if (State.Triangles.IsValidIndex(Fixture.OverrideTriangleId))
 		{
-			FCarrierLabPhaseIIIE5RemeshVertexRecord& Record = VertexRecords[TargetSampleId];
-			Record.bResolvedSingleHit = false;
-			Record.bDivergentGapRoute = true;
-			Record.bGeneratedOceanicCrust = true;
-			Record.AssignedPlateId = State.Plates.IsValidIndex(Fixture.GeneratedOceanicRecord.AssignedPlateId)
-				? Fixture.GeneratedOceanicRecord.AssignedPlateId
-				: Record.AssignedPlateId;
-			Record.ContinentalFraction = 0.0;
-			Record.Elevation = Fixture.GeneratedOceanicRecord.Elevation;
-			Record.HistoricalElevation = 0.0;
-			Record.OceanicAge = Fixture.GeneratedOceanicRecord.OceanicAge;
-			Record.RidgeDirection = Fixture.GeneratedOceanicRecord.RidgeDirection;
-			Record.FoldDirection = FVector3d::ZeroVector;
-			Record.bUsedZGammaDistanceProfilePlaceholder = Fixture.GeneratedOceanicRecord.bUsedZGammaDistanceProfilePlaceholder;
-			Record.bUsedZGammaGeophysicsDerivedProfile = Fixture.GeneratedOceanicRecord.bUsedZGammaGeophysicsDerivedProfile;
-			Record.bPaperFaithfulZGammaProfile = Fixture.GeneratedOceanicRecord.bPaperFaithfulZGammaProfile;
-			Record.OceanicRecord = Fixture.GeneratedOceanicRecord;
-			Record.OceanicRecord.SampleId = TargetSampleId;
-		}
-	}
-
-	if (Fixture.bSeedProcessStateBeforeRemesh)
-	{
-		for (CarrierLab::FCarrierPlate& Plate : State.Plates)
-		{
-			if (!Plate.LocalTriangles.IsEmpty())
+			const CarrierLab::FSphereTriangle& Triangle = State.Triangles[Fixture.OverrideTriangleId];
+			OverrideVerts[0] = Triangle.A;
+			OverrideVerts[1] = Triangle.B;
+			OverrideVerts[2] = Triangle.C;
+			const int32 OverridePlates[3] = { Fixture.OverridePlateA, Fixture.OverridePlateB, Fixture.OverridePlateC };
+			for (int32 Index = 0; Index < 3; ++Index)
 			{
-				Plate.ActiveBoundaryTriangles.AddUnique(0);
-				if (Plate.ActiveBoundaryTriangleDistancesKm.Num() < Plate.ActiveBoundaryTriangles.Num())
+				if (VertexRecords.IsValidIndex(OverrideVerts[Index]) && State.Plates.IsValidIndex(OverridePlates[Index]))
 				{
-					Plate.ActiveBoundaryTriangleDistancesKm.Add(123.0);
+					VertexRecords[OverrideVerts[Index]].AssignedPlateId = OverridePlates[Index];
 				}
-				break;
 			}
 		}
-		if (State.Plates.Num() >= 2)
+
+		if (Fixture.bInjectGeneratedOceanicRecord)
 		{
-			State.ConvergenceSubductionMatrixPairKeys.Add(MakePlatePairKey(0, 1));
-			CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence =
-				State.ConvergenceSubductionMatrixEvidence.AddDefaulted_GetRef();
-			Evidence.EvidenceId = 0;
-			Evidence.PairKey = MakePlatePairKey(0, 1);
-			Evidence.PlateId = 0;
-			Evidence.OtherPlateId = 1;
-			Evidence.LocalTriangleId = 0;
-			Evidence.OtherLocalTriangleId = 0;
-			Evidence.bAccepted = true;
-
-			CarrierLab::FConvergenceSubductingTriangleMark& SubductingMark =
-				State.ConvergenceSubductingTriangleMarks.AddDefaulted_GetRef();
-			SubductingMark.MarkId = 0;
-			SubductingMark.PairKey = Evidence.PairKey;
-			SubductingMark.PlateId = 0;
-			SubductingMark.OtherPlateId = 1;
-			SubductingMark.LocalTriangleId = 0;
-
-			CarrierLab::FConvergenceObductionTriangleMark& ObductionMark =
-				State.ConvergenceObductionTriangleMarks.AddDefaulted_GetRef();
-			ObductionMark.MarkId = 0;
-			ObductionMark.PairKey = Evidence.PairKey;
-			ObductionMark.PlateId = 1;
-			ObductionMark.OtherPlateId = 0;
-			ObductionMark.LocalTriangleId = 0;
-			State.ConvergenceCollisionPendingTriangleKeys.Add(MakePlateTriangleKey(0, 0));
+			const int32 TargetSampleId = OverrideVerts[0] != INDEX_NONE ? OverrideVerts[0] : 0;
+			if (VertexRecords.IsValidIndex(TargetSampleId))
+			{
+				FCarrierLabPhaseIIIE5RemeshVertexRecord& Record = VertexRecords[TargetSampleId];
+				Record.bResolvedSingleHit = false;
+				Record.bDivergentGapRoute = true;
+				Record.bGeneratedOceanicCrust = true;
+				Record.AssignedPlateId = State.Plates.IsValidIndex(Fixture.GeneratedOceanicRecord.AssignedPlateId)
+					? Fixture.GeneratedOceanicRecord.AssignedPlateId
+					: Record.AssignedPlateId;
+				Record.ContinentalFraction = 0.0;
+				Record.Elevation = Fixture.GeneratedOceanicRecord.Elevation;
+				Record.HistoricalElevation = 0.0;
+				Record.OceanicAge = Fixture.GeneratedOceanicRecord.OceanicAge;
+				Record.RidgeDirection = Fixture.GeneratedOceanicRecord.RidgeDirection;
+				Record.FoldDirection = FVector3d::ZeroVector;
+				Record.bUsedZGammaDistanceProfilePlaceholder = Fixture.GeneratedOceanicRecord.bUsedZGammaDistanceProfilePlaceholder;
+				Record.bUsedZGammaGeophysicsDerivedProfile = Fixture.GeneratedOceanicRecord.bUsedZGammaGeophysicsDerivedProfile;
+				Record.bPaperFaithfulZGammaProfile = Fixture.GeneratedOceanicRecord.bPaperFaithfulZGammaProfile;
+				Record.OceanicRecord = Fixture.GeneratedOceanicRecord;
+				Record.OceanicRecord.SampleId = TargetSampleId;
+			}
 		}
-		DistanceToFrontKmBySample.Init(321.0, State.Samples.Num());
+
+		if (Fixture.bSeedProcessStateBeforeRemesh)
+		{
+			for (CarrierLab::FCarrierPlate& Plate : State.Plates)
+			{
+				if (!Plate.LocalTriangles.IsEmpty())
+				{
+					Plate.ActiveBoundaryTriangles.AddUnique(0);
+					if (Plate.ActiveBoundaryTriangleDistancesKm.Num() < Plate.ActiveBoundaryTriangles.Num())
+					{
+						Plate.ActiveBoundaryTriangleDistancesKm.Add(123.0);
+					}
+					break;
+				}
+			}
+			if (State.Plates.Num() >= 2)
+			{
+				State.ConvergenceSubductionMatrixPairKeys.Add(MakePlatePairKey(0, 1));
+				CarrierLab::FConvergenceSubductionMatrixEvidence& Evidence =
+					State.ConvergenceSubductionMatrixEvidence.AddDefaulted_GetRef();
+				Evidence.EvidenceId = 0;
+				Evidence.PairKey = MakePlatePairKey(0, 1);
+				Evidence.PlateId = 0;
+				Evidence.OtherPlateId = 1;
+				Evidence.LocalTriangleId = 0;
+				Evidence.OtherLocalTriangleId = 0;
+				Evidence.bAccepted = true;
+
+				CarrierLab::FConvergenceSubductingTriangleMark& SubductingMark =
+					State.ConvergenceSubductingTriangleMarks.AddDefaulted_GetRef();
+				SubductingMark.MarkId = 0;
+				SubductingMark.PairKey = Evidence.PairKey;
+				SubductingMark.PlateId = 0;
+				SubductingMark.OtherPlateId = 1;
+				SubductingMark.LocalTriangleId = 0;
+
+				CarrierLab::FConvergenceObductionTriangleMark& ObductionMark =
+					State.ConvergenceObductionTriangleMarks.AddDefaulted_GetRef();
+				ObductionMark.MarkId = 0;
+				ObductionMark.PairKey = Evidence.PairKey;
+				ObductionMark.PlateId = 1;
+				ObductionMark.OtherPlateId = 0;
+				ObductionMark.LocalTriangleId = 0;
+				State.ConvergenceCollisionPendingTriangleKeys.Add(MakePlateTriangleKey(0, 0));
+			}
+			DistanceToFrontKmBySample.Init(321.0, State.Samples.Num());
+		}
 	}
 
 	FCarrierLabPhaseIIIE5ProcessResetAudit ResetBeforeRebuild;
@@ -10103,21 +10116,201 @@ bool ACarrierLabVisualizationActor::AdvanceOneStepWithNaturalResampling()
 	return false;
 }
 
-bool ACarrierLabVisualizationActor::ApplyNaturalResampleEvent()
+bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 {
-	if (bEnablePhaseIIICSubductingMarks)
+	if (!bInitialized && !InitializeCarrier())
 	{
-		TArray<FCarrierLabPhaseIITriangleLabelRecord> Labels;
-		TArray<FCarrierLabPhaseIIFilterDecisionRecord> Decisions;
-		FCarrierLabPhaseIIResamplingFilterMetrics FilterMetrics;
-		TArray<FCarrierLabPhaseIIMaterialRecord> MaterialRecords;
-		FCarrierLabPhaseIIMaterialLedgerMetrics MaterialMetrics;
-		return ApplyPhaseIIResamplingFilterEvent(Labels, Decisions, FilterMetrics, &MaterialRecords, &MaterialMetrics);
+		return false;
 	}
 
-	const int32 EventCountBefore = CurrentMetrics.EventCount;
-	ApplyResampleEvent();
-	return CurrentMetrics.EventCount > EventCountBefore;
+	const double StartSeconds = FPlatformTime::Seconds();
+	CurrentMetrics.PhaseIIIELastGeneratedCandidateCount = 0;
+	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = 0;
+	CurrentMetrics.PhaseIIIELastRiftingPendingCount = 0;
+	CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount = 0;
+
+	FCarrierLabPhaseIIIE3RemeshSelectionAudit SelectionAudit;
+	if (!RunPhaseIIIE3FilteredRemeshSelectionAudit(SelectionAudit))
+	{
+		CurrentMetrics.LastRemeshMode = TEXT("phase_iii_e6_live_hold_selection_failed");
+		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		return false;
+	}
+
+	CurrentMetrics.LastGapFillCount = SelectionAudit.DivergentGapRouteCount;
+	CurrentMetrics.PolicyResolvedMultiHitCount = SelectionAudit.PolicyWinnerCount;
+	CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount = SelectionAudit.UnresolvedMultiHitCount;
+	if (SelectionAudit.UnresolvedMultiHitCount > 0)
+	{
+		CurrentMetrics.LastRemeshMode = FString::Printf(
+			TEXT("phase_iii_e6_live_hold_unresolved_multi_hit_%d"),
+			SelectionAudit.UnresolvedMultiHitCount);
+		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		return false;
+	}
+
+	TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord> VertexRecords;
+	VertexRecords.SetNum(State.Samples.Num());
+	int32 InvalidRecordCount = 0;
+	int32 NonSeparatingGapFillCount = 0;
+	int32 NoBoundaryPairMissCount = 0;
+	int32 GeneratedCandidateCount = 0;
+	int32 AppliedGeneratedCount = 0;
+	int32 RiftingPendingCount = 0;
+
+	for (const FCarrierLabPhaseIIIE3SelectionRecord& SelectionRecord : SelectionAudit.Records)
+	{
+		if (!State.Samples.IsValidIndex(SelectionRecord.SampleId) || !VertexRecords.IsValidIndex(SelectionRecord.SampleId))
+		{
+			++InvalidRecordCount;
+			continue;
+		}
+
+		const CarrierLab::FSphereSample& Sample = State.Samples[SelectionRecord.SampleId];
+		FCarrierLabPhaseIIIE5RemeshVertexRecord& VertexRecord = VertexRecords[SelectionRecord.SampleId];
+		VertexRecord.SampleId = Sample.Id;
+		VertexRecord.AssignedPlateId = Sample.PlateId;
+		VertexRecord.PreRemeshContinentalFraction = Sample.ContinentalFraction;
+		VertexRecord.PreRemeshElevation = Sample.Elevation;
+		VertexRecord.ContinentalFraction = Sample.ContinentalFraction;
+		VertexRecord.Elevation = Sample.Elevation;
+		VertexRecord.HistoricalElevation = Sample.HistoricalElevation;
+		VertexRecord.OceanicAge = Sample.OceanicAge;
+		VertexRecord.RidgeDirection = Sample.RidgeDirection;
+		VertexRecord.FoldDirection = Sample.FoldDirection;
+
+		if (SelectionRecord.SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::ResolvedSingleHit)
+		{
+			if (!State.Plates.IsValidIndex(SelectionRecord.ResolvedPlateId))
+			{
+				++InvalidRecordCount;
+				continue;
+			}
+			VertexRecord.AssignedPlateId = SelectionRecord.ResolvedPlateId;
+			VertexRecord.bResolvedSingleHit = true;
+			VertexRecord.ContinentalFraction = SelectionRecord.ContinentalFraction;
+			VertexRecord.Elevation = SelectionRecord.Elevation;
+			VertexRecord.HistoricalElevation = SelectionRecord.HistoricalElevation;
+			VertexRecord.OceanicAge = SelectionRecord.OceanicAge;
+			VertexRecord.RidgeDirection = SelectionRecord.RidgeDirection;
+			VertexRecord.FoldDirection = SelectionRecord.FoldDirection;
+			continue;
+		}
+
+		if (IsPhaseIIIE4DivergentGapRoute(SelectionRecord.SelectionClass))
+		{
+			FCarrierLabPhaseIIIE4OceanicGenerationRecord OceanicRecord;
+			QueryPhaseIIIE4DivergentOceanicFieldsFromCurrentStateForTest(
+				Sample.UnitPosition,
+				SelectionRecord.SelectionClass,
+				OceanicRecord);
+
+			if (!OceanicRecord.bGeneratedOceanicCrust)
+			{
+				NoBoundaryPairMissCount += OceanicRecord.bBoundaryPairFound ? 0 : 1;
+				NonSeparatingGapFillCount += OceanicRecord.bNonSeparatingAnomaly ? 1 : 0;
+				++InvalidRecordCount;
+				continue;
+			}
+
+			++GeneratedCandidateCount;
+			VertexRecord.bResolvedSingleHit = false;
+			VertexRecord.bDivergentGapRoute = true;
+			VertexRecord.OceanicRecord = OceanicRecord;
+			VertexRecord.OceanicRecord.SampleId = Sample.Id;
+			VertexRecord.bUsedZGammaDistanceProfilePlaceholder = OceanicRecord.bUsedZGammaDistanceProfilePlaceholder;
+			VertexRecord.bUsedZGammaGeophysicsDerivedProfile = OceanicRecord.bUsedZGammaGeophysicsDerivedProfile;
+			VertexRecord.bPaperFaithfulZGammaProfile = OceanicRecord.bPaperFaithfulZGammaProfile;
+
+			if (Sample.ContinentalFraction > PhaseIIIEContinentalOverwriteThreshold)
+			{
+				++RiftingPendingCount;
+				continue;
+			}
+
+			if (!State.Plates.IsValidIndex(OceanicRecord.AssignedPlateId))
+			{
+				++InvalidRecordCount;
+				continue;
+			}
+			++AppliedGeneratedCount;
+			VertexRecord.bGeneratedOceanicCrust = true;
+			VertexRecord.AssignedPlateId = OceanicRecord.AssignedPlateId;
+			VertexRecord.ContinentalFraction = 0.0;
+			VertexRecord.Elevation = OceanicRecord.Elevation;
+			VertexRecord.HistoricalElevation = 0.0;
+			VertexRecord.OceanicAge = OceanicRecord.OceanicAge;
+			VertexRecord.RidgeDirection = OceanicRecord.RidgeDirection;
+			VertexRecord.FoldDirection = FVector3d::ZeroVector;
+			continue;
+		}
+
+		VertexRecord.bUnresolvedMultiHit = SelectionRecord.bUnresolvedMultiHit;
+		++InvalidRecordCount;
+	}
+
+	CurrentMetrics.LastNonSeparatingGapFillCount = NonSeparatingGapFillCount;
+	CurrentMetrics.LastNoBoundaryPairMissCount = NoBoundaryPairMissCount;
+	CurrentMetrics.PhaseIIIELastGeneratedCandidateCount = GeneratedCandidateCount;
+	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = AppliedGeneratedCount;
+	CurrentMetrics.PhaseIIIELastRiftingPendingCount = RiftingPendingCount;
+	if (InvalidRecordCount > 0)
+	{
+		CurrentMetrics.LastRemeshMode = FString::Printf(
+			TEXT("phase_iii_e6_live_hold_invalid_records_%d"),
+			InvalidRecordCount);
+		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		return false;
+	}
+
+	FCarrierLabPhaseIIIE5RemeshInputFixture RebuildInput;
+	RebuildInput.bUseExplicitVertexRecords = true;
+	RebuildInput.ExplicitVertexRecords = MoveTemp(VertexRecords);
+
+	FCarrierLabPhaseIIIE5TopologyRebuildAudit RebuildAudit;
+	if (!RunPhaseIIIE5TopologyRebuildFixtureForTest(RebuildInput, RebuildAudit) || !RebuildAudit.bApplied)
+	{
+		CurrentMetrics.LastRemeshMode = FString::Printf(
+			TEXT("phase_iii_e6_live_hold_rebuild_failed_invalid_%d_unresolved_%d"),
+			RebuildAudit.InvalidTriangleCount,
+			RebuildAudit.UnresolvedTripleJunctionCount);
+		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		return false;
+	}
+
+	const int32 EventCount = CurrentMetrics.EventCount;
+	ProjectCurrentCarrier();
+	CurrentMetrics.EventCount = EventCount;
+	CurrentMetrics.LastGapFillCount = GeneratedCandidateCount;
+	CurrentMetrics.LastNonSeparatingGapFillCount = NonSeparatingGapFillCount;
+	CurrentMetrics.LastNoBoundaryPairMissCount = NoBoundaryPairMissCount;
+	CurrentMetrics.PolicyResolvedMultiHitCount = SelectionAudit.PolicyWinnerCount + RebuildAudit.PolicyWinnerCount;
+	CurrentMetrics.PhaseIIIELastGeneratedCandidateCount = GeneratedCandidateCount;
+	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = AppliedGeneratedCount;
+	CurrentMetrics.PhaseIIIELastRiftingPendingCount = RiftingPendingCount;
+	CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount = RebuildAudit.TripleJunctionCentroidSplitCount;
+	CurrentMetrics.LastRemeshMode = FString::Printf(
+		TEXT("phase_iii_e6_live gen=%d applied=%d rift_pending=%d majority=%d tj_split=%d"),
+		GeneratedCandidateCount,
+		AppliedGeneratedCount,
+		RiftingPendingCount,
+		RebuildAudit.MajorityTriangleCount,
+		RebuildAudit.TripleJunctionCentroidSplitCount);
+	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::ApplyNaturalResampleEvent()
+{
+	return ApplyPhaseIIIELiveRemeshEvent();
+}
+
+void ACarrierLabVisualizationActor::TriggerPhaseIIIELiveRemeshEvent()
+{
+	ApplyPhaseIIIELiveRemeshEvent();
 }
 
 void ACarrierLabVisualizationActor::ApplyResampleEvent()
@@ -10383,7 +10576,7 @@ void ACarrierLabVisualizationActor::BindInputControls()
 
 	InputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ACarrierLabVisualizationActor::TogglePlay);
 	InputComponent->BindKey(EKeys::Period, IE_Pressed, this, &ACarrierLabVisualizationActor::StepOnce);
-	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &ACarrierLabVisualizationActor::ApplyResampleEvent);
+	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &ACarrierLabVisualizationActor::TriggerPhaseIIIELiveRemeshEvent);
 	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowPlateIdLayer);
 	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowContinentalFractionLayer);
 	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ACarrierLabVisualizationActor::ShowMissMaskLayer);
@@ -13076,7 +13269,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d legacy_auto_resample=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R legacy 1.5 resample | 1-9/0 layers | O ocean age | G ridge"),
+		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d iiie_auto_remesh=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\niiie gen/apply/rift/hold/tj=%d/%d/%d/%d/%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R IIIE.6 remesh | 1-9/0 layers | O ocean age | G ridge"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -13097,6 +13290,11 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.LastNoBoundaryPairMissCount,
 		CurrentMetrics.PolicyResolvedMultiHitCount,
 		CurrentMetrics.NaNOrInfCount,
+		CurrentMetrics.PhaseIIIELastGeneratedCandidateCount,
+		CurrentMetrics.PhaseIIIELastAppliedGeneratedCount,
+		CurrentMetrics.PhaseIIIELastRiftingPendingCount,
+		CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount,
+		CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount,
 		CurrentMetrics.PhaseIIIActiveBoundaryTriangleCount,
 		CurrentMetrics.PhaseIIIDistanceToFrontRecordCount,
 		CurrentMetrics.PhaseIIISubductionMatrixPairCount,

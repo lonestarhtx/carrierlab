@@ -87,6 +87,21 @@ struct FCarrierLabVisualizationMetrics
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 PolicyResolvedMultiHitCount = 0;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastGeneratedCandidateCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastAppliedGeneratedCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastRiftingPendingCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastTripleJunctionSplitCount = 0;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double AuthoritativeCAF = 0.0;
 
@@ -815,18 +830,6 @@ enum class ECarrierLabPhaseIIIE5TriangleAssignmentClass : uint8
 	Invalid
 };
 
-struct FCarrierLabPhaseIIIE5RemeshInputFixture
-{
-	bool bForceAllSamplesToPlateZero = false;
-	bool bSeedProcessStateBeforeRemesh = false;
-	bool bInjectGeneratedOceanicRecord = false;
-	int32 OverrideTriangleId = INDEX_NONE;
-	int32 OverridePlateA = INDEX_NONE;
-	int32 OverridePlateB = INDEX_NONE;
-	int32 OverridePlateC = INDEX_NONE;
-	FCarrierLabPhaseIIIE4OceanicGenerationRecord GeneratedOceanicRecord;
-};
-
 struct FCarrierLabPhaseIIIE5RemeshVertexRecord
 {
 	int32 SampleId = INDEX_NONE;
@@ -850,6 +853,20 @@ struct FCarrierLabPhaseIIIE5RemeshVertexRecord
 	FVector3d RidgeDirection = FVector3d::ZeroVector;
 	FVector3d FoldDirection = FVector3d::ZeroVector;
 	FCarrierLabPhaseIIIE4OceanicGenerationRecord OceanicRecord;
+};
+
+struct FCarrierLabPhaseIIIE5RemeshInputFixture
+{
+	bool bForceAllSamplesToPlateZero = false;
+	bool bSeedProcessStateBeforeRemesh = false;
+	bool bInjectGeneratedOceanicRecord = false;
+	bool bUseExplicitVertexRecords = false;
+	int32 OverrideTriangleId = INDEX_NONE;
+	int32 OverridePlateA = INDEX_NONE;
+	int32 OverridePlateB = INDEX_NONE;
+	int32 OverridePlateC = INDEX_NONE;
+	FCarrierLabPhaseIIIE4OceanicGenerationRecord GeneratedOceanicRecord;
+	TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord> ExplicitVertexRecords;
 };
 
 struct FCarrierLabPhaseIIIE5TriangleRebuildRecord
@@ -2009,6 +2026,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void StepOnce();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	bool ApplyPhaseIIIELiveRemeshEvent();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void TriggerPhaseIIIELiveRemeshEvent();
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ApplyResampleEvent();

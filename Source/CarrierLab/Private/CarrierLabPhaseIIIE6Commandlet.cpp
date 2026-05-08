@@ -276,6 +276,28 @@ namespace
 		FString TrackingHash;
 	};
 
+	struct FLivePromotionResult
+	{
+		FString Name;
+		bool bRan = false;
+		bool bPass = false;
+		bool bApplied = false;
+		double Seconds = 0.0;
+		int32 EventCountBefore = 0;
+		int32 EventCountAfter = 0;
+		int32 SampleCount = 0;
+		int32 PlateCount = 0;
+		int32 GeneratedCandidateCount = 0;
+		int32 AppliedGeneratedCount = 0;
+		int32 RiftingPendingCount = 0;
+		int32 UnresolvedHoldCount = 0;
+		int32 TripleJunctionSplitCount = 0;
+		int32 PolicyWinnerCount = 0;
+		FString LastRemeshMode;
+		FString CrustHashBefore;
+		FString CrustHashAfter;
+	};
+
 	FRemeshEventFixtureSpec MakeNoHitOceanicFixture()
 	{
 		FRemeshEventFixtureSpec Spec;
@@ -490,6 +512,59 @@ namespace
 		return OutResult.bRan;
 	}
 
+	bool EvaluateLivePromotionSmoke(UWorld& World, FLivePromotionResult& OutResult)
+	{
+		OutResult = FLivePromotionResult();
+		OutResult.Name = TEXT("Single-plate live IIIE.6 remesh smoke");
+		const double StartSeconds = FPlatformTime::Seconds();
+
+		ACarrierLabVisualizationActor* Actor = SpawnActor(World, 96, 1, 0.0);
+		if (Actor == nullptr)
+		{
+			return false;
+		}
+		if (!Actor->InitializeCarrier())
+		{
+			Actor->Destroy();
+			return false;
+		}
+		Actor->ConfigurePhaseIIICProcessLayer(true, false);
+		Actor->bEnableNaturalResamplingEvents = true;
+		OutResult.SampleCount = Actor->CurrentMetrics.SampleCount;
+		OutResult.PlateCount = Actor->CurrentMetrics.PlateCount;
+		OutResult.EventCountBefore = Actor->CurrentMetrics.EventCount;
+		OutResult.CrustHashBefore = Actor->CurrentMetrics.CrustStateHash;
+		OutResult.bApplied = Actor->ApplyPhaseIIIELiveRemeshEvent();
+		OutResult.EventCountAfter = Actor->CurrentMetrics.EventCount;
+		OutResult.GeneratedCandidateCount = Actor->CurrentMetrics.PhaseIIIELastGeneratedCandidateCount;
+		OutResult.AppliedGeneratedCount = Actor->CurrentMetrics.PhaseIIIELastAppliedGeneratedCount;
+		OutResult.RiftingPendingCount = Actor->CurrentMetrics.PhaseIIIELastRiftingPendingCount;
+		OutResult.UnresolvedHoldCount = Actor->CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount;
+		OutResult.TripleJunctionSplitCount = Actor->CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount;
+		OutResult.PolicyWinnerCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
+		OutResult.LastRemeshMode = Actor->CurrentMetrics.LastRemeshMode;
+		OutResult.CrustHashAfter = Actor->CurrentMetrics.CrustStateHash;
+		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
+		OutResult.bRan = true;
+		const bool bAppliedCleanly =
+			OutResult.bApplied &&
+			OutResult.EventCountAfter == OutResult.EventCountBefore + 1 &&
+			OutResult.UnresolvedHoldCount == 0 &&
+			OutResult.PolicyWinnerCount == 0 &&
+			OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live"));
+		const bool bHeldFailLoud =
+			!OutResult.bApplied &&
+			OutResult.EventCountAfter == OutResult.EventCountBefore &&
+			OutResult.UnresolvedHoldCount > 0 &&
+			OutResult.PolicyWinnerCount == 0 &&
+			OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live_hold_unresolved_multi_hit"));
+		OutResult.bPass = bAppliedCleanly || bHeldFailLoud;
+
+		Actor->Destroy();
+		CollectGarbage(RF_NoFlags);
+		return OutResult.bRan;
+	}
+
 	void FinalizeTrackingHash(FPostRebuildIIIBResult& Result)
 	{
 		uint64 Hash = 1469598103934665603ull;
@@ -614,9 +689,33 @@ namespace
 			Result.Seconds);
 	}
 
+	FString BuildLivePromotionJsonLine(const FLivePromotionResult& Result)
+	{
+		return FString::Printf(
+			TEXT("{\"fixture\":%s,\"pass\":%s,\"applied\":%s,\"sample_count\":%d,\"plate_count\":%d,\"event_before\":%d,\"event_after\":%d,\"generated_candidate\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"unresolved_hold\":%d,\"triple_junction_split\":%d,\"policy_winner\":%d,\"last_remesh_mode\":%s,\"crust_hash_before\":%s,\"crust_hash_after\":%s,\"seconds\":%.6f}"),
+			*JsonString(Result.Name),
+			Result.bPass ? TEXT("true") : TEXT("false"),
+			Result.bApplied ? TEXT("true") : TEXT("false"),
+			Result.SampleCount,
+			Result.PlateCount,
+			Result.EventCountBefore,
+			Result.EventCountAfter,
+			Result.GeneratedCandidateCount,
+			Result.AppliedGeneratedCount,
+			Result.RiftingPendingCount,
+			Result.UnresolvedHoldCount,
+			Result.TripleJunctionSplitCount,
+			Result.PolicyWinnerCount,
+			*JsonString(Result.LastRemeshMode),
+			*JsonString(Result.CrustHashBefore),
+			*JsonString(Result.CrustHashAfter),
+			Result.Seconds);
+	}
+
 	FString BuildReport(
 		const TArray<FRemeshEventLedgerResult>& EventResults,
 		const FPostRebuildIIIBResult& PostRebuildIIIB,
+		const FLivePromotionResult& LivePromotion,
 		const bool bReplayPass,
 		const FString& ReplayHashA,
 		const FString& ReplayHashB,
@@ -627,13 +726,13 @@ namespace
 		{
 			bEventsPass = bEventsPass && Result.bPass;
 		}
-		const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && bReplayPass;
+		const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && LivePromotion.bPass && bReplayPass;
 
 		FString Report;
 		Report += TEXT("# Phase IIIE.6 Remesh Ledger Reframe And Cadence Wire-Up\n\n");
 		Report += TEXT("Verdict: ");
-		Report += bAllPass ? TEXT("PASS / IIIE LIVE PROMOTION PREREQUISITES CLEARED; RIFTING-PENDING ROUTE ACTIVE") : TEXT("FAIL / HOLD IIIE CONSOLIDATION");
-		Report += TEXT(". This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.\n\n");
+		Report += bAllPass ? TEXT("PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE") : TEXT("FAIL / HOLD IIIE CONSOLIDATION");
+		Report += TEXT(". This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, closes the post-rebuild IIIB tracking discontinuity, and promotes the actor's live natural remesh cadence onto the guarded IIIE.6 path. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.\n\n");
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- The event audit consumes only IIIE.3 routes that are legal for IIIE.4: no-hit divergent gaps and filter-exhausted divergent gaps. Unresolved multi-hit selection classes remain stop conditions and are not routed to ocean generation.\n");
@@ -641,6 +740,7 @@ namespace
 		Report += TEXT("- The material ledger is reframed into two explicit divergent-generation lines: `new oceanic creation` when the pre-remesh continental fraction is effectively zero, and `rifting pending` when IIIE.4 computes divergent provenance over pre-existing continental material.\n");
 		Report += TEXT("- `rifting pending` is a no-overwrite handoff to IIIF, not a hidden correction and not a claim that rifting has been implemented. The generated q1/q2/qGamma and zGamma provenance remains event evidence, but the oceanic record is not injected into IIIE.5 topology rebuild over continental material.\n");
 		Report += TEXT("- The post-rebuild IIIB gate seeds convergence tracking after IIIE.5 topology rebuild/reset, then checks IIIB active lists, distance records, subduction matrix evidence, neighbor propagation, and hash closure on the rebuilt local topology.\n\n");
+		Report += TEXT("- The live actor now defaults to the IIIE remesh summary layer, Phase III process layers on, and auto-remesh routed through `ApplyPhaseIIIELiveRemeshEvent`; the legacy Stage 1.5 resample method and legacy multi-hit policy selector remain comparison-only surfaces.\n\n");
 
 		Report += TEXT("## Gates\n\n");
 		Report += TEXT("| Gate | Result | Evidence |\n");
@@ -699,16 +799,34 @@ namespace
 			*PassFail(bReplayPass),
 			*ReplayHashA,
 			*ReplayHashB);
+		Report += FString::Printf(
+			TEXT("| Live actor IIIE.6 promotion smoke | %s | applied `%d`, events `%d->%d`, samples/plates `%d/%d`, gen/apply/rift/hold/tj `%d/%d/%d/%d/%d`, policy `%d`, mode `%s`, crust `%s->%s`. |\n\n"),
+			*PassFail(LivePromotion.bPass),
+			LivePromotion.bApplied ? 1 : 0,
+			LivePromotion.EventCountBefore,
+			LivePromotion.EventCountAfter,
+			LivePromotion.SampleCount,
+			LivePromotion.PlateCount,
+			LivePromotion.GeneratedCandidateCount,
+			LivePromotion.AppliedGeneratedCount,
+			LivePromotion.RiftingPendingCount,
+			LivePromotion.UnresolvedHoldCount,
+			LivePromotion.TripleJunctionSplitCount,
+			LivePromotion.PolicyWinnerCount,
+			*LivePromotion.LastRemeshMode,
+			*LivePromotion.CrustHashBefore,
+			*LivePromotion.CrustHashAfter);
 
 		Report += TEXT("## Contract Table\n\n");
 		Report += TEXT("| Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |\n");
 		Report += TEXT("|---|---|---|---|\n");
-		Report += TEXT("| Zero valid ray hits become divergent gap fill | No-hit IIIE.3 records route through IIIE.4 q1/q2/qGamma and then IIIE.5 rebuild/reset | Production cadence still needs scheduling around the natural remesh timestep | No-hit live remesh event ledger |\n");
+		Report += TEXT("| Zero valid ray hits become divergent gap fill | No-hit IIIE.3 records route through IIIE.4 q1/q2/qGamma and then IIIE.5 rebuild/reset | Live cadence now calls the guarded IIIE.6 path; unresolved multi-hit classes still hold fail-loud | No-hit live remesh event ledger |\n");
 		Report += TEXT("| Filter-exhausted hits become divergent gap fill only after process-state filtering | Filter-exhausted records route through the same provenance computation and preserve filter provenance via the IIIE.3 selection class | Collision/remesh same-step ordering remains the IIIE.1 convention: collision/suture authorization before remesh filtering | Filter-exhausted rifting-pending route |\n");
 		Report += TEXT("| New oceanic crust must be ledgered distinctly | IIIE.6 records `new oceanic creation` as an applied generated-ocean ledger line when pre-remesh continental material is absent | Convert this audit line into production material-ledger accounting when full cadence mutates live state | Ledger reconciliation columns |\n");
 		Report += TEXT("| Ridge generation must not silently overwrite continental material | IIIE.6 routes continental divergent generation to `rifting pending` and demonstrates in the fixture that the generated oceanic record is not applied to topology | IIIF must later consume or replace the pending route with a rifting implementation | Rifting-pending fixture |\n");
 		Report += TEXT("| Plate-local topology rebuild/reset must be the event continuation | IIIE.6 feeds generated records into the IIIE.5 duplicate/re-index/re-compact helper and observes reset in the same event gate | Keep Stage 1.5 recovery out of the primary path | Topology hash and reset columns |\n");
 		Report += TEXT("| IIIB tracking must work after rebuild | A post-rebuild actor seeds IIIB tracking from rebuilt local topology and checks active lists, distances, matrix evidence, propagation, and hash closure | Consolidation should still rerun the `CarrierLabPhaseIIID7` computed-vs-expected regression separately; this local gate only closes the topology boundary discontinuity | Post-rebuild IIIB tracking gate |\n\n");
+		Report += TEXT("| Live actor remesh must use the latest IIIE path by default | `ApplyNaturalResampleEvent`, the R key, and the workbench remesh button route through `ApplyPhaseIIIELiveRemeshEvent`; the workbench defaults auto-remesh on and IIIE summary visible | Consolidation should exercise a default multi-plate run and accept fail-loud holds where unresolved multi-hit classes still exist | Live actor promotion smoke |\n\n");
 
 		Report += TEXT("## Forbidden Policy Checks\n\n");
 		Report += TEXT("| Forbidden or held policy | IIIE.6 status |\n");
@@ -716,7 +834,7 @@ namespace
 		Report += TEXT("| Prior global owner/fraction fallback | Selection, generation, and topology counters remain zero. |\n");
 		Report += TEXT("| Projection-derived ownership authority | Topology projection-authority counter remains zero. |\n");
 		Report += TEXT("| Uncited remesh winner | Policy-winner counters remain zero; no multi-hit route is consumed. |\n");
-		Report += TEXT("| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit; IIIE.5 rebuild remains the authority path. |\n");
+		Report += TEXT("| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit or promoted live natural cadence; IIIE.5 rebuild remains the authority path. |\n");
 		Report += TEXT("| Unresolved multi-hit ridge generation | Not routed; IIIE.4 receives only no-hit and filter-exhausted divergent classes. |\n");
 		Report += TEXT("| zGamma paper-fidelity overclaim | Generated records preserve `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`. |\n");
 		Report += TEXT("| Silent continental overwrite by divergent ridge generation | Replaced by an explicit `rifting pending` ledger route; overwritten count remains zero. |\n\n");
@@ -736,9 +854,10 @@ namespace
 		Report += TEXT("- Stop if post-rebuild IIIB tracking cannot seed active lists, distance records, matrix evidence, propagation, and closure from rebuilt plate-local topology.\n");
 		Report += TEXT("- Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n");
 		Report += TEXT("- Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.\n\n");
+		Report += TEXT("- Stop if the actor workbench, R key, or natural remesh cadence calls Stage 1.5 as the default live remesh path.\n\n");
 
 		Report += TEXT("## Next Slice Boundary\n\n");
-		Report += TEXT("Next is guarded IIIE.6 live-cadence promotion: route the live natural remesh event through the bounded IIIE.3/IIIE.4/IIIE.5/IIIE.6 chain, keep unresolved multi-hit classes fail-loud, and show the latest Phase III surfaces by default. IIIE consolidation should then disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.\n\n");
+		Report += TEXT("Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.\n\n");
 		Report += FString::Printf(TEXT("Metrics: `%s`.\n"), *MetricsPath);
 		return Report;
 	}
@@ -777,6 +896,9 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 	FPostRebuildIIIBResult PostRebuildIIIB;
 	EvaluatePostRebuildIIIBGate(PostRebuildIIIB, *World);
 
+	FLivePromotionResult LivePromotion;
+	EvaluateLivePromotionSmoke(*World, LivePromotion);
+
 	FRemeshEventLedgerResult ReplayA;
 	FRemeshEventLedgerResult ReplayB;
 	EvaluateRemeshEventFixture(MakeNoHitOceanicFixture(), ReplayA, *World);
@@ -795,6 +917,7 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 		JsonLines += BuildEventJsonLine(Result) + LINE_TERMINATOR;
 	}
 	JsonLines += BuildPostRebuildIIIBJsonLine(PostRebuildIIIB) + LINE_TERMINATOR;
+	JsonLines += BuildLivePromotionJsonLine(LivePromotion) + LINE_TERMINATOR;
 	JsonLines += FString::Printf(
 		TEXT("{\"fixture\":\"same_seed_remesh_event_replay\",\"pass\":%s,\"hash_a\":%s,\"hash_b\":%s}"),
 		bReplayPass ? TEXT("true") : TEXT("false"),
@@ -806,6 +929,7 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 	const FString Report = BuildReport(
 		EventResults,
 		PostRebuildIIIB,
+		LivePromotion,
 		bReplayPass,
 		ReplayA.EventHash,
 		ReplayB.EventHash,
@@ -819,7 +943,7 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 	{
 		bEventsPass = bEventsPass && Result.bPass;
 	}
-	const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && bReplayPass;
+	const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && LivePromotion.bPass && bReplayPass;
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIE.6 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIE.6 metrics: %s"), *MetricsPath);
 	return bAllPass ? 0 : 1;
