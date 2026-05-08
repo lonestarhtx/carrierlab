@@ -15,6 +15,7 @@ Saved/
 *.userosscache
 *.sln.docstates
 docs/video-script.md
+docs/flight-model-design.md
 
 # Build products and diagnostics
 *.obj

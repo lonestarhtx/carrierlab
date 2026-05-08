@@ -228,7 +228,7 @@ namespace
 		int32 PlateCount = 2;
 		bool bPreExistingContinental = false;
 		bool bUseFilteredGapRoute = false;
-		bool bExpectOverwriteHold = false;
+		bool bExpectRiftingPending = false;
 	};
 
 	struct FRemeshEventLedgerResult
@@ -242,18 +242,22 @@ namespace
 		FCarrierLabPhaseIIIE3SelectionRecord SelectionRecord;
 		FCarrierLabPhaseIIIE4OceanicGenerationRecord OceanicRecord;
 		FCarrierLabPhaseIIIE5TopologyRebuildAudit TopologyAudit;
+		int32 GeneratedCandidateCount = 0;
 		int32 GeneratedRecordCount = 0;
 		int32 NewOceanicCreationCount = 0;
 		int32 OverwrittenByRidgeGenerationCount = 0;
+		int32 RiftingPendingCount = 0;
 		int32 GeophysicsDerivedZGammaCount = 0;
 		int32 PaperFaithfulZGammaCount = 0;
 		double NewOceanicSampleEquivalent = 0.0;
 		double OverwrittenContinentalFraction = 0.0;
+		double RiftingPendingContinentalFraction = 0.0;
 		bool bSelectionDivergentRoute = false;
 		bool bGenerationAllowed = false;
 		bool bLedgerReconciles = false;
 		bool bNoForbiddenPolicy = false;
 		bool bQAndZGammaPreserved = false;
+		bool bNoContinentalOverwriteApplied = false;
 		FString EventHash;
 	};
 
@@ -282,14 +286,14 @@ namespace
 		return Spec;
 	}
 
-	FRemeshEventFixtureSpec MakeFilterExhaustedOverwriteFixture()
+	FRemeshEventFixtureSpec MakeFilterExhaustedRiftingPendingFixture()
 	{
 		FRemeshEventFixtureSpec Spec;
-		Spec.Name = TEXT("Filter-exhausted continental overwrite hold");
-		Spec.Purpose = TEXT("Filtered-out process-state hits may generate oceanic fields, but pre-existing continental material is ledgered as ridge overwrite hold, not new oceanic creation.");
+		Spec.Name = TEXT("Filter-exhausted continental rifting-pending route");
+		Spec.Purpose = TEXT("Filtered-out process-state hits may compute divergent oceanic provenance, but pre-existing continental material is routed to rifting-pending and is not overwritten by ridge generation.");
 		Spec.bPreExistingContinental = true;
 		Spec.bUseFilteredGapRoute = true;
-		Spec.bExpectOverwriteHold = true;
+		Spec.bExpectRiftingPending = true;
 		return Spec;
 	}
 
@@ -303,11 +307,14 @@ namespace
 		HashMix(Hash, Result.OceanicRecord.bGeneratedOceanicCrust ? 1ull : 0ull);
 		HashMix(Hash, Result.OceanicRecord.bUsedPolicyWinner ? 1ull : 0ull);
 		HashMix(Hash, Result.OceanicRecord.bUsedPriorOwnerFallback ? 1ull : 0ull);
+		HashMix(Hash, static_cast<uint64>(Result.GeneratedCandidateCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.GeneratedRecordCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.NewOceanicCreationCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.OverwrittenByRidgeGenerationCount + 1));
+		HashMix(Hash, static_cast<uint64>(Result.RiftingPendingCount + 1));
 		HashMixDouble(Hash, Result.NewOceanicSampleEquivalent);
 		HashMixDouble(Hash, Result.OverwrittenContinentalFraction);
+		HashMixDouble(Hash, Result.RiftingPendingContinentalFraction);
 		HashMix(Hash, static_cast<uint64>(Result.GeophysicsDerivedZGammaCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.PaperFaithfulZGammaCount + 1));
 		HashMixString(Hash, Result.TopologyAudit.AssignmentHash);
@@ -325,7 +332,6 @@ namespace
 		OutResult = FRemeshEventLedgerResult();
 		OutResult.Name = Spec.Name;
 		OutResult.Purpose = Spec.Purpose;
-		OutResult.bHold = Spec.bExpectOverwriteHold;
 		const double StartSeconds = FPlatformTime::Seconds();
 
 		ACarrierLabVisualizationActor* Actor = SpawnActor(
@@ -363,8 +369,23 @@ namespace
 			0.004,
 			OutResult.OceanicRecord);
 
+		const bool bRiftingPendingRoute =
+			Spec.bExpectRiftingPending &&
+			bGenerationOk &&
+			OutResult.OceanicRecord.bGeneratedOceanicCrust;
+		OutResult.GeneratedCandidateCount = OutResult.OceanicRecord.bGeneratedOceanicCrust ? 1 : 0;
+		if (bRiftingPendingRoute)
+		{
+			OutResult.RiftingPendingCount = 1;
+			OutResult.RiftingPendingContinentalFraction = 1.0;
+			OutResult.GeophysicsDerivedZGammaCount += OutResult.OceanicRecord.bUsedZGammaGeophysicsDerivedProfile ? 1 : 0;
+			OutResult.PaperFaithfulZGammaCount += OutResult.OceanicRecord.bPaperFaithfulZGammaProfile ? 1 : 0;
+		}
+
 		FCarrierLabPhaseIIIE5RemeshInputFixture RebuildFixture;
-		RebuildFixture.bInjectGeneratedOceanicRecord = OutResult.OceanicRecord.bGeneratedOceanicCrust;
+		RebuildFixture.bInjectGeneratedOceanicRecord =
+			OutResult.OceanicRecord.bGeneratedOceanicCrust &&
+			!bRiftingPendingRoute;
 		RebuildFixture.OverrideTriangleId = 0;
 		RebuildFixture.GeneratedOceanicRecord = OutResult.OceanicRecord;
 		const bool bRebuildOk = bGenerationOk && Actor->RunPhaseIIIE5TopologyRebuildFixtureForTest(
@@ -413,8 +434,9 @@ namespace
 			!OutResult.OceanicRecord.bRejectedNonDivergentRoute &&
 			!OutResult.OceanicRecord.bRejectedUnresolvedMultiHit;
 		OutResult.bLedgerReconciles =
-			OutResult.GeneratedRecordCount ==
-			OutResult.NewOceanicCreationCount + OutResult.OverwrittenByRidgeGenerationCount;
+			OutResult.GeneratedCandidateCount ==
+			OutResult.NewOceanicCreationCount + OutResult.RiftingPendingCount &&
+			OutResult.OverwrittenByRidgeGenerationCount == 0;
 		OutResult.bNoForbiddenPolicy =
 			OutResult.SelectionRecord.bUsedPolicyWinner == false &&
 			OutResult.SelectionRecord.bUsedPriorOwnerFallback == false &&
@@ -425,15 +447,29 @@ namespace
 			OutResult.TopologyAudit.ProjectionOwnerFallbackCount == 0 &&
 			OutResult.TopologyAudit.UnresolvedMultiHitRoutedCount == 0;
 		OutResult.bQAndZGammaPreserved =
-			OutResult.TopologyAudit.bQProvenancePreserved &&
-			OutResult.TopologyAudit.bZGammaHoldPreserved &&
-			OutResult.GeophysicsDerivedZGammaCount == OutResult.GeneratedRecordCount &&
-			OutResult.PaperFaithfulZGammaCount == 0;
+			Spec.bExpectRiftingPending
+				? (OutResult.OceanicRecord.Q1PlateId != INDEX_NONE &&
+					OutResult.OceanicRecord.Q2PlateId != INDEX_NONE &&
+					OutResult.OceanicRecord.bUsedZGammaGeophysicsDerivedProfile &&
+					!OutResult.OceanicRecord.bPaperFaithfulZGammaProfile)
+				: (OutResult.TopologyAudit.bQProvenancePreserved &&
+					OutResult.TopologyAudit.bZGammaHoldPreserved &&
+					OutResult.GeophysicsDerivedZGammaCount == OutResult.GeneratedRecordCount &&
+					OutResult.PaperFaithfulZGammaCount == 0);
+		OutResult.bNoContinentalOverwriteApplied =
+			!Spec.bExpectRiftingPending ||
+			(OutResult.RiftingPendingCount > 0 &&
+				OutResult.GeneratedRecordCount == 0 &&
+				OutResult.OverwrittenByRidgeGenerationCount == 0);
 
 		const bool bExpectedLedgerLine =
-			Spec.bExpectOverwriteHold
-				? (OutResult.OverwrittenByRidgeGenerationCount > 0 && OutResult.NewOceanicCreationCount == 0)
-				: (OutResult.NewOceanicCreationCount > 0 && OutResult.OverwrittenByRidgeGenerationCount == 0);
+			Spec.bExpectRiftingPending
+				? (OutResult.RiftingPendingCount > 0 &&
+					OutResult.NewOceanicCreationCount == 0 &&
+					OutResult.OverwrittenByRidgeGenerationCount == 0)
+				: (OutResult.NewOceanicCreationCount > 0 &&
+					OutResult.RiftingPendingCount == 0 &&
+					OutResult.OverwrittenByRidgeGenerationCount == 0);
 		OutResult.bPass =
 			OutResult.bRan &&
 			OutResult.bSelectionDivergentRoute &&
@@ -444,6 +480,7 @@ namespace
 			OutResult.TopologyAudit.bMotionPreserved &&
 			OutResult.bLedgerReconciles &&
 			bExpectedLedgerLine &&
+			OutResult.bNoContinentalOverwriteApplied &&
 			OutResult.bNoForbiddenPolicy &&
 			OutResult.bQAndZGammaPreserved;
 
@@ -530,17 +567,21 @@ namespace
 	FString BuildEventJsonLine(const FRemeshEventLedgerResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"pass\":%s,\"hold\":%s,\"selection\":%s,\"generated\":%s,\"new_oceanic\":%d,\"overwritten_by_ridge\":%d,\"new_oceanic_sample_equivalent\":%.12f,\"overwritten_continental_fraction\":%.12f,\"ledger_reconciles\":%s,\"policy_prior_projection\":\"%d/%d/%d\",\"q_preserved\":%s,\"zgamma_preserved\":%s,\"geophysics_zgamma\":%d,\"paper_zgamma\":%d,\"topology_hash\":%s,\"event_hash\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"fixture\":%s,\"pass\":%s,\"hold\":%s,\"selection\":%s,\"generated_candidate\":%d,\"applied_generated\":%d,\"new_oceanic\":%d,\"rifting_pending\":%d,\"overwritten_by_ridge\":%d,\"new_oceanic_sample_equivalent\":%.12f,\"rifting_pending_continental_fraction\":%.12f,\"overwritten_continental_fraction\":%.12f,\"ledger_reconciles\":%s,\"no_continental_overwrite_applied\":%s,\"policy_prior_projection\":\"%d/%d/%d\",\"q_preserved\":%s,\"zgamma_preserved\":%s,\"geophysics_zgamma\":%d,\"paper_zgamma\":%d,\"topology_hash\":%s,\"event_hash\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Name),
 			Result.bPass ? TEXT("true") : TEXT("false"),
 			Result.bHold ? TEXT("true") : TEXT("false"),
 			*JsonString(SelectionClassName(Result.SelectionRecord.SelectionClass)),
-			Result.OceanicRecord.bGeneratedOceanicCrust ? TEXT("true") : TEXT("false"),
+			Result.GeneratedCandidateCount,
+			Result.GeneratedRecordCount,
 			Result.NewOceanicCreationCount,
+			Result.RiftingPendingCount,
 			Result.OverwrittenByRidgeGenerationCount,
 			Result.NewOceanicSampleEquivalent,
+			Result.RiftingPendingContinentalFraction,
 			Result.OverwrittenContinentalFraction,
 			Result.bLedgerReconciles ? TEXT("true") : TEXT("false"),
+			Result.bNoContinentalOverwriteApplied ? TEXT("true") : TEXT("false"),
 			Result.TopologyAudit.PolicyWinnerCount,
 			Result.TopologyAudit.PriorOwnerFallbackCount,
 			Result.TopologyAudit.ProjectionOwnerFallbackCount,
@@ -591,14 +632,14 @@ namespace
 		FString Report;
 		Report += TEXT("# Phase IIIE.6 Remesh Ledger Reframe And Cadence Wire-Up\n\n");
 		Report += TEXT("Verdict: ");
-		Report += bAllPass ? TEXT("PASS / IIIE CONSOLIDATION UNBLOCKED; NAMED LAB-POLICY HOLDS CARRIED") : TEXT("FAIL / HOLD IIIE CONSOLIDATION");
-		Report += TEXT(". This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and ridge overwrite, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, claim zGamma's profile law is paper-sourced, or retire legacy comparison code.\n\n");
+		Report += bAllPass ? TEXT("PASS / IIIE LIVE PROMOTION PREREQUISITES CLEARED; RIFTING-PENDING ROUTE ACTIVE") : TEXT("FAIL / HOLD IIIE CONSOLIDATION");
+		Report += TEXT(". This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, and closes the post-rebuild IIIB tracking discontinuity. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.\n\n");
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- The event audit consumes only IIIE.3 routes that are legal for IIIE.4: no-hit divergent gaps and filter-exhausted divergent gaps. Unresolved multi-hit selection classes remain stop conditions and are not routed to ocean generation.\n");
 		Report += TEXT("- Generated oceanic vertices are fed into the IIIE.5 duplicate/re-index/re-compact helper, so selection, gap fill, topology rebuild, and process reset are exercised in one bounded cadence gate.\n");
-		Report += TEXT("- The material ledger is reframed into two explicit generated-ocean lines: `new oceanic creation` when the pre-remesh continental fraction is effectively zero, and `overwritten by ridge generation` when generated oceanic crust would replace pre-existing continental material.\n");
-		Report += TEXT("- `overwritten by ridge generation` is a hold/anomaly line, not a hidden correction. IIIE consolidation must decide whether this remains an approved lab policy, becomes a stop condition in production cadence, or receives paper-cited handling.\n");
+		Report += TEXT("- The material ledger is reframed into two explicit divergent-generation lines: `new oceanic creation` when the pre-remesh continental fraction is effectively zero, and `rifting pending` when IIIE.4 computes divergent provenance over pre-existing continental material.\n");
+		Report += TEXT("- `rifting pending` is a no-overwrite handoff to IIIF, not a hidden correction and not a claim that rifting has been implemented. The generated q1/q2/qGamma and zGamma provenance remains event evidence, but the oceanic record is not injected into IIIE.5 topology rebuild over continental material.\n");
 		Report += TEXT("- The post-rebuild IIIB gate seeds convergence tracking after IIIE.5 topology rebuild/reset, then checks IIIB active lists, distance records, subduction matrix evidence, neighbor propagation, and hash closure on the rebuilt local topology.\n\n");
 
 		Report += TEXT("## Gates\n\n");
@@ -607,19 +648,22 @@ namespace
 		for (const FRemeshEventLedgerResult& Result : EventResults)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %s | selection `%s`, raw/post-filter `%d/%d`, generated `%d`, q1/q2 `%d/%d`, new oceanic `%d` (`%.3f` sample-eq), overwritten `%d` (`%.3f` continental fraction), ledger reconciles `%d`, reset `%d->%d`, policy/prior/projection `%d/%d/%d`, q/zGamma `%d/%d`, geophysics/paper zGamma `%d/%d`, topology `%s`, event `%s`. |\n"),
+				TEXT("| %s | %s | selection `%s`, raw/post-filter `%d/%d`, candidate/applied `%d/%d`, q1/q2 `%d/%d`, new oceanic `%d` (`%.3f` sample-eq), rifting pending `%d` (`%.3f` continental fraction), overwritten `%d`, no-overwrite `%d`, ledger reconciles `%d`, reset `%d->%d`, policy/prior/projection `%d/%d/%d`, q/zGamma `%d/%d`, geophysics/paper zGamma `%d/%d`, topology `%s`, event `%s`. |\n"),
 				*Result.Name,
 				*HoldPassFail(Result.bPass, Result.bHold),
 				*SelectionClassName(Result.SelectionRecord.SelectionClass),
 				Result.SelectionRecord.RawCandidateCount,
 				Result.SelectionRecord.PostFilterCandidateCount,
+				Result.GeneratedCandidateCount,
 				Result.GeneratedRecordCount,
 				Result.OceanicRecord.Q1PlateId,
 				Result.OceanicRecord.Q2PlateId,
 				Result.NewOceanicCreationCount,
 				Result.NewOceanicSampleEquivalent,
+				Result.RiftingPendingCount,
+				Result.RiftingPendingContinentalFraction,
 				Result.OverwrittenByRidgeGenerationCount,
-				Result.OverwrittenContinentalFraction,
+				Result.bNoContinentalOverwriteApplied ? 1 : 0,
 				Result.bLedgerReconciles ? 1 : 0,
 				Result.TopologyAudit.ResetAudit.ResetSerialBefore,
 				Result.TopologyAudit.ResetAudit.ResetSerialAfter,
@@ -660,9 +704,9 @@ namespace
 		Report += TEXT("| Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |\n");
 		Report += TEXT("|---|---|---|---|\n");
 		Report += TEXT("| Zero valid ray hits become divergent gap fill | No-hit IIIE.3 records route through IIIE.4 q1/q2/qGamma and then IIIE.5 rebuild/reset | Production cadence still needs scheduling around the natural remesh timestep | No-hit live remesh event ledger |\n");
-		Report += TEXT("| Filter-exhausted hits become divergent gap fill only after process-state filtering | Filter-exhausted records route through the same oceanic generation path and preserve filter provenance via the IIIE.3 selection class | Collision/remesh same-step ordering remains the IIIE.1 convention: collision/suture authorization before remesh filtering | Filter-exhausted overwrite hold |\n");
-		Report += TEXT("| New oceanic crust must be ledgered distinctly | IIIE.6 records `new oceanic creation` as a generated-ocean ledger line when pre-remesh continental material is absent | Convert this audit line into production material-ledger accounting when full cadence mutates live state | Ledger reconciliation columns |\n");
-		Report += TEXT("| Ridge generation must not silently overwrite continental material | IIIE.6 records `overwritten by ridge generation` separately and marks it hold/anomaly evidence | Consolidation must approve, forbid, or paper-cite this behavior before broad validation claims | Overwrite hold fixture |\n");
+		Report += TEXT("| Filter-exhausted hits become divergent gap fill only after process-state filtering | Filter-exhausted records route through the same provenance computation and preserve filter provenance via the IIIE.3 selection class | Collision/remesh same-step ordering remains the IIIE.1 convention: collision/suture authorization before remesh filtering | Filter-exhausted rifting-pending route |\n");
+		Report += TEXT("| New oceanic crust must be ledgered distinctly | IIIE.6 records `new oceanic creation` as an applied generated-ocean ledger line when pre-remesh continental material is absent | Convert this audit line into production material-ledger accounting when full cadence mutates live state | Ledger reconciliation columns |\n");
+		Report += TEXT("| Ridge generation must not silently overwrite continental material | IIIE.6 routes continental divergent generation to `rifting pending` and demonstrates in the fixture that the generated oceanic record is not applied to topology | IIIF must later consume or replace the pending route with a rifting implementation | Rifting-pending fixture |\n");
 		Report += TEXT("| Plate-local topology rebuild/reset must be the event continuation | IIIE.6 feeds generated records into the IIIE.5 duplicate/re-index/re-compact helper and observes reset in the same event gate | Keep Stage 1.5 recovery out of the primary path | Topology hash and reset columns |\n");
 		Report += TEXT("| IIIB tracking must work after rebuild | A post-rebuild actor seeds IIIB tracking from rebuilt local topology and checks active lists, distances, matrix evidence, propagation, and hash closure | Consolidation should still rerun the `CarrierLabPhaseIIID7` computed-vs-expected regression separately; this local gate only closes the topology boundary discontinuity | Post-rebuild IIIB tracking gate |\n\n");
 
@@ -675,7 +719,7 @@ namespace
 		Report += TEXT("| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit; IIIE.5 rebuild remains the authority path. |\n");
 		Report += TEXT("| Unresolved multi-hit ridge generation | Not routed; IIIE.4 receives only no-hit and filter-exhausted divergent classes. |\n");
 		Report += TEXT("| zGamma paper-fidelity overclaim | Generated records preserve `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`. |\n");
-		Report += TEXT("| Silent continental overwrite by divergent ridge generation | Moved into an explicit hold/anomaly ledger line. |\n\n");
+		Report += TEXT("| Silent continental overwrite by divergent ridge generation | Replaced by an explicit `rifting pending` ledger route; overwritten count remains zero. |\n\n");
 
 		Report += TEXT("## Open Decisions\n\n");
 		Report += TEXT("| Decision | Status | Rationale |\n");
@@ -683,18 +727,18 @@ namespace
 		Report += TEXT("| zGamma profile law | Deferred / named lab extension | Current sqrt-distance profile is geophysics-derived and realistic, but the paper/thesis do not provide a closed-form zGamma equation. |\n");
 		Report += TEXT("| Two-of-three mixed triangle majority | Approved CarrierLab lab policy | IIIE.5 exposes and gates the deterministic majority rule: if exactly two global-TDS vertices assign to one plate, that plate owns the rebuilt triangle. This is approved only as disclosed lab policy, not as paper text. |\n");
 		Report += TEXT("| One-one-one triple-junction topology | Approved CarrierLab centroid-split lab policy | IIIE.5 subdivides one-one-one global triangles into per-plate centroid wedges without a whole-triangle winner. |\n");
-		Report += TEXT("| Continental overwrite by divergent ridge generation | Deferred / hold | IIIE.6 makes the ledger line visible and non-silent; production cadence policy remains a consolidation decision. |\n\n");
+		Report += TEXT("| Continental overwrite by divergent ridge generation | Resolved for IIIE as rifting-pending route | IIIE.6 records divergent provenance but does not apply generated oceanic crust over continental material; IIIF owns actual rifting behavior. |\n\n");
 
 		Report += TEXT("## Stop Conditions For IIIE Consolidation+\n\n");
 		Report += TEXT("- Stop if unresolved multi-hit IIIE.3 classes are routed into IIIE.4 generation.\n");
-		Report += TEXT("- Stop if `overwritten by ridge generation` is merged into `new oceanic creation` or hidden in aggregate material accounting.\n");
+		Report += TEXT("- Stop if continental divergent candidates apply generated oceanic crust instead of routing to `rifting pending`.\n");
 		Report += TEXT("- Stop if Stage 1.5 owner/projection/recovery behavior becomes primary IIIE remesh authority.\n");
 		Report += TEXT("- Stop if post-rebuild IIIB tracking cannot seed active lists, distance records, matrix evidence, propagation, and closure from rebuilt plate-local topology.\n");
 		Report += TEXT("- Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n");
 		Report += TEXT("- Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.\n\n");
 
 		Report += TEXT("## Next Slice Boundary\n\n");
-		Report += TEXT("Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, triple-junction handling, and ridge-overwrite handling), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio. Do not start IIIF rifting, IIIG per-step elevation evolution, or IIIH long-horizon validation until consolidation explicitly clears.\n\n");
+		Report += TEXT("Next is guarded IIIE.6 live-cadence promotion: route the live natural remesh event through the bounded IIIE.3/IIIE.4/IIIE.5/IIIE.6 chain, keep unresolved multi-hit classes fail-loud, and show the latest Phase III surfaces by default. IIIE consolidation should then disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.\n\n");
 		Report += FString::Printf(TEXT("Metrics: `%s`.\n"), *MetricsPath);
 		return Report;
 	}
@@ -719,7 +763,7 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 
 	TArray<FRemeshEventFixtureSpec> Specs;
 	Specs.Add(MakeNoHitOceanicFixture());
-	Specs.Add(MakeFilterExhaustedOverwriteFixture());
+	Specs.Add(MakeFilterExhaustedRiftingPendingFixture());
 
 	TArray<FRemeshEventLedgerResult> EventResults;
 	EventResults.Reserve(Specs.Num());

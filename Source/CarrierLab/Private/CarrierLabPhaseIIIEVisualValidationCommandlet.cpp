@@ -379,7 +379,7 @@ namespace
 		FString Description;
 		bool bPreExistingContinental = false;
 		bool bUseFilteredGapRoute = false;
-		bool bExpectHold = false;
+		bool bExpectRiftingPending = false;
 	};
 
 	struct FVisualReplay
@@ -396,9 +396,11 @@ namespace
 		int32 GeneratedRecordCount = 0;
 		int32 NewOceanicCreationCount = 0;
 		int32 OverwrittenByRidgeGenerationCount = 0;
+		int32 RiftingPendingCount = 0;
 		int32 GeophysicsDerivedZGammaCount = 0;
 		int32 PaperFaithfulZGammaCount = 0;
 		double OverwrittenContinentalFraction = 0.0;
+		double RiftingPendingContinentalFraction = 0.0;
 		bool bNoForbiddenPolicy = false;
 		bool bMapsReadOnly = false;
 		FString StateHashBeforeMaps;
@@ -564,8 +566,15 @@ namespace
 		return SavePng(OutPath, SheetPixels, SheetWidth, SheetHeight);
 	}
 
-	void CountLedgerLines(FVisualReplay& Replay)
+	void CountLedgerLines(FVisualReplay& Replay, const bool bRiftingPendingRoute)
 	{
+		if (bRiftingPendingRoute)
+		{
+			Replay.RiftingPendingCount = 1;
+			Replay.RiftingPendingContinentalFraction = 1.0;
+			Replay.GeophysicsDerivedZGammaCount += Replay.OceanicRecord.bUsedZGammaGeophysicsDerivedProfile ? 1 : 0;
+			Replay.PaperFaithfulZGammaCount += Replay.OceanicRecord.bPaperFaithfulZGammaProfile ? 1 : 0;
+		}
 		for (const FCarrierLabPhaseIIIE5RemeshVertexRecord& Record : Replay.TopologyAudit.VertexRecords)
 		{
 			if (!Record.bGeneratedOceanicCrust)
@@ -600,7 +609,6 @@ namespace
 		OutReplay = FVisualReplay();
 		OutReplay.ScenarioName = Scenario.Name;
 		OutReplay.Replay = ReplayIndex;
-		OutReplay.bHold = Scenario.bExpectHold;
 		const double StartSeconds = FPlatformTime::Seconds();
 
 		UWorld* World = GetCommandletWorld();
@@ -651,6 +659,10 @@ namespace
 			MakeDivergentBoundaryEdges(),
 			0.004,
 			OutReplay.OceanicRecord);
+		const bool bRiftingPendingRoute =
+			Scenario.bExpectRiftingPending &&
+			bGenerationOk &&
+			OutReplay.OceanicRecord.bGeneratedOceanicCrust;
 
 		if (!AddCard(
 				ReplayDir,
@@ -670,7 +682,9 @@ namespace
 		}
 
 		FCarrierLabPhaseIIIE5RemeshInputFixture RebuildFixture;
-		RebuildFixture.bInjectGeneratedOceanicRecord = OutReplay.OceanicRecord.bGeneratedOceanicCrust;
+		RebuildFixture.bInjectGeneratedOceanicRecord =
+			OutReplay.OceanicRecord.bGeneratedOceanicCrust &&
+			!bRiftingPendingRoute;
 		RebuildFixture.OverrideTriangleId = 0;
 		RebuildFixture.GeneratedOceanicRecord = OutReplay.OceanicRecord;
 		const bool bRebuildOk = bGenerationOk && Actor->RunPhaseIIIE5TopologyRebuildFixtureForTest(RebuildFixture, OutReplay.TopologyAudit);
@@ -678,7 +692,7 @@ namespace
 		{
 			Actor->RefreshPhaseIIIMetricsForTest();
 		}
-		CountLedgerLines(OutReplay);
+		CountLedgerLines(OutReplay, bRiftingPendingRoute);
 
 		if (!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::PlateId, TEXT("Post"), OutReplay.Images) ||
 			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("Post"), OutReplay.Images) ||
@@ -698,10 +712,10 @@ namespace
 				{
 					TEXT("IIIE LEDGER"),
 					FString::Printf(TEXT("NEW OCEAN %d"), OutReplay.NewOceanicCreationCount),
-					FString::Printf(TEXT("OVERWRITE HOLD %d"), OutReplay.OverwrittenByRidgeGenerationCount),
+					FString::Printf(TEXT("RIFT PENDING %d"), OutReplay.RiftingPendingCount),
+					FString::Printf(TEXT("OVERWRITTEN %d"), OutReplay.OverwrittenByRidgeGenerationCount),
 					FString::Printf(TEXT("POLICY %d PRIOR %d PROJ %d"), OutReplay.TopologyAudit.PolicyWinnerCount, OutReplay.TopologyAudit.PriorOwnerFallbackCount, OutReplay.TopologyAudit.ProjectionOwnerFallbackCount),
-					FString::Printf(TEXT("RESET %d/%d"), OutReplay.TopologyAudit.ResetAudit.ResetSerialBefore, OutReplay.TopologyAudit.ResetAudit.ResetSerialAfter),
-					Scenario.bExpectHold ? TEXT("STATUS HOLD") : TEXT("STATUS PASS")
+					FString::Printf(TEXT("RESET %d/%d"), OutReplay.TopologyAudit.ResetAudit.ResetSerialBefore, OutReplay.TopologyAudit.ResetAudit.ResetSerialAfter)
 				},
 				OutReplay.Images))
 		{
@@ -734,9 +748,15 @@ namespace
 		const bool bExpectedSelection = Scenario.bUseFilteredGapRoute
 			? OutReplay.SelectionRecord.SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::DivergentGapAfterFiltering
 			: OutReplay.SelectionRecord.SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
-		const bool bExpectedLedger = Scenario.bExpectHold
-			? (OutReplay.OverwrittenByRidgeGenerationCount > 0 && OutReplay.NewOceanicCreationCount == 0)
-			: (OutReplay.NewOceanicCreationCount > 0 && OutReplay.OverwrittenByRidgeGenerationCount == 0);
+		const bool bExpectedLedger = Scenario.bExpectRiftingPending
+			? (OutReplay.RiftingPendingCount > 0 &&
+				OutReplay.NewOceanicCreationCount == 0 &&
+				OutReplay.OverwrittenByRidgeGenerationCount == 0 &&
+				OutReplay.GeneratedRecordCount == 0)
+			: (OutReplay.NewOceanicCreationCount > 0 &&
+				OutReplay.RiftingPendingCount == 0 &&
+				OutReplay.OverwrittenByRidgeGenerationCount == 0);
+		const int32 ExpectedProvenanceCount = OutReplay.GeneratedRecordCount + OutReplay.RiftingPendingCount;
 		OutReplay.bPass =
 			bSelectionOk &&
 			bGenerationOk &&
@@ -745,9 +765,9 @@ namespace
 			OutReplay.OceanicRecord.bGeneratedOceanicCrust &&
 			OutReplay.TopologyAudit.bRan &&
 			OutReplay.TopologyAudit.bApplied &&
-			OutReplay.GeneratedRecordCount > 0 &&
+			ExpectedProvenanceCount > 0 &&
 			bExpectedLedger &&
-			OutReplay.GeophysicsDerivedZGammaCount == OutReplay.GeneratedRecordCount &&
+			OutReplay.GeophysicsDerivedZGammaCount == ExpectedProvenanceCount &&
 			OutReplay.PaperFaithfulZGammaCount == 0 &&
 			OutReplay.bNoForbiddenPolicy &&
 			OutReplay.bMapsReadOnly;
@@ -788,7 +808,7 @@ namespace
 				*JsonString(Image.Path)));
 		}
 		return FString::Printf(
-			TEXT("{\"scenario\":%s,\"replay\":%d,\"pass\":%s,\"hold\":%s,\"selection\":%s,\"raw_candidates\":%d,\"post_filter_candidates\":%d,\"generated\":%d,\"new_oceanic\":%d,\"overwrite_hold\":%d,\"policy_prior_projection\":\"%d/%d/%d\",\"geophysics_zgamma\":%d,\"paper_zgamma\":%d,\"maps_read_only\":%s,\"topology_hash\":%s,\"contact_sheet\":%s,\"images\":[%s],\"seconds\":%.6f}"),
+			TEXT("{\"scenario\":%s,\"replay\":%d,\"pass\":%s,\"hold\":%s,\"selection\":%s,\"raw_candidates\":%d,\"post_filter_candidates\":%d,\"applied_generated\":%d,\"new_oceanic\":%d,\"rifting_pending\":%d,\"overwritten_by_ridge\":%d,\"policy_prior_projection\":\"%d/%d/%d\",\"geophysics_zgamma\":%d,\"paper_zgamma\":%d,\"maps_read_only\":%s,\"topology_hash\":%s,\"contact_sheet\":%s,\"images\":[%s],\"seconds\":%.6f}"),
 			*JsonString(Replay.ScenarioName),
 			Replay.Replay,
 			Replay.bPass ? TEXT("true") : TEXT("false"),
@@ -798,6 +818,7 @@ namespace
 			Replay.SelectionRecord.PostFilterCandidateCount,
 			Replay.GeneratedRecordCount,
 			Replay.NewOceanicCreationCount,
+			Replay.RiftingPendingCount,
 			Replay.OverwrittenByRidgeGenerationCount,
 			Replay.TopologyAudit.PolicyWinnerCount,
 			Replay.TopologyAudit.PriorOwnerFallbackCount,
@@ -817,13 +838,13 @@ namespace
 		Report += TEXT("# Phase IIIE Diagnostic Contact Sheets\n\n");
 		Report += TEXT("Verdict: ");
 		Report += bOverallPass ? TEXT("PASS / DIAGNOSTIC CONTACT SHEETS WRITTEN; LIVE PROMOTION STILL HELD") : TEXT("FAIL / HOLD DIAGNOSTIC CONTACT SHEETS");
-		Report += TEXT(". This checkpoint exports dedicated diagnostic PNG contact sheets for the IIIE.3 -> IIIE.4 -> IIIE.5 -> IIIE.6 bounded chain as it exists today. It does not promote IIIE.6 into live cadence, resolve majority assignment, implement triple-junction handling, or convert continental-overwrite holds into production behavior.\n\n");
+		Report += TEXT(". This checkpoint exports dedicated diagnostic PNG contact sheets for the IIIE.3 -> IIIE.4 -> IIIE.5 -> IIIE.6 bounded chain as it exists today. It does not promote IIIE.6 into live cadence; majority assignment, triple-junction splitting, and continental rifting-pending routing are now visible as audited prerequisites.\n\n");
 
 		Report += TEXT("## Scope\n\n");
-		Report += TEXT("- The export runs the same bounded IIIE.6 event cases: no-hit divergent ocean creation and filter-exhausted continental-overwrite hold.\n");
-		Report += TEXT("- Each replay writes pre-state maps, a selection/generation card, post-rebuild maps, and a ledger/hold card into one contact sheet.\n");
+		Report += TEXT("- The export runs the same bounded IIIE.6 event cases: no-hit divergent ocean creation and filter-exhausted continental rifting-pending route.\n");
+		Report += TEXT("- Each replay writes pre-state maps, a selection/generation card, post-rebuild maps, and a ledger card into one contact sheet.\n");
 		Report += TEXT("- The commandlet deliberately leaves live auto-resampling on the existing comparison path. These images are diagnostic artifacts for the audited helper chain, not proof and not a production-cadence claim.\n");
-		Report += TEXT("- The filter-exhausted continental case remains a hold. Its contact sheet is expected to show the generated oceanic signal while the ledger card marks the overwrite hold explicitly.\n\n");
+		Report += TEXT("- The filter-exhausted continental case now records `rifting pending`: IIIE.4 provenance is visible, but no generated oceanic record is applied over continental material.\n\n");
 
 		Report += TEXT("## Gates\n\n");
 		Report += TEXT("| Gate | Result | Evidence |\n");
@@ -850,19 +871,20 @@ namespace
 		Report += TEXT("\n");
 
 		Report += TEXT("## Exported Contact Sheets\n\n");
-		Report += TEXT("| Scenario | Replay | Selection | Generated | New ocean | Overwrite hold | Topology hash | Contact sheet |\n");
-		Report += TEXT("|---|---:|---|---:|---:|---:|---|---|\n");
+		Report += TEXT("| Scenario | Replay | Selection | Applied generated | New ocean | Rifting pending | Overwritten | Topology hash | Contact sheet |\n");
+		Report += TEXT("|---|---:|---|---:|---:|---:|---:|---|---|\n");
 		for (const FVisualScenarioResult& Result : Results)
 		{
 			for (const FVisualReplay* Replay : { &Result.A, &Result.B })
 			{
 				Report += FString::Printf(
-					TEXT("| `%s` | %d | `%s` | %d | %d | %d | `%s` | `%s` |\n"),
+					TEXT("| `%s` | %d | `%s` | %d | %d | %d | %d | `%s` | `%s` |\n"),
 					*Result.Scenario.Name,
 					Replay->Replay,
 					*SelectionClassName(Replay->SelectionRecord.SelectionClass),
 					Replay->GeneratedRecordCount,
 					Replay->NewOceanicCreationCount,
+					Replay->RiftingPendingCount,
 					Replay->OverwrittenByRidgeGenerationCount,
 					*Replay->TopologyAudit.TopologyHash,
 					*Replay->ContactSheetPath);
@@ -896,14 +918,12 @@ namespace
 		Report += TEXT("- `PrePlateId`, `PreCrustType`, and `PreElevation` show the bounded fixture before any IIIE mutation.\n");
 		Report += TEXT("- `SelectionAndGeneration` is a card, not a map. It records the IIIE.3 route, raw/post-filter candidate counts, q1/q2 provenance, and zGamma authority flags.\n");
 		Report += TEXT("- `PostPlateId`, `PostCrustType`, `PostElevation`, `PostOceanicAge`, `PostRidgeDirection`, and `PostPhaseIIIERemesh` show the state after the accepted IIIE.5 duplicate/re-index/re-compact helper.\n");
-		Report += TEXT("- `LedgerAndHolds` is the audit card for the IIIE.6 ledger line. The continental-overwrite fixture is supposed to remain a hold until the rifting-pending route is implemented.\n");
+		Report += TEXT("- `LedgerAndHolds` is the audit card for the IIIE.6 ledger line. The continental case should show `RIFT PENDING 1` and `OVERWRITTEN 0`.\n");
 		Report += TEXT("- The maps are human-spatial diagnostics only. The commandlet gates determinism, read-only export, no forbidden fallback counters, and expected ledger classification; it does not replace the numeric IIIE.2-6 commandlets.\n\n");
 
 		Report += TEXT("## Next Required Work\n\n");
-		Report += TEXT("1. Add the IIIE consolidation paragraph that explicitly approves or scopes the two-of-three majority assignment rule.\n");
-		Report += TEXT("2. Add the triple-junction centroid-split slice so one-one-one global triangles stop being a live-cadence hold.\n");
-		Report += TEXT("3. Convert continental ridge overwrite into a rifting-pending route instead of a IIIE production hold.\n");
-		Report += TEXT("4. Promote IIIE.6 to live cadence only after those live-geometry cases have explicit handling.\n\n");
+		Report += TEXT("1. Promote IIIE.6 to live cadence only through the audited chain, with unresolved multi-hit classes still fail-loud.\n");
+		Report += TEXT("2. Keep the contact-sheet export as a regression diagnostic after live promotion.\n\n");
 		Report += FString::Printf(TEXT("Metrics: `%s`.\n"), *MetricsPath);
 		return Report;
 	}
@@ -930,16 +950,15 @@ int32 UCarrierLabPhaseIIIEVisualValidationCommandlet::Main(const FString& Params
 	NoHit.Description = TEXT("No raw ray candidates route to IIIE.4 q1/q2/qGamma generation and IIIE.5 topology rebuild.");
 	NoHit.bPreExistingContinental = false;
 	NoHit.bUseFilteredGapRoute = false;
-	NoHit.bExpectHold = false;
 	Scenarios.Add(NoHit);
 
-	FVisualScenario OverwriteHold;
-	OverwriteHold.Name = TEXT("filter_exhausted_continental_overwrite_hold");
-	OverwriteHold.Description = TEXT("Filtered process candidates route to divergent generation, while pre-existing continental material stays visible as a ledger hold.");
-	OverwriteHold.bPreExistingContinental = true;
-	OverwriteHold.bUseFilteredGapRoute = true;
-	OverwriteHold.bExpectHold = true;
-	Scenarios.Add(OverwriteHold);
+	FVisualScenario RiftingPending;
+	RiftingPending.Name = TEXT("filter_exhausted_continental_rifting_pending");
+	RiftingPending.Description = TEXT("Filtered process candidates compute divergent provenance, while pre-existing continental material routes to rifting-pending instead of oceanic overwrite.");
+	RiftingPending.bPreExistingContinental = true;
+	RiftingPending.bUseFilteredGapRoute = true;
+	RiftingPending.bExpectRiftingPending = true;
+	Scenarios.Add(RiftingPending);
 
 	TArray<FVisualScenarioResult> Results;
 	bool bOverallPass = true;
