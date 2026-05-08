@@ -21,7 +21,7 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 | Post-rebuild IIIB tracking gate | pass | topology `df45ff4c3c0e85a0`, reset `0->1`, seed plate/local `0/170`, other `1`, active `2`, distances `2`, matrix pairs `1`, accepted positive `1`, propagation seed/added `1/1`, closure reset `1`, hash `f2cca799add92f9e`. |
 | Same-seed remesh-event replay | pass | Event hashes `99b2957f76910bf5` and `99b2957f76910bf5`. |
 
-| Live actor IIIE.6 promotion smoke | pass | applied `0`, events `0->0`, samples/plates `96/1`, gen/apply/rift/hold/tj `0/0/0/73/0`, policy `0`, mode `phase_iii_e6_live_hold_unresolved_multi_hit_73`, crust `8b7758c51944a162->8b7758c51944a162`. |
+| Live actor IIIE.6 promotion smoke | pass | applied `1`, events `0->1`, samples/plates `96/1`, gen/apply/rift/hold/coalesced/tj `0/0/0/0/73/0`, policy `0`, mode `phase_iii_e6_live gen=0 applied=0 rift_pending=0 majority=0 tj_split=0`, crust `8b7758c51944a162->5c75dc9d238d9011`. |
 
 ## Contract Table
 

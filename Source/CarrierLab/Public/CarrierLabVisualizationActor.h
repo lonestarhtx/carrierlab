@@ -100,6 +100,18 @@ struct FCarrierLabVisualizationMetrics
 	int32 PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastCoalescedMultiHitCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastCrossPlateEqualHoldCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastThirdPlateHoldCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastTripleJunctionSplitCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
@@ -709,11 +721,23 @@ enum class ECarrierLabPhaseIIIE3SelectionClass : uint8
 	UnresolvedThirdPlateMultiHit
 };
 
+enum class ECarrierLabPhaseIIIE3MultiHitBucket : uint8
+{
+	None,
+	WithinPlateCoincident,
+	WithinPlateDistanceSeparated,
+	CrossPlateEqual,
+	CrossPlateDifferent,
+	MixedMaterial,
+	ThirdPlate
+};
+
 struct FCarrierLabPhaseIIIE3CandidateProbe
 {
 	int32 PlateId = INDEX_NONE;
 	int32 LocalTriangleId = INDEX_NONE;
 	FVector3d Bary = FVector3d(1.0, 0.0, 0.0);
+	double Distance = 1.0;
 	double ContinentalFraction = 0.0;
 	double Elevation = 0.0;
 	double HistoricalElevation = 0.0;
@@ -721,6 +745,7 @@ struct FCarrierLabPhaseIIIE3CandidateProbe
 	FVector3d RidgeDirection = FVector3d::ZeroVector;
 	FVector3d FoldDirection = FVector3d::ZeroVector;
 	ECarrierLabPhaseIIIE3FilterReason FilterReason = ECarrierLabPhaseIIIE3FilterReason::None;
+	bool bBoundary = true;
 };
 
 struct FCarrierLabPhaseIIIE3SelectionRecord
@@ -735,15 +760,25 @@ struct FCarrierLabPhaseIIIE3SelectionRecord
 	int32 FilteredCollisionPendingCount = 0;
 	int32 PostFilterCandidateCount = 0;
 	int32 PostFilterPlateCount = 0;
+	int32 EffectiveCandidateCount = 0;
+	int32 CoalescedCandidateCount = 0;
+	int32 CoalescedDuplicateHitCount = 0;
 	bool bResolvedSingleHit = false;
 	bool bDivergentGapRoute = false;
 	bool bUnresolvedMultiHit = false;
+	bool bCoalescedDuplicateHit = false;
+	bool bCoalescingRejectedByFieldMismatch = false;
 	bool bUsedPolicyWinner = false;
 	bool bUsedPriorOwnerFallback = false;
 	int32 ResolvedPlateId = INDEX_NONE;
 	int32 ResolvedLocalTriangleId = INDEX_NONE;
 	FVector3d ResolvedBary = FVector3d(1.0, 0.0, 0.0);
 	ECarrierLabPhaseIIIE3SelectionClass SelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
+	ECarrierLabPhaseIIIE3MultiHitBucket MultiHitBucket = ECarrierLabPhaseIIIE3MultiHitBucket::None;
+	double MultiHitMaxRayDistanceResidualKm = 0.0;
+	double MultiHitMaxScalarResidual = 0.0;
+	double MultiHitMaxElevationResidualKm = 0.0;
+	double MultiHitMaxUnitVectorResidual = 0.0;
 	double ContinentalFraction = 0.0;
 	double Elevation = 0.0;
 	double HistoricalElevation = 0.0;
@@ -770,6 +805,19 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 UnresolvedSameMaterialMultiHitCount = 0;
 	int32 UnresolvedMixedMaterialMultiHitCount = 0;
 	int32 UnresolvedThirdPlateMultiHitCount = 0;
+	int32 WithinPlateCoincidentMultiHitCount = 0;
+	int32 WithinPlateDistanceSeparatedMultiHitCount = 0;
+	int32 CrossPlateEqualMultiHitCount = 0;
+	int32 CrossPlateDifferentMultiHitCount = 0;
+	int32 MixedMaterialMultiHitCount = 0;
+	int32 ThirdPlateMultiHitCount = 0;
+	int32 CoalescedMultiHitCount = 0;
+	int32 CoalescedCandidateCount = 0;
+	int32 CoalescingFieldMismatchHoldCount = 0;
+	double MaxMultiHitRayDistanceResidualKm = 0.0;
+	double MaxMultiHitScalarResidual = 0.0;
+	double MaxMultiHitElevationResidualKm = 0.0;
+	double MaxMultiHitUnitVectorResidual = 0.0;
 	int32 PriorOwnerFallbackCount = 0;
 	int32 PolicyWinnerCount = 0;
 	FString SelectionHash;
@@ -1946,6 +1994,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	bool bEnablePhaseIIICVisibleHistoricalElevation = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bEnablePhaseIIIE3DuplicateHitCoalescing = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICTrenchDepthKm = -10.0;
 
@@ -2345,6 +2396,7 @@ private:
 	TArray<uint8> BoundaryMask;
 	TArray<uint8> PlateBoundaryMask;
 	TArray<uint8> SubductionRoleMask;
+	TArray<uint8> PhaseIIIELiveRemeshEventMask;
 	TArray<double> DistanceToFrontKmBySample;
 	mutable FCarrierLabPhaseIIIDiagnosticCallCounts PhaseIIIDiagnosticCallCounts;
 	double LastConvergenceMatrixBvhBuildSeconds = 0.0;

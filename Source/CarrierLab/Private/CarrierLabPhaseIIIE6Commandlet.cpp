@@ -291,6 +291,7 @@ namespace
 		int32 AppliedGeneratedCount = 0;
 		int32 RiftingPendingCount = 0;
 		int32 UnresolvedHoldCount = 0;
+		int32 CoalescedMultiHitCount = 0;
 		int32 TripleJunctionSplitCount = 0;
 		int32 PolicyWinnerCount = 0;
 		FString LastRemeshMode;
@@ -540,6 +541,7 @@ namespace
 		OutResult.AppliedGeneratedCount = Actor->CurrentMetrics.PhaseIIIELastAppliedGeneratedCount;
 		OutResult.RiftingPendingCount = Actor->CurrentMetrics.PhaseIIIELastRiftingPendingCount;
 		OutResult.UnresolvedHoldCount = Actor->CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount;
+		OutResult.CoalescedMultiHitCount = Actor->CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount;
 		OutResult.TripleJunctionSplitCount = Actor->CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount;
 		OutResult.PolicyWinnerCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
 		OutResult.LastRemeshMode = Actor->CurrentMetrics.LastRemeshMode;
@@ -692,7 +694,7 @@ namespace
 	FString BuildLivePromotionJsonLine(const FLivePromotionResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"pass\":%s,\"applied\":%s,\"sample_count\":%d,\"plate_count\":%d,\"event_before\":%d,\"event_after\":%d,\"generated_candidate\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"unresolved_hold\":%d,\"triple_junction_split\":%d,\"policy_winner\":%d,\"last_remesh_mode\":%s,\"crust_hash_before\":%s,\"crust_hash_after\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"fixture\":%s,\"pass\":%s,\"applied\":%s,\"sample_count\":%d,\"plate_count\":%d,\"event_before\":%d,\"event_after\":%d,\"generated_candidate\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"unresolved_hold\":%d,\"coalesced_multi_hit\":%d,\"triple_junction_split\":%d,\"policy_winner\":%d,\"last_remesh_mode\":%s,\"crust_hash_before\":%s,\"crust_hash_after\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Name),
 			Result.bPass ? TEXT("true") : TEXT("false"),
 			Result.bApplied ? TEXT("true") : TEXT("false"),
@@ -704,6 +706,7 @@ namespace
 			Result.AppliedGeneratedCount,
 			Result.RiftingPendingCount,
 			Result.UnresolvedHoldCount,
+			Result.CoalescedMultiHitCount,
 			Result.TripleJunctionSplitCount,
 			Result.PolicyWinnerCount,
 			*JsonString(Result.LastRemeshMode),
@@ -800,7 +803,7 @@ namespace
 			*ReplayHashA,
 			*ReplayHashB);
 		Report += FString::Printf(
-			TEXT("| Live actor IIIE.6 promotion smoke | %s | applied `%d`, events `%d->%d`, samples/plates `%d/%d`, gen/apply/rift/hold/tj `%d/%d/%d/%d/%d`, policy `%d`, mode `%s`, crust `%s->%s`. |\n\n"),
+			TEXT("| Live actor IIIE.6 promotion smoke | %s | applied `%d`, events `%d->%d`, samples/plates `%d/%d`, gen/apply/rift/hold/coalesced/tj `%d/%d/%d/%d/%d/%d`, policy `%d`, mode `%s`, crust `%s->%s`. |\n\n"),
 			*PassFail(LivePromotion.bPass),
 			LivePromotion.bApplied ? 1 : 0,
 			LivePromotion.EventCountBefore,
@@ -811,6 +814,7 @@ namespace
 			LivePromotion.AppliedGeneratedCount,
 			LivePromotion.RiftingPendingCount,
 			LivePromotion.UnresolvedHoldCount,
+			LivePromotion.CoalescedMultiHitCount,
 			LivePromotion.TripleJunctionSplitCount,
 			LivePromotion.PolicyWinnerCount,
 			*LivePromotion.LastRemeshMode,

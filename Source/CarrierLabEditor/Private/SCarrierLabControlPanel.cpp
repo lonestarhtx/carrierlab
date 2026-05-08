@@ -1958,7 +1958,7 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		TEXT("cadence: %d steps / %.3f Ma | observed max speed: %.6f mm/yr | IIIE auto remesh: %s | phase iii process: %s\n")
 		TEXT("live remesh: IIIE.6 selection -> gap-fill -> topology rebuild -> ledger; unresolved multi-hit holds fail-loud\n")
 		TEXT("samples: %d | plates: %d | miss: %s (%d) | multi-hit: %s (%d) | policy-resolved multi-hit: %d | boundary hits: %d | NaN/Inf: %d\n")
-		TEXT("iiie last gen/apply/rift/hold/tj=%d/%d/%d/%d/%d\n")
+		TEXT("iiie last gen/apply/rift/hold/coalesced/tj=%d/%d/%d/%d/%d/%d | hold buckets within/crossEq/third=%d/%d/%d\n")
 		TEXT("phaseIII active=%d dist=%d matrix=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\n")
 		TEXT("crust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f] km max_age=%.3f Ma\n")
 		TEXT("last remesh mode: %s\n")
@@ -1989,7 +1989,11 @@ FText SCarrierLabControlPanel::GetLiveProjectionSummaryText() const
 		Metrics.PhaseIIIELastAppliedGeneratedCount,
 		Metrics.PhaseIIIELastRiftingPendingCount,
 		Metrics.PhaseIIIELastUnresolvedMultiHitHoldCount,
+		Metrics.PhaseIIIELastCoalescedMultiHitCount,
 		Metrics.PhaseIIIELastTripleJunctionSplitCount,
+		Metrics.PhaseIIIELastWithinPlateCoincidentHoldCount,
+		Metrics.PhaseIIIELastCrossPlateEqualHoldCount,
+		Metrics.PhaseIIIELastThirdPlateHoldCount,
 		Metrics.PhaseIIIActiveBoundaryTriangleCount,
 		Metrics.PhaseIIIDistanceToFrontRecordCount,
 		Metrics.PhaseIIISubductionMatrixPairCount,

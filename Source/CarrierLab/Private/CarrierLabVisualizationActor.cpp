@@ -43,6 +43,17 @@ namespace
 	constexpr double PhaseIIIE4AbyssalElevationKm = -6.0;
 	constexpr double PhaseIIIE4ZGammaGeophysicsReferenceDistanceKm = 3000.0;
 	constexpr double PhaseIIIEContinentalOverwriteThreshold = 1.0e-4;
+	// Same tolerance family as the IIIE.2 edge-t comparison and IIIE.4
+	// independent-oracle residual gates: geometry duplicates only, not a
+	// tectonic remesh winner policy.
+	constexpr double PhaseIIIE3RayDistanceCoincidenceToleranceKm = 1.0e-9;
+	constexpr double PhaseIIIE3ScalarFieldTolerance = 1.0e-9;
+	constexpr double PhaseIIIE3ElevationToleranceKm = 1.0e-9;
+	constexpr double PhaseIIIE3UnitVectorTolerance = 1.0e-8;
+	constexpr uint8 PhaseIIIELiveRemeshMaskUnresolvedHold = 1u << 0;
+	constexpr uint8 PhaseIIIELiveRemeshMaskCoalescedDuplicate = 1u << 1;
+	constexpr uint8 PhaseIIIELiveRemeshMaskAppliedGenerated = 1u << 2;
+	constexpr uint8 PhaseIIIELiveRemeshMaskRiftingPending = 1u << 3;
 
 	struct FCarrierLabVizCandidate
 	{
@@ -1755,6 +1766,7 @@ namespace
 		double ContinentalFraction = 0.0;
 		FCarrierLabCrustFields Fields;
 		ECarrierLabPhaseIIIE3FilterReason FilterReason = ECarrierLabPhaseIIIE3FilterReason::None;
+		bool bBoundary = false;
 	};
 
 	int32 CountDistinctIIIE3Plates(const TArray<FCarrierLabIIIE3SelectionCandidate>& Candidates)
@@ -1768,6 +1780,172 @@ namespace
 			}
 		}
 		return PlateIds.Num();
+	}
+
+	bool HasMixedIIIE3Material(const TArray<FCarrierLabIIIE3SelectionCandidate>& Candidates)
+	{
+		bool bHasContinental = false;
+		bool bHasOceanic = false;
+		for (const FCarrierLabIIIE3SelectionCandidate& Candidate : Candidates)
+		{
+			if (Candidate.ContinentalFraction >= 0.5)
+			{
+				bHasContinental = true;
+			}
+			else
+			{
+				bHasOceanic = true;
+			}
+		}
+		return bHasContinental && bHasOceanic;
+	}
+
+	void MeasureIIIE3MultiHitResiduals(
+		const TArray<FCarrierLabIIIE3SelectionCandidate>& Candidates,
+		double& OutMaxRayDistanceResidualKm,
+		double& OutMaxScalarResidual,
+		double& OutMaxElevationResidualKm,
+		double& OutMaxUnitVectorResidual)
+	{
+		OutMaxRayDistanceResidualKm = 0.0;
+		OutMaxScalarResidual = 0.0;
+		OutMaxElevationResidualKm = 0.0;
+		OutMaxUnitVectorResidual = 0.0;
+		if (Candidates.Num() <= 1)
+		{
+			return;
+		}
+
+		const FCarrierLabIIIE3SelectionCandidate& Reference = Candidates[0];
+		for (int32 Index = 1; Index < Candidates.Num(); ++Index)
+		{
+			const FCarrierLabIIIE3SelectionCandidate& Candidate = Candidates[Index];
+			OutMaxRayDistanceResidualKm = FMath::Max(
+				OutMaxRayDistanceResidualKm,
+				FMath::Abs(Candidate.Distance - Reference.Distance) * EarthRadiusKm);
+			OutMaxScalarResidual = FMath::Max(
+				OutMaxScalarResidual,
+				FMath::Abs(Candidate.ContinentalFraction - Reference.ContinentalFraction));
+			OutMaxScalarResidual = FMath::Max(
+				OutMaxScalarResidual,
+				FMath::Abs(Candidate.Fields.OceanicAge - Reference.Fields.OceanicAge));
+			OutMaxElevationResidualKm = FMath::Max(
+				OutMaxElevationResidualKm,
+				FMath::Abs(Candidate.Fields.Elevation - Reference.Fields.Elevation));
+			OutMaxElevationResidualKm = FMath::Max(
+				OutMaxElevationResidualKm,
+				FMath::Abs(Candidate.Fields.HistoricalElevation - Reference.Fields.HistoricalElevation));
+			OutMaxUnitVectorResidual = FMath::Max(
+				OutMaxUnitVectorResidual,
+				(Candidate.Fields.RidgeDirection - Reference.Fields.RidgeDirection).Size());
+			OutMaxUnitVectorResidual = FMath::Max(
+				OutMaxUnitVectorResidual,
+				(Candidate.Fields.FoldDirection - Reference.Fields.FoldDirection).Size());
+		}
+	}
+
+	bool AreAllIIIE3BoundaryCandidates(const TArray<FCarrierLabIIIE3SelectionCandidate>& Candidates)
+	{
+		for (const FCarrierLabIIIE3SelectionCandidate& Candidate : Candidates)
+		{
+			if (!Candidate.bBoundary)
+			{
+				return false;
+			}
+		}
+		return !Candidates.IsEmpty();
+	}
+
+	ECarrierLabPhaseIIIE3MultiHitBucket ClassifyIIIE3MultiHitBucket(
+		const TArray<FCarrierLabIIIE3SelectionCandidate>& Candidates,
+		double& OutMaxRayDistanceResidualKm,
+		double& OutMaxScalarResidual,
+		double& OutMaxElevationResidualKm,
+		double& OutMaxUnitVectorResidual)
+	{
+		MeasureIIIE3MultiHitResiduals(
+			Candidates,
+			OutMaxRayDistanceResidualKm,
+			OutMaxScalarResidual,
+			OutMaxElevationResidualKm,
+			OutMaxUnitVectorResidual);
+
+		if (Candidates.Num() <= 1)
+		{
+			return ECarrierLabPhaseIIIE3MultiHitBucket::None;
+		}
+
+		const int32 PlateCount = CountDistinctIIIE3Plates(Candidates);
+		if (PlateCount >= 3)
+		{
+			return ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate;
+		}
+		if (HasMixedIIIE3Material(Candidates))
+		{
+			return ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial;
+		}
+		if (PlateCount == 1)
+		{
+			return AreAllIIIE3BoundaryCandidates(Candidates) &&
+				OutMaxRayDistanceResidualKm <= PhaseIIIE3RayDistanceCoincidenceToleranceKm
+				? ECarrierLabPhaseIIIE3MultiHitBucket::WithinPlateCoincident
+				: ECarrierLabPhaseIIIE3MultiHitBucket::WithinPlateDistanceSeparated;
+		}
+		return OutMaxRayDistanceResidualKm <= PhaseIIIE3RayDistanceCoincidenceToleranceKm
+			? ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateEqual
+			: ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateDifferent;
+	}
+
+	bool IsIIIE3CoalescingFieldMismatch(
+		const ECarrierLabPhaseIIIE3MultiHitBucket Bucket,
+		const double MaxScalarResidual,
+		const double MaxElevationResidualKm,
+		const double MaxUnitVectorResidual)
+	{
+		return Bucket == ECarrierLabPhaseIIIE3MultiHitBucket::WithinPlateCoincident &&
+			(MaxScalarResidual > PhaseIIIE3ScalarFieldTolerance ||
+				MaxElevationResidualKm > PhaseIIIE3ElevationToleranceKm ||
+				MaxUnitVectorResidual > PhaseIIIE3UnitVectorTolerance);
+	}
+
+	bool TryCoalesceIIIE3WithinPlateCoincidentCandidates(
+		const TArray<FCarrierLabIIIE3SelectionCandidate>& VisibleCandidates,
+		FCarrierLabIIIE3SelectionCandidate& OutCandidate)
+	{
+		double MaxRayResidualKm = 0.0;
+		double MaxScalarResidual = 0.0;
+		double MaxElevationResidualKm = 0.0;
+		double MaxUnitVectorResidual = 0.0;
+		const ECarrierLabPhaseIIIE3MultiHitBucket Bucket = ClassifyIIIE3MultiHitBucket(
+			VisibleCandidates,
+			MaxRayResidualKm,
+			MaxScalarResidual,
+			MaxElevationResidualKm,
+			MaxUnitVectorResidual);
+		if (Bucket != ECarrierLabPhaseIIIE3MultiHitBucket::WithinPlateCoincident ||
+			IsIIIE3CoalescingFieldMismatch(Bucket, MaxScalarResidual, MaxElevationResidualKm, MaxUnitVectorResidual))
+		{
+			return false;
+		}
+
+		int32 BestIndex = INDEX_NONE;
+		for (int32 Index = 0; Index < VisibleCandidates.Num(); ++Index)
+		{
+			if (BestIndex == INDEX_NONE ||
+				VisibleCandidates[Index].LocalTriangleId < VisibleCandidates[BestIndex].LocalTriangleId ||
+				(VisibleCandidates[Index].LocalTriangleId == VisibleCandidates[BestIndex].LocalTriangleId &&
+					VisibleCandidates[Index].Distance < VisibleCandidates[BestIndex].Distance))
+			{
+				BestIndex = Index;
+			}
+		}
+		if (!VisibleCandidates.IsValidIndex(BestIndex))
+		{
+			return false;
+		}
+
+		OutCandidate = VisibleCandidates[BestIndex];
+		return true;
 	}
 
 	ECarrierLabPhaseIIIE3SelectionClass ClassifyIIIE3UnresolvedMultiHit(
@@ -1802,6 +1980,7 @@ namespace
 		const int32 SampleId,
 		const FVector3d& SampleUnitPosition,
 		const TArray<FCarrierLabIIIE3SelectionCandidate>& Candidates,
+		const bool bEnableDuplicateHitCoalescing,
 		FCarrierLabPhaseIIIE3SelectionRecord& OutRecord)
 	{
 		OutRecord = FCarrierLabPhaseIIIE3SelectionRecord();
@@ -1837,6 +2016,7 @@ namespace
 
 		OutRecord.PostFilterCandidateCount = VisibleCandidates.Num();
 		OutRecord.PostFilterPlateCount = CountDistinctIIIE3Plates(VisibleCandidates);
+		OutRecord.EffectiveCandidateCount = VisibleCandidates.Num();
 
 		if (Candidates.IsEmpty())
 		{
@@ -1869,6 +2049,40 @@ namespace
 			return true;
 		}
 
+		OutRecord.MultiHitBucket = ClassifyIIIE3MultiHitBucket(
+			VisibleCandidates,
+			OutRecord.MultiHitMaxRayDistanceResidualKm,
+			OutRecord.MultiHitMaxScalarResidual,
+			OutRecord.MultiHitMaxElevationResidualKm,
+			OutRecord.MultiHitMaxUnitVectorResidual);
+		OutRecord.bCoalescingRejectedByFieldMismatch = IsIIIE3CoalescingFieldMismatch(
+			OutRecord.MultiHitBucket,
+			OutRecord.MultiHitMaxScalarResidual,
+			OutRecord.MultiHitMaxElevationResidualKm,
+			OutRecord.MultiHitMaxUnitVectorResidual);
+		if (bEnableDuplicateHitCoalescing)
+		{
+			FCarrierLabIIIE3SelectionCandidate CoalescedWinner;
+			if (TryCoalesceIIIE3WithinPlateCoincidentCandidates(VisibleCandidates, CoalescedWinner))
+			{
+				OutRecord.EffectiveCandidateCount = 1;
+				OutRecord.CoalescedCandidateCount = VisibleCandidates.Num() - 1;
+				OutRecord.CoalescedDuplicateHitCount = 1;
+				OutRecord.bCoalescedDuplicateHit = true;
+				OutRecord.SelectionClass = ECarrierLabPhaseIIIE3SelectionClass::ResolvedSingleHit;
+				OutRecord.bResolvedSingleHit = true;
+				OutRecord.ResolvedPlateId = CoalescedWinner.PlateId;
+				OutRecord.ResolvedLocalTriangleId = CoalescedWinner.LocalTriangleId;
+				OutRecord.ResolvedBary = CoalescedWinner.Bary;
+				OutRecord.ContinentalFraction = CoalescedWinner.ContinentalFraction;
+				OutRecord.Elevation = CoalescedWinner.Fields.Elevation;
+				OutRecord.HistoricalElevation = CoalescedWinner.Fields.HistoricalElevation;
+				OutRecord.OceanicAge = CoalescedWinner.Fields.OceanicAge;
+				OutRecord.RidgeDirection = CoalescedWinner.Fields.RidgeDirection;
+				OutRecord.FoldDirection = CoalescedWinner.Fields.FoldDirection;
+				return true;
+			}
+		}
 		OutRecord.SelectionClass = ClassifyIIIE3UnresolvedMultiHit(Candidates, VisibleCandidates);
 		OutRecord.bUnresolvedMultiHit = true;
 		return true;
@@ -1903,8 +2117,39 @@ namespace
 		Audit.PostFilterSingleHitCount += Record.bResolvedSingleHit ? 1 : 0;
 		Audit.DivergentGapRouteCount += Record.bDivergentGapRoute ? 1 : 0;
 		Audit.UnresolvedMultiHitCount += Record.bUnresolvedMultiHit ? 1 : 0;
+		Audit.CoalescedMultiHitCount += Record.bCoalescedDuplicateHit ? 1 : 0;
+		Audit.CoalescedCandidateCount += Record.CoalescedCandidateCount;
+		Audit.CoalescingFieldMismatchHoldCount += Record.bCoalescingRejectedByFieldMismatch ? 1 : 0;
+		Audit.MaxMultiHitRayDistanceResidualKm = FMath::Max(Audit.MaxMultiHitRayDistanceResidualKm, Record.MultiHitMaxRayDistanceResidualKm);
+		Audit.MaxMultiHitScalarResidual = FMath::Max(Audit.MaxMultiHitScalarResidual, Record.MultiHitMaxScalarResidual);
+		Audit.MaxMultiHitElevationResidualKm = FMath::Max(Audit.MaxMultiHitElevationResidualKm, Record.MultiHitMaxElevationResidualKm);
+		Audit.MaxMultiHitUnitVectorResidual = FMath::Max(Audit.MaxMultiHitUnitVectorResidual, Record.MultiHitMaxUnitVectorResidual);
 		Audit.PriorOwnerFallbackCount += Record.bUsedPriorOwnerFallback ? 1 : 0;
 		Audit.PolicyWinnerCount += Record.bUsedPolicyWinner ? 1 : 0;
+
+		switch (Record.MultiHitBucket)
+		{
+		case ECarrierLabPhaseIIIE3MultiHitBucket::WithinPlateCoincident:
+			++Audit.WithinPlateCoincidentMultiHitCount;
+			break;
+		case ECarrierLabPhaseIIIE3MultiHitBucket::WithinPlateDistanceSeparated:
+			++Audit.WithinPlateDistanceSeparatedMultiHitCount;
+			break;
+		case ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateEqual:
+			++Audit.CrossPlateEqualMultiHitCount;
+			break;
+		case ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateDifferent:
+			++Audit.CrossPlateDifferentMultiHitCount;
+			break;
+		case ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial:
+			++Audit.MixedMaterialMultiHitCount;
+			break;
+		case ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate:
+			++Audit.ThirdPlateMultiHitCount;
+			break;
+		default:
+			break;
+		}
 
 		switch (Record.SelectionClass)
 		{
@@ -1942,10 +2187,16 @@ namespace
 			HashMix(Hash, static_cast<uint64>(Record.FilteredCollisionPendingCount + 1));
 			HashMix(Hash, static_cast<uint64>(Record.PostFilterCandidateCount + 1));
 			HashMix(Hash, static_cast<uint64>(Record.PostFilterPlateCount + 1));
+			HashMix(Hash, static_cast<uint64>(Record.EffectiveCandidateCount + 1));
+			HashMix(Hash, static_cast<uint64>(Record.CoalescedCandidateCount + 1));
+			HashMix(Hash, static_cast<uint64>(Record.CoalescedDuplicateHitCount + 1));
 			HashMix(Hash, static_cast<uint64>(Record.SelectionClass) + 1ull);
+			HashMix(Hash, static_cast<uint64>(Record.MultiHitBucket) + 1ull);
 			HashMix(Hash, static_cast<uint64>(Record.bResolvedSingleHit ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bDivergentGapRoute ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUnresolvedMultiHit ? 2 : 1));
+			HashMix(Hash, static_cast<uint64>(Record.bCoalescedDuplicateHit ? 2 : 1));
+			HashMix(Hash, static_cast<uint64>(Record.bCoalescingRejectedByFieldMismatch ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUsedPolicyWinner ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUsedPriorOwnerFallback ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.ResolvedPlateId + 2));
@@ -1953,6 +2204,10 @@ namespace
 			HashMixDouble(Hash, Record.ResolvedBary.X);
 			HashMixDouble(Hash, Record.ResolvedBary.Y);
 			HashMixDouble(Hash, Record.ResolvedBary.Z);
+			HashMixDouble(Hash, Record.MultiHitMaxRayDistanceResidualKm);
+			HashMixDouble(Hash, Record.MultiHitMaxScalarResidual);
+			HashMixDouble(Hash, Record.MultiHitMaxElevationResidualKm);
+			HashMixDouble(Hash, Record.MultiHitMaxUnitVectorResidual);
 			HashMixDouble(Hash, Record.ContinentalFraction);
 			HashMixDouble(Hash, Record.Elevation);
 			HashMixDouble(Hash, Record.HistoricalElevation);
@@ -3122,6 +3377,7 @@ namespace
 	FLinearColor RemeshSummaryColor(
 		const FLinearColor& Base,
 		const uint8 RoleMask,
+		const uint8 EventMask,
 		const double ContinentalFraction,
 		const double OceanicAgeMa,
 		const double ElevationKm,
@@ -3144,6 +3400,22 @@ namespace
 		if (RoleMask != 0)
 		{
 			Color = BlendMapOverlay(Color, SubductionRoleColor(RoleMask), 0.76f);
+		}
+		if ((EventMask & PhaseIIIELiveRemeshMaskCoalescedDuplicate) != 0)
+		{
+			Color = BlendMapOverlay(Color, FLinearColor(0.52f, 0.30f, 1.0f, 1.0f), 0.80f);
+		}
+		if ((EventMask & PhaseIIIELiveRemeshMaskAppliedGenerated) != 0)
+		{
+			Color = BlendMapOverlay(Color, FLinearColor(0.0f, 0.95f, 1.0f, 1.0f), 0.86f);
+		}
+		if ((EventMask & PhaseIIIELiveRemeshMaskRiftingPending) != 0)
+		{
+			Color = BlendMapOverlay(Color, FLinearColor(1.0f, 0.72f, 0.05f, 1.0f), 0.86f);
+		}
+		if ((EventMask & PhaseIIIELiveRemeshMaskUnresolvedHold) != 0)
+		{
+			Color = BlendMapOverlay(Color, FLinearColor(1.0f, 0.05f, 0.72f, 1.0f), 0.92f);
 		}
 		return Color;
 	}
@@ -5048,6 +5320,7 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE3FilteredRemeshSelectionForTes
 		Candidate.PlateId = Probe.PlateId;
 		Candidate.LocalTriangleId = Probe.LocalTriangleId;
 		Candidate.Bary = Probe.Bary;
+		Candidate.Distance = Probe.Distance;
 		Candidate.ContinentalFraction = FMath::Clamp(Probe.ContinentalFraction, 0.0, 1.0);
 		Candidate.Fields.Elevation = Probe.Elevation;
 		Candidate.Fields.HistoricalElevation = Probe.HistoricalElevation;
@@ -5055,9 +5328,10 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE3FilteredRemeshSelectionForTes
 		Candidate.Fields.RidgeDirection = RetangentAndNormalizeVectorField(Probe.RidgeDirection, NormalizeOrFallback(SamplePosition, FVector3d::UnitZ()));
 		Candidate.Fields.FoldDirection = RetangentAndNormalizeVectorField(Probe.FoldDirection, NormalizeOrFallback(SamplePosition, FVector3d::UnitZ()));
 		Candidate.FilterReason = Probe.FilterReason;
+		Candidate.bBoundary = Probe.bBoundary;
 	}
 
-	return SelectPhaseIIIE3FilteredRemeshSource(INDEX_NONE, SamplePosition, Candidates, OutRecord);
+	return SelectPhaseIIIE3FilteredRemeshSource(INDEX_NONE, SamplePosition, Candidates, bEnablePhaseIIIE3DuplicateHitCoalescing, OutRecord);
 }
 
 bool ACarrierLabVisualizationActor::QueryPhaseIIIE4DivergentOceanicFieldsForTest(
@@ -5803,6 +6077,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE3FilteredRemeshSelectionAuditFor
 			Candidate.Distance = RawCandidate.Distance;
 			Candidate.ContinentalFraction = InterpolateContinentalFraction(Plate, RawCandidate);
 			InterpolateCrustFields(Plate, RawCandidate, Sample.UnitPosition, Candidate.Fields);
+			Candidate.bBoundary = RawCandidate.bBoundary;
 
 			const uint64 TriangleKey = MakePlateTriangleKey(Candidate.PlateId, Candidate.LocalTriangleId);
 			if (SubductingTriangleKeys.Contains(TriangleKey))
@@ -5820,7 +6095,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE3FilteredRemeshSelectionAuditFor
 		}
 
 		FCarrierLabPhaseIIIE3SelectionRecord Record;
-		SelectPhaseIIIE3FilteredRemeshSource(Sample.Id, Sample.UnitPosition, SelectionCandidates, Record);
+		SelectPhaseIIIE3FilteredRemeshSource(Sample.Id, Sample.UnitPosition, SelectionCandidates, bEnablePhaseIIIE3DuplicateHitCoalescing, Record);
 		AccumulatePhaseIIIE3Record(Record, OutAudit);
 	}
 
@@ -10128,7 +10403,12 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = 0;
 	CurrentMetrics.PhaseIIIELastRiftingPendingCount = 0;
 	CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount = 0;
+	CurrentMetrics.PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastCrossPlateEqualHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastThirdPlateHoldCount = 0;
 	CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount = 0;
+	PhaseIIIELiveRemeshEventMask.Init(0, State.Samples.Num());
 
 	FCarrierLabPhaseIIIE3RemeshSelectionAudit SelectionAudit;
 	if (!RunPhaseIIIE3FilteredRemeshSelectionAudit(SelectionAudit))
@@ -10141,12 +10421,32 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.LastGapFillCount = SelectionAudit.DivergentGapRouteCount;
 	CurrentMetrics.PolicyResolvedMultiHitCount = SelectionAudit.PolicyWinnerCount;
 	CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount = SelectionAudit.UnresolvedMultiHitCount;
+	CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount = SelectionAudit.CoalescedMultiHitCount;
+	CurrentMetrics.PhaseIIIELastWithinPlateCoincidentHoldCount = SelectionAudit.WithinPlateCoincidentMultiHitCount;
+	CurrentMetrics.PhaseIIIELastCrossPlateEqualHoldCount = SelectionAudit.CrossPlateEqualMultiHitCount;
+	CurrentMetrics.PhaseIIIELastThirdPlateHoldCount = SelectionAudit.ThirdPlateMultiHitCount;
+	for (const FCarrierLabPhaseIIIE3SelectionRecord& Record : SelectionAudit.Records)
+	{
+		if (!PhaseIIIELiveRemeshEventMask.IsValidIndex(Record.SampleId))
+		{
+			continue;
+		}
+		if (Record.bUnresolvedMultiHit)
+		{
+			PhaseIIIELiveRemeshEventMask[Record.SampleId] |= PhaseIIIELiveRemeshMaskUnresolvedHold;
+		}
+		if (Record.bCoalescedDuplicateHit)
+		{
+			PhaseIIIELiveRemeshEventMask[Record.SampleId] |= PhaseIIIELiveRemeshMaskCoalescedDuplicate;
+		}
+	}
 	if (SelectionAudit.UnresolvedMultiHitCount > 0)
 	{
 		CurrentMetrics.LastRemeshMode = FString::Printf(
 			TEXT("phase_iii_e6_live_hold_unresolved_multi_hit_%d"),
 			SelectionAudit.UnresolvedMultiHitCount);
 		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		RebuildRenderMesh();
 		return false;
 	}
 
@@ -10226,6 +10526,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			if (Sample.ContinentalFraction > PhaseIIIEContinentalOverwriteThreshold)
 			{
 				++RiftingPendingCount;
+				if (PhaseIIIELiveRemeshEventMask.IsValidIndex(Sample.Id))
+				{
+					PhaseIIIELiveRemeshEventMask[Sample.Id] |= PhaseIIIELiveRemeshMaskRiftingPending;
+				}
 				continue;
 			}
 
@@ -10243,6 +10547,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			VertexRecord.OceanicAge = OceanicRecord.OceanicAge;
 			VertexRecord.RidgeDirection = OceanicRecord.RidgeDirection;
 			VertexRecord.FoldDirection = FVector3d::ZeroVector;
+			if (PhaseIIIELiveRemeshEventMask.IsValidIndex(Sample.Id))
+			{
+				PhaseIIIELiveRemeshEventMask[Sample.Id] |= PhaseIIIELiveRemeshMaskAppliedGenerated;
+			}
 			continue;
 		}
 
@@ -10261,6 +10569,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			TEXT("phase_iii_e6_live_hold_invalid_records_%d"),
 			InvalidRecordCount);
 		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		RebuildRenderMesh();
 		return false;
 	}
 
@@ -10276,6 +10585,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			RebuildAudit.InvalidTriangleCount,
 			RebuildAudit.UnresolvedTripleJunctionCount);
 		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		RebuildRenderMesh();
 		return false;
 	}
 
@@ -10290,6 +10600,10 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = AppliedGeneratedCount;
 	CurrentMetrics.PhaseIIIELastRiftingPendingCount = RiftingPendingCount;
 	CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount = SelectionAudit.CoalescedMultiHitCount;
+	CurrentMetrics.PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastCrossPlateEqualHoldCount = 0;
+	CurrentMetrics.PhaseIIIELastThirdPlateHoldCount = 0;
 	CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount = RebuildAudit.TripleJunctionCentroidSplitCount;
 	CurrentMetrics.LastRemeshMode = FString::Printf(
 		TEXT("phase_iii_e6_live gen=%d applied=%d rift_pending=%d majority=%d tj_split=%d"),
@@ -13099,9 +13413,11 @@ FLinearColor ACarrierLabVisualizationActor::ColorForSampleLayer(
 			? RenderElevations[SampleId]
 			: (Sample != nullptr ? Sample->Elevation : 0.0);
 		const uint8 RoleMask = SubductionRoleMask.IsValidIndex(SampleId) ? SubductionRoleMask[SampleId] : 0;
+		const uint8 EventMask = PhaseIIIELiveRemeshEventMask.IsValidIndex(SampleId) ? PhaseIIIELiveRemeshEventMask[SampleId] : 0;
 		return RemeshSummaryColor(
 			ContinentalColor(ContinentalFraction),
 			RoleMask,
+			EventMask,
 			ContinentalFraction,
 			Sample != nullptr ? Sample->OceanicAge : 0.0,
 			ElevationKm,
@@ -13269,7 +13585,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d iiie_auto_remesh=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\niiie gen/apply/rift/hold/tj=%d/%d/%d/%d/%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R IIIE.6 remesh | 1-9/0 layers | O ocean age | G ridge"),
+		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d iiie_auto_remesh=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\niiie gen/apply/rift/hold/coalesced/tj=%d/%d/%d/%d/%d/%d hold_buckets within/crossEq/third=%d/%d/%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R IIIE.6 remesh | 1-9/0 layers | O ocean age | G ridge"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -13294,7 +13610,11 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.PhaseIIIELastAppliedGeneratedCount,
 		CurrentMetrics.PhaseIIIELastRiftingPendingCount,
 		CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount,
+		CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount,
 		CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount,
+		CurrentMetrics.PhaseIIIELastWithinPlateCoincidentHoldCount,
+		CurrentMetrics.PhaseIIIELastCrossPlateEqualHoldCount,
+		CurrentMetrics.PhaseIIIELastThirdPlateHoldCount,
 		CurrentMetrics.PhaseIIIActiveBoundaryTriangleCount,
 		CurrentMetrics.PhaseIIIDistanceToFrontRecordCount,
 		CurrentMetrics.PhaseIIISubductionMatrixPairCount,
