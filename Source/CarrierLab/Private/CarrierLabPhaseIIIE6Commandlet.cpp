@@ -287,15 +287,27 @@ namespace
 		int32 EventCountAfter = 0;
 		int32 SampleCount = 0;
 		int32 PlateCount = 0;
+		int32 StepBefore = 0;
+		int32 StepAfter = 0;
 		int32 GeneratedCandidateCount = 0;
 		int32 AppliedGeneratedCount = 0;
 		int32 RiftingPendingCount = 0;
 		int32 UnresolvedHoldCount = 0;
 		int32 CoalescedMultiHitCount = 0;
 		int32 SharedBoundaryTieBreakCount = 0;
+		int32 WithinPlateCoincidentHoldCount = 0;
+		int32 WithinPlateDistanceSeparatedHoldCount = 0;
+		int32 CrossPlateEqualHoldCount = 0;
+		int32 CrossPlateDifferentHoldCount = 0;
+		int32 MixedMaterialHoldCount = 0;
+		int32 ThirdPlateHoldCount = 0;
 		int32 TripleJunctionSplitCount = 0;
 		int32 PolicyWinnerCount = 0;
 		FString LastRemeshMode;
+		FString ProjectionHashBefore;
+		FString ProjectionHashAfter;
+		FString StateHashBefore;
+		FString StateHashAfter;
 		FString CrustHashBefore;
 		FString CrustHashAfter;
 	};
@@ -514,13 +526,21 @@ namespace
 		return OutResult.bRan;
 	}
 
-	bool EvaluateLivePromotionSmoke(UWorld& World, FLivePromotionResult& OutResult)
+	bool EvaluateLivePromotionSmoke(
+		UWorld& World,
+		FLivePromotionResult& OutResult,
+		const FString& Name,
+		const int32 SampleCount,
+		const int32 PlateCount,
+		const int32 WarmupStepCount,
+		const bool bRequireHashChange,
+		const bool bAllowFailLoudHold)
 	{
 		OutResult = FLivePromotionResult();
-		OutResult.Name = TEXT("Single-plate live IIIE.6 remesh smoke");
+		OutResult.Name = Name;
 		const double StartSeconds = FPlatformTime::Seconds();
 
-		ACarrierLabVisualizationActor* Actor = SpawnActor(World, 96, 1, 0.0);
+		ACarrierLabVisualizationActor* Actor = SpawnActor(World, SampleCount, PlateCount, 0.0);
 		if (Actor == nullptr)
 		{
 			return false;
@@ -532,11 +552,27 @@ namespace
 		}
 		Actor->ConfigurePhaseIIICProcessLayer(true, false);
 		Actor->bEnableNaturalResamplingEvents = true;
+		for (int32 StepIndex = 0; StepIndex < WarmupStepCount; ++StepIndex)
+		{
+			Actor->StepOnce();
+		}
 		OutResult.SampleCount = Actor->CurrentMetrics.SampleCount;
 		OutResult.PlateCount = Actor->CurrentMetrics.PlateCount;
+		OutResult.StepBefore = Actor->CurrentMetrics.Step;
 		OutResult.EventCountBefore = Actor->CurrentMetrics.EventCount;
+		OutResult.ProjectionHashBefore = Actor->CurrentMetrics.LastHash;
+		OutResult.StateHashBefore = Actor->CurrentMetrics.StateHash;
 		OutResult.CrustHashBefore = Actor->CurrentMetrics.CrustStateHash;
+		FCarrierLabPhaseIIIE3RemeshSelectionAudit PreApplySelectionAudit;
+		Actor->RunPhaseIIIE3FilteredRemeshSelectionAudit(PreApplySelectionAudit);
+		OutResult.WithinPlateCoincidentHoldCount = PreApplySelectionAudit.WithinPlateCoincidentMultiHitCount;
+		OutResult.WithinPlateDistanceSeparatedHoldCount = PreApplySelectionAudit.WithinPlateDistanceSeparatedMultiHitCount;
+		OutResult.CrossPlateEqualHoldCount = PreApplySelectionAudit.CrossPlateEqualMultiHitCount;
+		OutResult.CrossPlateDifferentHoldCount = PreApplySelectionAudit.CrossPlateDifferentMultiHitCount;
+		OutResult.MixedMaterialHoldCount = PreApplySelectionAudit.MixedMaterialMultiHitCount;
+		OutResult.ThirdPlateHoldCount = PreApplySelectionAudit.ThirdPlateMultiHitCount;
 		OutResult.bApplied = Actor->ApplyPhaseIIIELiveRemeshEvent();
+		OutResult.StepAfter = Actor->CurrentMetrics.Step;
 		OutResult.EventCountAfter = Actor->CurrentMetrics.EventCount;
 		OutResult.GeneratedCandidateCount = Actor->CurrentMetrics.PhaseIIIELastGeneratedCandidateCount;
 		OutResult.AppliedGeneratedCount = Actor->CurrentMetrics.PhaseIIIELastAppliedGeneratedCount;
@@ -547,26 +583,59 @@ namespace
 		OutResult.TripleJunctionSplitCount = Actor->CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount;
 		OutResult.PolicyWinnerCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
 		OutResult.LastRemeshMode = Actor->CurrentMetrics.LastRemeshMode;
+		OutResult.ProjectionHashAfter = Actor->CurrentMetrics.LastHash;
+		OutResult.StateHashAfter = Actor->CurrentMetrics.StateHash;
 		OutResult.CrustHashAfter = Actor->CurrentMetrics.CrustStateHash;
 		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
 		OutResult.bRan = true;
+		const bool bHashChanged =
+			OutResult.ProjectionHashBefore != OutResult.ProjectionHashAfter ||
+			OutResult.StateHashBefore != OutResult.StateHashAfter ||
+			OutResult.CrustHashBefore != OutResult.CrustHashAfter;
 		const bool bAppliedCleanly =
 			OutResult.bApplied &&
 			OutResult.EventCountAfter == OutResult.EventCountBefore + 1 &&
 			OutResult.UnresolvedHoldCount == 0 &&
 			OutResult.PolicyWinnerCount == 0 &&
-			OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live"));
+			OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live")) &&
+			(!bRequireHashChange || bHashChanged);
 		const bool bHeldFailLoud =
 			!OutResult.bApplied &&
 			OutResult.EventCountAfter == OutResult.EventCountBefore &&
 			OutResult.UnresolvedHoldCount > 0 &&
 			OutResult.PolicyWinnerCount == 0 &&
 			OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live_hold_unresolved_multi_hit"));
-		OutResult.bPass = bAppliedCleanly || bHeldFailLoud;
+		OutResult.bPass = bAppliedCleanly || (bAllowFailLoudHold && bHeldFailLoud);
 
 		Actor->Destroy();
 		CollectGarbage(RF_NoFlags);
 		return OutResult.bRan;
+	}
+
+	bool EvaluateSinglePlateLivePromotionSmoke(UWorld& World, FLivePromotionResult& OutResult)
+	{
+		return EvaluateLivePromotionSmoke(
+			World,
+			OutResult,
+			TEXT("Single-plate live IIIE.6 remesh smoke"),
+			96,
+			1,
+			0,
+			false,
+			true);
+	}
+
+	bool EvaluateDefaultWorkbenchLiveRemeshSmoke(UWorld& World, FLivePromotionResult& OutResult)
+	{
+		return EvaluateLivePromotionSmoke(
+			World,
+			OutResult,
+			TEXT("Default workbench live IIIE.6 remesh smoke"),
+			100000,
+			40,
+			20,
+			true,
+			false);
 	}
 
 	void FinalizeTrackingHash(FPostRebuildIIIBResult& Result)
@@ -696,12 +765,14 @@ namespace
 	FString BuildLivePromotionJsonLine(const FLivePromotionResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"pass\":%s,\"applied\":%s,\"sample_count\":%d,\"plate_count\":%d,\"event_before\":%d,\"event_after\":%d,\"generated_candidate\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"unresolved_hold\":%d,\"coalesced_multi_hit\":%d,\"shared_boundary_tiebreak\":%d,\"triple_junction_split\":%d,\"policy_winner\":%d,\"last_remesh_mode\":%s,\"crust_hash_before\":%s,\"crust_hash_after\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"fixture\":%s,\"pass\":%s,\"applied\":%s,\"sample_count\":%d,\"plate_count\":%d,\"step_before\":%d,\"step_after\":%d,\"event_before\":%d,\"event_after\":%d,\"generated_candidate\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"unresolved_hold\":%d,\"coalesced_multi_hit\":%d,\"shared_boundary_tiebreak\":%d,\"hold_within_plate_coincident\":%d,\"hold_within_plate_distance_separated\":%d,\"hold_cross_plate_equal\":%d,\"hold_cross_plate_different\":%d,\"hold_mixed_material\":%d,\"hold_third_plate\":%d,\"triple_junction_split\":%d,\"policy_winner\":%d,\"last_remesh_mode\":%s,\"projection_hash_before\":%s,\"projection_hash_after\":%s,\"state_hash_before\":%s,\"state_hash_after\":%s,\"crust_hash_before\":%s,\"crust_hash_after\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Name),
 			Result.bPass ? TEXT("true") : TEXT("false"),
 			Result.bApplied ? TEXT("true") : TEXT("false"),
 			Result.SampleCount,
 			Result.PlateCount,
+			Result.StepBefore,
+			Result.StepAfter,
 			Result.EventCountBefore,
 			Result.EventCountAfter,
 			Result.GeneratedCandidateCount,
@@ -710,9 +781,19 @@ namespace
 			Result.UnresolvedHoldCount,
 			Result.CoalescedMultiHitCount,
 			Result.SharedBoundaryTieBreakCount,
+			Result.WithinPlateCoincidentHoldCount,
+			Result.WithinPlateDistanceSeparatedHoldCount,
+			Result.CrossPlateEqualHoldCount,
+			Result.CrossPlateDifferentHoldCount,
+			Result.MixedMaterialHoldCount,
+			Result.ThirdPlateHoldCount,
 			Result.TripleJunctionSplitCount,
 			Result.PolicyWinnerCount,
 			*JsonString(Result.LastRemeshMode),
+			*JsonString(Result.ProjectionHashBefore),
+			*JsonString(Result.ProjectionHashAfter),
+			*JsonString(Result.StateHashBefore),
+			*JsonString(Result.StateHashAfter),
 			*JsonString(Result.CrustHashBefore),
 			*JsonString(Result.CrustHashAfter),
 			Result.Seconds);
@@ -721,7 +802,7 @@ namespace
 	FString BuildReport(
 		const TArray<FRemeshEventLedgerResult>& EventResults,
 		const FPostRebuildIIIBResult& PostRebuildIIIB,
-		const FLivePromotionResult& LivePromotion,
+		const TArray<FLivePromotionResult>& LivePromotionResults,
 		const bool bReplayPass,
 		const FString& ReplayHashA,
 		const FString& ReplayHashB,
@@ -732,13 +813,18 @@ namespace
 		{
 			bEventsPass = bEventsPass && Result.bPass;
 		}
-		const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && LivePromotion.bPass && bReplayPass;
+		bool bLivePromotionPass = true;
+		for (const FLivePromotionResult& Result : LivePromotionResults)
+		{
+			bLivePromotionPass = bLivePromotionPass && Result.bPass;
+		}
+		const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && bLivePromotionPass && bReplayPass;
 
 		FString Report;
 		Report += TEXT("# Phase IIIE.6 Remesh Ledger Reframe And Cadence Wire-Up\n\n");
 		Report += TEXT("Verdict: ");
-		Report += bAllPass ? TEXT("PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE") : TEXT("FAIL / HOLD IIIE CONSOLIDATION");
-		Report += TEXT(". This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, closes the post-rebuild IIIB tracking discontinuity, and promotes the actor's live natural remesh cadence onto the guarded IIIE.6 path. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.\n\n");
+		Report += bAllPass ? TEXT("PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE") : TEXT("FAIL / HOLD LIVE REMESH PROMOTION");
+		Report += TEXT(". This report wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, closes the post-rebuild IIIB tracking discontinuity, and audits the actor's live natural remesh cadence against the guarded IIIE.6 path. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.\n\n");
 
 		Report += TEXT("## Scope\n\n");
 		Report += TEXT("- The event audit consumes only IIIE.3 routes that are legal for IIIE.4: no-hit divergent gaps and filter-exhausted divergent gaps. Unresolved multi-hit selection classes remain stop conditions and are not routed to ocean generation.\n");
@@ -746,7 +832,7 @@ namespace
 		Report += TEXT("- The material ledger is reframed into two explicit divergent-generation lines: `new oceanic creation` when the pre-remesh continental fraction is effectively zero, and `rifting pending` when IIIE.4 computes divergent provenance over pre-existing continental material.\n");
 		Report += TEXT("- `rifting pending` is a no-overwrite handoff to IIIF, not a hidden correction and not a claim that rifting has been implemented. The generated q1/q2/qGamma and zGamma provenance remains event evidence, but the oceanic record is not injected into IIIE.5 topology rebuild over continental material.\n");
 		Report += TEXT("- The post-rebuild IIIB gate seeds convergence tracking after IIIE.5 topology rebuild/reset, then checks IIIB active lists, distance records, subduction matrix evidence, neighbor propagation, and hash closure on the rebuilt local topology.\n\n");
-		Report += TEXT("- The live actor now defaults to the IIIE remesh summary layer, Phase III process layers on, and auto-remesh routed through `ApplyPhaseIIIELiveRemeshEvent`; the legacy Stage 1.5 resample method and legacy multi-hit policy selector remain comparison-only surfaces.\n\n");
+		Report += TEXT("- The live actor now defaults to the IIIE remesh summary layer, Phase III process layers on, and auto-remesh routed through `ApplyPhaseIIIELiveRemeshEvent`; the legacy Stage 1.5 resample method and legacy multi-hit policy selector remain comparison-only surfaces. Default multi-plate live promotion is not claimed unless the default workbench smoke applies and changes hashes.\n\n");
 
 		Report += TEXT("## Gates\n\n");
 		Report += TEXT("| Gate | Result | Evidence |\n");
@@ -805,25 +891,42 @@ namespace
 			*PassFail(bReplayPass),
 			*ReplayHashA,
 			*ReplayHashB);
-		Report += FString::Printf(
-			TEXT("| Live actor IIIE.6 promotion smoke | %s | applied `%d`, events `%d->%d`, samples/plates `%d/%d`, gen/apply/rift/hold/coalesced/shared/tj `%d/%d/%d/%d/%d/%d/%d`, policy `%d`, mode `%s`, crust `%s->%s`. |\n\n"),
-			*PassFail(LivePromotion.bPass),
-			LivePromotion.bApplied ? 1 : 0,
-			LivePromotion.EventCountBefore,
-			LivePromotion.EventCountAfter,
-			LivePromotion.SampleCount,
-			LivePromotion.PlateCount,
-			LivePromotion.GeneratedCandidateCount,
-			LivePromotion.AppliedGeneratedCount,
-			LivePromotion.RiftingPendingCount,
-			LivePromotion.UnresolvedHoldCount,
-			LivePromotion.CoalescedMultiHitCount,
-			LivePromotion.SharedBoundaryTieBreakCount,
-			LivePromotion.TripleJunctionSplitCount,
-			LivePromotion.PolicyWinnerCount,
-			*LivePromotion.LastRemeshMode,
-			*LivePromotion.CrustHashBefore,
-			*LivePromotion.CrustHashAfter);
+		for (const FLivePromotionResult& LivePromotion : LivePromotionResults)
+		{
+			Report += FString::Printf(
+				TEXT("| %s | %s | applied `%d`, step `%d->%d`, events `%d->%d`, samples/plates `%d/%d`, gen/apply/rift/hold/coalesced/shared/tj `%d/%d/%d/%d/%d/%d/%d`, hold buckets withinCoin/withinSep/crossEq/crossDiff/mixed/third `%d/%d/%d/%d/%d/%d`, policy `%d`, mode `%s`, projection `%s->%s`, state `%s->%s`, crust `%s->%s`. |\n"),
+				*LivePromotion.Name,
+				*PassFail(LivePromotion.bPass),
+				LivePromotion.bApplied ? 1 : 0,
+				LivePromotion.StepBefore,
+				LivePromotion.StepAfter,
+				LivePromotion.EventCountBefore,
+				LivePromotion.EventCountAfter,
+				LivePromotion.SampleCount,
+				LivePromotion.PlateCount,
+				LivePromotion.GeneratedCandidateCount,
+				LivePromotion.AppliedGeneratedCount,
+				LivePromotion.RiftingPendingCount,
+				LivePromotion.UnresolvedHoldCount,
+				LivePromotion.CoalescedMultiHitCount,
+				LivePromotion.SharedBoundaryTieBreakCount,
+				LivePromotion.TripleJunctionSplitCount,
+				LivePromotion.WithinPlateCoincidentHoldCount,
+				LivePromotion.WithinPlateDistanceSeparatedHoldCount,
+				LivePromotion.CrossPlateEqualHoldCount,
+				LivePromotion.CrossPlateDifferentHoldCount,
+				LivePromotion.MixedMaterialHoldCount,
+				LivePromotion.ThirdPlateHoldCount,
+				LivePromotion.PolicyWinnerCount,
+				*LivePromotion.LastRemeshMode,
+				*LivePromotion.ProjectionHashBefore,
+				*LivePromotion.ProjectionHashAfter,
+				*LivePromotion.StateHashBefore,
+				*LivePromotion.StateHashAfter,
+				*LivePromotion.CrustHashBefore,
+				*LivePromotion.CrustHashAfter);
+		}
+		Report += TEXT("\n");
 
 		Report += TEXT("## Contract Table\n\n");
 		Report += TEXT("| Paper / IIIE.1 requirement | CarrierLab support now | Remaining obligation | Gate |\n");
@@ -906,8 +1009,13 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 	FPostRebuildIIIBResult PostRebuildIIIB;
 	EvaluatePostRebuildIIIBGate(PostRebuildIIIB, *World);
 
-	FLivePromotionResult LivePromotion;
-	EvaluateLivePromotionSmoke(*World, LivePromotion);
+	TArray<FLivePromotionResult> LivePromotionResults;
+	FLivePromotionResult SinglePlateLivePromotion;
+	EvaluateSinglePlateLivePromotionSmoke(*World, SinglePlateLivePromotion);
+	LivePromotionResults.Add(SinglePlateLivePromotion);
+	FLivePromotionResult DefaultWorkbenchLivePromotion;
+	EvaluateDefaultWorkbenchLiveRemeshSmoke(*World, DefaultWorkbenchLivePromotion);
+	LivePromotionResults.Add(DefaultWorkbenchLivePromotion);
 
 	FRemeshEventLedgerResult ReplayA;
 	FRemeshEventLedgerResult ReplayB;
@@ -927,7 +1035,10 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 		JsonLines += BuildEventJsonLine(Result) + LINE_TERMINATOR;
 	}
 	JsonLines += BuildPostRebuildIIIBJsonLine(PostRebuildIIIB) + LINE_TERMINATOR;
-	JsonLines += BuildLivePromotionJsonLine(LivePromotion) + LINE_TERMINATOR;
+	for (const FLivePromotionResult& LivePromotion : LivePromotionResults)
+	{
+		JsonLines += BuildLivePromotionJsonLine(LivePromotion) + LINE_TERMINATOR;
+	}
 	JsonLines += FString::Printf(
 		TEXT("{\"fixture\":\"same_seed_remesh_event_replay\",\"pass\":%s,\"hash_a\":%s,\"hash_b\":%s}"),
 		bReplayPass ? TEXT("true") : TEXT("false"),
@@ -939,7 +1050,7 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 	const FString Report = BuildReport(
 		EventResults,
 		PostRebuildIIIB,
-		LivePromotion,
+		LivePromotionResults,
 		bReplayPass,
 		ReplayA.EventHash,
 		ReplayB.EventHash,
@@ -953,7 +1064,12 @@ int32 UCarrierLabPhaseIIIE6Commandlet::Main(const FString& Params)
 	{
 		bEventsPass = bEventsPass && Result.bPass;
 	}
-	const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && LivePromotion.bPass && bReplayPass;
+	bool bLivePromotionPass = true;
+	for (const FLivePromotionResult& LivePromotion : LivePromotionResults)
+	{
+		bLivePromotionPass = bLivePromotionPass && LivePromotion.bPass;
+	}
+	const bool bAllPass = bEventsPass && PostRebuildIIIB.bPass && bLivePromotionPass && bReplayPass;
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIE.6 report: %s"), *ReportPath);
 	UE_LOG(LogTemp, Display, TEXT("CarrierLab Phase IIIE.6 metrics: %s"), *MetricsPath);
 	return bAllPass ? 0 : 1;

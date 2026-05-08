@@ -11384,6 +11384,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	{
 		CurrentMetrics.LastRemeshMode = TEXT("phase_iii_e6_live_hold_selection_failed");
 		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
+		UE_LOG(LogTemp, Warning, TEXT("CarrierLab IIIE.6 live remesh held: %s"), *CurrentMetrics.LastRemeshMode);
 		return false;
 	}
 
@@ -11421,6 +11422,19 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			SelectionAudit.UnresolvedMultiHitCount);
 		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
 		RebuildRenderMesh();
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("CarrierLab IIIE.6 live remesh held: %s (coalesced=%d shared_tiebreak=%d hold_buckets withinCoin/withinSep/crossEq/crossDiff/mixed/third=%d/%d/%d/%d/%d/%d)"),
+			*CurrentMetrics.LastRemeshMode,
+			SelectionAudit.CoalescedMultiHitCount,
+			SelectionAudit.SharedBoundaryTieBreakCount,
+			SelectionAudit.WithinPlateCoincidentMultiHitCount,
+			SelectionAudit.WithinPlateDistanceSeparatedMultiHitCount,
+			SelectionAudit.CrossPlateEqualMultiHitCount,
+			SelectionAudit.CrossPlateDifferentMultiHitCount,
+			SelectionAudit.MixedMaterialMultiHitCount,
+			SelectionAudit.ThirdPlateMultiHitCount);
 		return false;
 	}
 
@@ -11544,6 +11558,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			InvalidRecordCount);
 		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
 		RebuildRenderMesh();
+		UE_LOG(LogTemp, Warning, TEXT("CarrierLab IIIE.6 live remesh held: %s"), *CurrentMetrics.LastRemeshMode);
 		return false;
 	}
 
@@ -11560,6 +11575,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			RebuildAudit.UnresolvedTripleJunctionCount);
 		CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
 		RebuildRenderMesh();
+		UE_LOG(LogTemp, Warning, TEXT("CarrierLab IIIE.6 live remesh held: %s"), *CurrentMetrics.LastRemeshMode);
 		return false;
 	}
 
@@ -11591,6 +11607,12 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 		RebuildAudit.TripleJunctionCentroidSplitCount);
 	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
 	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("CarrierLab IIIE.6 live remesh applied: events=%d mode=%s"),
+		CurrentMetrics.EventCount,
+		*CurrentMetrics.LastRemeshMode);
 	return true;
 }
 

@@ -654,7 +654,14 @@ FReply SCarrierLabControlPanel::OnResampleClicked()
 	if (ACarrierLabVisualizationActor* Actor = GetCarrierActor(false))
 	{
 		ApplyPanelConfigToActor(*Actor);
-		Actor->ApplyPhaseIIIELiveRemeshEvent();
+		const bool bApplied = Actor->ApplyPhaseIIIELiveRemeshEvent();
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("CarrierLab workbench IIIE.6 remesh clicked: applied=%d events=%d mode=%s"),
+			bApplied ? 1 : 0,
+			Actor->CurrentMetrics.EventCount,
+			*Actor->CurrentMetrics.LastRemeshMode);
 		CaptureLiveProjectionSnapshot();
 	}
 	return FReply::Handled();
@@ -971,6 +978,30 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildTopStatusBar()
 					TEXT("%.2f mm/yr / %s"),
 					LiveProjection.Metrics.ObservedMaxPlateSpeedMmPerYear,
 					bPendingAutoResample ? TEXT("on") : TEXT("off")));
+			}))
+		]
+		+ SGridPanel::Slot(0, 2).ColumnSpan(4).Padding(0.0f, 8.0f, 0.0f, 0.0f)
+		[
+			BuildLabeledValue(LOCTEXT("StatusLastRemesh", "Last Remesh"), TAttribute<FText>::CreateLambda([this]()
+			{
+				if (!LiveProjection.bHasSnapshot)
+				{
+					return LOCTEXT("StatusLastRemeshDash", "-");
+				}
+				const FCarrierLabVisualizationMetrics& Metrics = LiveProjection.Metrics;
+				const FString Mode = Metrics.LastRemeshMode.IsEmpty()
+					? TEXT("none")
+					: Metrics.LastRemeshMode;
+				return FText::FromString(FString::Printf(
+					TEXT("%s | gen/apply/rift/hold/coalesced/shared/tj %d/%d/%d/%d/%d/%d/%d"),
+					*Mode,
+					Metrics.PhaseIIIELastGeneratedCandidateCount,
+					Metrics.PhaseIIIELastAppliedGeneratedCount,
+					Metrics.PhaseIIIELastRiftingPendingCount,
+					Metrics.PhaseIIIELastUnresolvedMultiHitHoldCount,
+					Metrics.PhaseIIIELastCoalescedMultiHitCount,
+					Metrics.PhaseIIIELastSharedBoundaryTieBreakCount,
+					Metrics.PhaseIIIELastTripleJunctionSplitCount));
 			}))
 		]);
 }
@@ -1443,6 +1474,7 @@ TSharedRef<SWidget> SCarrierLabControlPanel::BuildLabeledValue(const FText& Labe
 			SNew(STextBlock)
 			.Text(Value)
 			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+			.AutoWrapText(true)
 		];
 }
 

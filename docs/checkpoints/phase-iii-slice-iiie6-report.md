@@ -1,6 +1,6 @@
 # Phase IIIE.6 Remesh Ledger Reframe And Cadence Wire-Up
 
-Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This slice wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, closes the post-rebuild IIIB tracking discontinuity, and promotes the actor's live natural remesh cadence onto the guarded IIIE.6 path. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.
+Verdict: FAIL / HOLD LIVE REMESH PROMOTION. This report wires the IIIE.3 divergent route, IIIE.4 oceanic generation, and IIIE.5 topology rebuild/reset helpers into a focused remesh-event audit, adds ledger lines for new oceanic creation and rifting-pending continental divergence, closes the post-rebuild IIIB tracking discontinuity, and audits the actor's live natural remesh cadence against the guarded IIIE.6 path. It does not add optimization, claim zGamma's profile law is paper-sourced, implement IIIF rifting, or retire legacy comparison code.
 
 ## Scope
 
@@ -10,7 +10,7 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 - `rifting pending` is a no-overwrite handoff to IIIF, not a hidden correction and not a claim that rifting has been implemented. The generated q1/q2/qGamma and zGamma provenance remains event evidence, but the oceanic record is not injected into IIIE.5 topology rebuild over continental material.
 - The post-rebuild IIIB gate seeds convergence tracking after IIIE.5 topology rebuild/reset, then checks IIIB active lists, distance records, subduction matrix evidence, neighbor propagation, and hash closure on the rebuilt local topology.
 
-- The live actor now defaults to the IIIE remesh summary layer, Phase III process layers on, and auto-remesh routed through `ApplyPhaseIIIELiveRemeshEvent`; the legacy Stage 1.5 resample method and legacy multi-hit policy selector remain comparison-only surfaces.
+- The live actor now defaults to the IIIE remesh summary layer, Phase III process layers on, and auto-remesh routed through `ApplyPhaseIIIELiveRemeshEvent`; the legacy Stage 1.5 resample method and legacy multi-hit policy selector remain comparison-only surfaces. Default multi-plate live promotion is not claimed unless the default workbench smoke applies and changes hashes.
 
 ## Gates
 
@@ -21,7 +21,8 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 | Post-rebuild IIIB tracking gate | pass | topology `df45ff4c3c0e85a0`, reset `0->1`, seed plate/local `0/170`, other `1`, active `2`, distances `2`, matrix pairs `1`, accepted positive `1`, propagation seed/added `1/1`, closure reset `1`, hash `f2cca799add92f9e`. |
 | Same-seed remesh-event replay | pass | Event hashes `99b2957f76910bf5` and `99b2957f76910bf5`. |
 
-| Live actor IIIE.6 promotion smoke | pass | applied `1`, events `0->1`, samples/plates `96/1`, gen/apply/rift/hold/coalesced/shared/tj `0/0/0/0/73/0/0`, policy `0`, mode `phase_iii_e6_live gen=0 applied=0 rift_pending=0 coalesced=73 shared_tiebreak=0 majority=0 tj_split=0`, crust `8b7758c51944a162->5c75dc9d238d9011`. |
+| Single-plate live IIIE.6 remesh smoke | pass | applied `1`, step `0->0`, events `0->1`, samples/plates `96/1`, gen/apply/rift/hold/coalesced/shared/tj `0/0/0/0/73/0/0`, hold buckets withinCoin/withinSep/crossEq/crossDiff/mixed/third `73/0/0/0/0/0`, policy `0`, mode `phase_iii_e6_live gen=0 applied=0 rift_pending=0 coalesced=73 shared_tiebreak=0 majority=0 tj_split=0`, projection `b21250ad3086c8b8->2cedb1a009fea14d`, state `764c9ab92d41905e->fdf7d306ccd70a8a`, crust `8b7758c51944a162->5c75dc9d238d9011`. |
+| Default workbench live IIIE.6 remesh smoke | fail | applied `0`, step `20->20`, events `0->0`, samples/plates `100000/40`, gen/apply/rift/hold/coalesced/shared/tj `0/0/0/27038/0/0/0`, hold buckets withinCoin/withinSep/crossEq/crossDiff/mixed/third `0/0/0/22189/0/4849`, policy `0`, mode `phase_iii_e6_live_hold_unresolved_multi_hit_27038`, projection `7494ba96b24c42e6->7494ba96b24c42e6`, state `9da595fa3542fed2->9da595fa3542fed2`, crust `49c61d9444220b16->49c61d9444220b16`. |
 
 ## Contract Table
 
