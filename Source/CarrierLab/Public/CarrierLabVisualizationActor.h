@@ -824,6 +824,94 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	TArray<FCarrierLabPhaseIIIE3SelectionRecord> Records;
 };
 
+enum class ECarrierLabPhaseIIIE62BarycentricShape : uint8
+{
+	Unknown,
+	Vertex,
+	Edge,
+	Interior
+};
+
+enum class ECarrierLabPhaseIIIE62HoldShape : uint8
+{
+	TwoPlateSameSourceTriangle,
+	TwoPlateSharedGlobalEdge,
+	TwoPlateSharedGlobalVertexOnly,
+	TwoPlateNoSharedGlobalVertices,
+	TwoPlateFieldMismatch,
+	ThreePlateCommonGlobalVertex,
+	ThreePlateEdgePlusIntruder,
+	ThreePlateNoCommonSourceVertex,
+	NonBoundaryOrInteriorOverlap,
+	InvalidOrUnclassified
+};
+
+struct FCarrierLabPhaseIIIE62CandidateSnapshot
+{
+	int32 CandidateIndex = INDEX_NONE;
+	int32 PlateId = INDEX_NONE;
+	int32 LocalTriangleId = INDEX_NONE;
+	int32 SourceTriangleId = INDEX_NONE;
+	int32 GlobalVertexIds[3] = { INDEX_NONE, INDEX_NONE, INDEX_NONE };
+	FVector3d Bary = FVector3d(1.0, 0.0, 0.0);
+	ECarrierLabPhaseIIIE62BarycentricShape BarycentricShape = ECarrierLabPhaseIIIE62BarycentricShape::Unknown;
+	bool bBoundary = false;
+	double Distance = 0.0;
+	double RayDistanceResidualKm = 0.0;
+	double ScalarResidual = 0.0;
+	double ElevationResidualKm = 0.0;
+	double UnitVectorResidual = 0.0;
+	ECarrierLabPhaseIIIE3FilterReason FilterReason = ECarrierLabPhaseIIIE3FilterReason::None;
+};
+
+struct FCarrierLabPhaseIIIE62HoldRecord
+{
+	int32 SampleId = INDEX_NONE;
+	ECarrierLabPhaseIIIE3SelectionClass SelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
+	ECarrierLabPhaseIIIE3MultiHitBucket MultiHitBucket = ECarrierLabPhaseIIIE3MultiHitBucket::None;
+	ECarrierLabPhaseIIIE62HoldShape HoldShape = ECarrierLabPhaseIIIE62HoldShape::InvalidOrUnclassified;
+	int32 CandidateCount = 0;
+	int32 DistinctPlateCount = 0;
+	int32 DistinctSourceTriangleCount = 0;
+	int32 SharedGlobalVertexCount = 0;
+	bool bAllBoundary = false;
+	bool bHasInteriorCandidate = false;
+	bool bFieldMismatch = false;
+	double MaxRayDistanceResidualKm = 0.0;
+	double MaxScalarResidual = 0.0;
+	double MaxElevationResidualKm = 0.0;
+	double MaxUnitVectorResidual = 0.0;
+	TArray<FCarrierLabPhaseIIIE62CandidateSnapshot> Candidates;
+};
+
+struct FCarrierLabPhaseIIIE62CrossPlateMultiHitAudit
+{
+	bool bRan = false;
+	int32 SampleCount = 0;
+	int32 SelectionUnresolvedMultiHitCount = 0;
+	int32 SelectionCrossPlateEqualMultiHitCount = 0;
+	int32 SelectionThirdPlateMultiHitCount = 0;
+	int32 CoalescedMultiHitCount = 0;
+	int32 DiagnosedHoldCount = 0;
+	int32 CandidateSnapshotCount = 0;
+	int32 TwoPlateSameSourceTriangleCount = 0;
+	int32 TwoPlateSharedGlobalEdgeCount = 0;
+	int32 TwoPlateSharedGlobalVertexOnlyCount = 0;
+	int32 TwoPlateNoSharedGlobalVerticesCount = 0;
+	int32 TwoPlateFieldMismatchCount = 0;
+	int32 ThreePlateCommonGlobalVertexCount = 0;
+	int32 ThreePlateEdgePlusIntruderCount = 0;
+	int32 ThreePlateNoCommonSourceVertexCount = 0;
+	int32 NonBoundaryOrInteriorOverlapCount = 0;
+	int32 InvalidOrUnclassifiedCount = 0;
+	int32 PriorOwnerFallbackCount = 0;
+	int32 PolicyWinnerCount = 0;
+	int32 ProjectionAuthorityCount = 0;
+	FString SelectionHash;
+	FString DiagnosisHash;
+	TArray<FCarrierLabPhaseIIIE62HoldRecord> Records;
+};
+
 struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
 {
 	int32 SampleId = INDEX_NONE;
@@ -2228,6 +2316,14 @@ public:
 	bool RunPhaseIIIE3FilteredRemeshSelectionAuditForSamples(
 		const TArray<int32>& SampleIds,
 		FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit);
+	bool DiagnosePhaseIIIE62HoldSnapshotsForTest(
+		int32 SampleId,
+		ECarrierLabPhaseIIIE3SelectionClass SelectionClass,
+		ECarrierLabPhaseIIIE3MultiHitBucket MultiHitBucket,
+		const TArray<FCarrierLabPhaseIIIE62CandidateSnapshot>& CandidateSnapshots,
+		FCarrierLabPhaseIIIE62HoldRecord& OutRecord) const;
+	bool RunPhaseIIIE62CrossPlateMultiHitDiagnosisAudit(
+		FCarrierLabPhaseIIIE62CrossPlateMultiHitAudit& OutAudit);
 	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
