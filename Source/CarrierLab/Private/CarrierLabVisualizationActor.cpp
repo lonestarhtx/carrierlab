@@ -2354,6 +2354,120 @@ namespace
 		return HashToString(Hash);
 	}
 
+	void AccumulatePhaseIIIE64HoldRecord(
+		const FCarrierLabPhaseIIIE64HoldRecord& Record,
+		FCarrierLabPhaseIIIE64PostMotionMultiHitAudit& Audit)
+	{
+		++Audit.DiagnosedHoldCount;
+		if (Record.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateDifferent)
+		{
+			++Audit.CrossPlateDifferentHoldCount;
+			if (Record.bHasUniqueNearest)
+			{
+				++Audit.UniqueNearestCrossPlateDifferentCount;
+			}
+			if (Record.bNearestDistanceTie)
+			{
+				++Audit.DistanceTieCrossPlateDifferentCount;
+			}
+		}
+		else if (Record.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate)
+		{
+			++Audit.ThirdPlateHoldCount;
+			if (Record.bHasUniqueNearest)
+			{
+				++Audit.UniqueNearestThirdPlateCount;
+			}
+			if (Record.bNearestDistanceTie)
+			{
+				++Audit.DistanceTieThirdPlateCount;
+			}
+		}
+
+		Audit.ProcessMarkedHoldCount += Record.bAnyCandidateProcessMarked ? 1 : 0;
+		Audit.SubductingMarkedHoldCount += Record.bAnySubductingMarked ? 1 : 0;
+		Audit.ObductionPendingMarkedHoldCount += Record.bAnyObductionPendingMarked ? 1 : 0;
+		Audit.CollisionPendingMarkedHoldCount += Record.bAnyCollisionPendingMarked ? 1 : 0;
+		Audit.NearestMostContinentalCount += Record.bNearestIsMostContinentalPlate ? 1 : 0;
+		Audit.NearestOlderOceanicCount += Record.bNearestIsOlderOceanicPlate ? 1 : 0;
+		Audit.NearestLowerPlateIdCount += Record.bNearestIsLowerPlateId ? 1 : 0;
+		Audit.MaxNearestDistanceGapKm = FMath::Max(Audit.MaxNearestDistanceGapKm, Record.NearestDistanceGapKm);
+		Audit.Records.Add(Record);
+	}
+
+	void FinalizePhaseIIIE64DistanceStats(FCarrierLabPhaseIIIE64PostMotionMultiHitAudit& Audit)
+	{
+		TArray<double> GapsKm;
+		GapsKm.Reserve(Audit.Records.Num());
+		for (const FCarrierLabPhaseIIIE64HoldRecord& Record : Audit.Records)
+		{
+			if (Record.bHasUniqueNearest || Record.bNearestDistanceTie)
+			{
+				GapsKm.Add(FMath::Max(0.0, Record.NearestDistanceGapKm));
+			}
+		}
+		GapsKm.Sort();
+		if (GapsKm.IsEmpty())
+		{
+			Audit.MedianNearestDistanceGapKm = 0.0;
+			Audit.P95NearestDistanceGapKm = 0.0;
+			return;
+		}
+		Audit.MedianNearestDistanceGapKm = GapsKm[GapsKm.Num() / 2];
+		const int32 P95Index = FMath::Clamp(
+			FMath::CeilToInt(static_cast<double>(GapsKm.Num()) * 0.95) - 1,
+			0,
+			GapsKm.Num() - 1);
+		Audit.P95NearestDistanceGapKm = GapsKm[P95Index];
+	}
+
+	FString ComputePhaseIIIE64DiagnosisHash(const TArray<FCarrierLabPhaseIIIE64HoldRecord>& Records)
+	{
+		uint64 Hash = 1469598103934665603ull;
+		TArray<FCarrierLabPhaseIIIE64HoldRecord> SortedRecords = Records;
+		SortedRecords.Sort([](
+			const FCarrierLabPhaseIIIE64HoldRecord& A,
+			const FCarrierLabPhaseIIIE64HoldRecord& B)
+		{
+			return A.SampleId < B.SampleId;
+		});
+		for (const FCarrierLabPhaseIIIE64HoldRecord& Record : SortedRecords)
+		{
+			HashMix(Hash, static_cast<uint64>(Record.SampleId + 1));
+			HashMix(Hash, static_cast<uint64>(Record.Step + 1));
+			HashMix(Hash, static_cast<uint64>(Record.SelectionClass) + 1ull);
+			HashMix(Hash, static_cast<uint64>(Record.MultiHitBucket) + 1ull);
+			HashMix(Hash, static_cast<uint64>(Record.CandidateCount + 1));
+			HashMix(Hash, static_cast<uint64>(Record.DistinctPlateCount + 1));
+			HashMix(Hash, Record.bHasUniqueNearest ? 2ull : 1ull);
+			HashMix(Hash, Record.bNearestDistanceTie ? 2ull : 1ull);
+			HashMixDouble(Hash, Record.NearestDistanceGapKm);
+			HashMix(Hash, Record.bAnySubductingMarked ? 2ull : 1ull);
+			HashMix(Hash, Record.bAnyObductionPendingMarked ? 2ull : 1ull);
+			HashMix(Hash, Record.bAnyCollisionPendingMarked ? 2ull : 1ull);
+			HashMix(Hash, Record.bNearestIsMostContinentalPlate ? 2ull : 1ull);
+			HashMix(Hash, Record.bNearestIsOlderOceanicPlate ? 2ull : 1ull);
+			HashMix(Hash, Record.bNearestIsLowerPlateId ? 2ull : 1ull);
+			for (const FCarrierLabPhaseIIIE64CandidateDiagnostic& Candidate : Record.Candidates)
+			{
+				HashMix(Hash, static_cast<uint64>(Candidate.Snapshot.CandidateIndex + 1));
+				HashMix(Hash, static_cast<uint64>(Candidate.Snapshot.PlateId + 1));
+				HashMix(Hash, static_cast<uint64>(Candidate.Snapshot.LocalTriangleId + 1));
+				HashMix(Hash, static_cast<uint64>(Candidate.Snapshot.SourceTriangleId + 1));
+				HashMixDouble(Hash, Candidate.Snapshot.Distance);
+				HashMixDouble(Hash, Candidate.Snapshot.RayDistanceResidualKm);
+				HashMix(Hash, static_cast<uint64>(Candidate.Snapshot.BarycentricShape) + 1ull);
+				HashMix(Hash, Candidate.bSubductingMarked ? 2ull : 1ull);
+				HashMix(Hash, Candidate.bObductionPendingMarked ? 2ull : 1ull);
+				HashMix(Hash, Candidate.bCollisionPendingMarked ? 2ull : 1ull);
+				HashMix(Hash, Candidate.bNearestCandidate ? 2ull : 1ull);
+				HashMixDouble(Hash, Candidate.PlateContinentalFraction);
+				HashMixDouble(Hash, Candidate.PlateOceanicAge);
+			}
+		}
+		return HashToString(Hash);
+	}
+
 	ECarrierLabPhaseIIIE3SelectionClass ClassifyIIIE3UnresolvedMultiHit(
 		const TArray<FCarrierLabIIIE3SelectionCandidate>& RawCandidates,
 		const TArray<FCarrierLabIIIE3SelectionCandidate>& VisibleCandidates)
@@ -4298,10 +4412,8 @@ bool ACarrierLabVisualizationActor::InitializeCarrier()
 	CachedRenderMeshSampleCount = 0;
 	CachedRenderMeshTriangleCount = 0;
 	StepAccumulator = 0.0;
-	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
-	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
-	CurrentMetrics.CadenceSteps = GetNaturalCadenceSteps();
-	CurrentMetrics.NextResampleStep = CurrentMetrics.CadenceSteps;
+	ResetObservedSpeedWindowForRemesh();
+	UpdateNaturalCadenceMetrics(false);
 	CaptureDriftReference();
 	ProjectCurrentCarrier();
 	return true;
@@ -4341,10 +4453,9 @@ void ACarrierLabVisualizationActor::ConfigurePhaseIIMotionFixture(const ECarrier
 	}
 
 	CaptureDriftReference();
-	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
-	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
-	CurrentMetrics.CadenceSteps = GetNaturalCadenceSteps();
-	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / CurrentMetrics.CadenceSteps) + 1) * CurrentMetrics.CadenceSteps;
+	ResetObservedSpeedWindowForRemesh();
+	CurrentMetrics.NextResampleStep = 0;
+	UpdateNaturalCadenceMetrics(false);
 }
 
 void ACarrierLabVisualizationActor::ConfigurePhaseIIICProcessLayer(const bool bEnabled, const bool bInEnableSlabPull)
@@ -7068,6 +7179,262 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE62CrossPlateMultiHitDiagnosisAud
 	OutAudit.ProjectionAuthorityCount = 0;
 	OutAudit.SelectionHash = SelectionAudit.SelectionHash;
 	OutAudit.DiagnosisHash = ComputePhaseIIIE62DiagnosisHash(OutAudit.Records);
+	OutAudit.bRan = true;
+	return true;
+}
+
+bool ACarrierLabVisualizationActor::RunPhaseIIIE64PostMotionMultiHitDiagnosisAudit(
+	FCarrierLabPhaseIIIE64PostMotionMultiHitAudit& OutAudit)
+{
+	OutAudit = FCarrierLabPhaseIIIE64PostMotionMultiHitAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	FString MeshError;
+	if (!RefreshPlateRayMeshes(MeshError))
+	{
+		return false;
+	}
+
+	TSet<uint64> SubductingTriangleKeys;
+	for (const CarrierLab::FConvergenceSubductingTriangleMark& Mark : State.ConvergenceSubductingTriangleMarks)
+	{
+		SubductingTriangleKeys.Add(MakePlateTriangleKey(Mark.PlateId, Mark.LocalTriangleId));
+	}
+
+	TSet<uint64> ObductionTriangleKeys;
+	for (const CarrierLab::FConvergenceObductionTriangleMark& Mark : State.ConvergenceObductionTriangleMarks)
+	{
+		ObductionTriangleKeys.Add(MakePlateTriangleKey(Mark.PlateId, Mark.LocalTriangleId));
+	}
+
+	FCarrierLabPhaseIIIE3RemeshSelectionAudit SelectionAudit;
+	for (const CarrierLab::FSphereSample& Sample : State.Samples)
+	{
+		TArray<FCarrierLabVizCandidate> RawCandidates;
+		uint64 RawPlateMask = 0;
+		bool bAnyBoundary = false;
+		QuerySampleCandidates(State, PlateRayMeshes, Sample, RawCandidates, RawPlateMask, bAnyBoundary);
+
+		TArray<FCarrierLabIIIE3SelectionCandidate> SelectionCandidates;
+		SelectionCandidates.Reserve(RawCandidates.Num());
+		for (const FCarrierLabVizCandidate& RawCandidate : RawCandidates)
+		{
+			if (!State.Plates.IsValidIndex(RawCandidate.PlateId))
+			{
+				continue;
+			}
+			const CarrierLab::FCarrierPlate& Plate = State.Plates[RawCandidate.PlateId];
+			if (!Plate.LocalTriangles.IsValidIndex(RawCandidate.LocalTriangleId))
+			{
+				continue;
+			}
+
+			FCarrierLabIIIE3SelectionCandidate& Candidate = SelectionCandidates.AddDefaulted_GetRef();
+			Candidate.PlateId = RawCandidate.PlateId;
+			Candidate.LocalTriangleId = RawCandidate.LocalTriangleId;
+			Candidate.Bary = RawCandidate.Bary;
+			Candidate.Distance = RawCandidate.Distance;
+			Candidate.ContinentalFraction = InterpolateContinentalFraction(Plate, RawCandidate);
+			InterpolateCrustFields(Plate, RawCandidate, Sample.UnitPosition, Candidate.Fields);
+			Candidate.bBoundary = RawCandidate.bBoundary;
+
+			const uint64 TriangleKey = MakePlateTriangleKey(Candidate.PlateId, Candidate.LocalTriangleId);
+			if (SubductingTriangleKeys.Contains(TriangleKey))
+			{
+				Candidate.FilterReason = ECarrierLabPhaseIIIE3FilterReason::Subducting;
+			}
+			else if (ObductionTriangleKeys.Contains(TriangleKey))
+			{
+				Candidate.FilterReason = ECarrierLabPhaseIIIE3FilterReason::ObductionPending;
+			}
+			else if (State.ConvergenceCollisionPendingTriangleKeys.Contains(TriangleKey))
+			{
+				Candidate.FilterReason = ECarrierLabPhaseIIIE3FilterReason::CollisionPending;
+			}
+		}
+
+		FCarrierLabPhaseIIIE3SelectionRecord Record;
+		SelectPhaseIIIE3FilteredRemeshSource(
+			Sample.Id,
+			Sample.UnitPosition,
+			SelectionCandidates,
+			bEnablePhaseIIIE3DuplicateHitCoalescing,
+			bEnablePhaseIIIE3SharedBoundaryTieBreak,
+			&State,
+			Record);
+		AccumulatePhaseIIIE3Record(Record, SelectionAudit);
+		if (!Record.bUnresolvedMultiHit)
+		{
+			continue;
+		}
+
+		TArray<FCarrierLabIIIE3SelectionCandidate> VisibleCandidates;
+		for (const FCarrierLabIIIE3SelectionCandidate& Candidate : SelectionCandidates)
+		{
+			if (Candidate.FilterReason == ECarrierLabPhaseIIIE3FilterReason::None)
+			{
+				VisibleCandidates.Add(Candidate);
+			}
+		}
+		VisibleCandidates.Sort([](
+			const FCarrierLabIIIE3SelectionCandidate& A,
+			const FCarrierLabIIIE3SelectionCandidate& B)
+		{
+			if (!FMath::IsNearlyEqual(A.Distance, B.Distance, PhaseIIIE3RayDistanceCoincidenceToleranceKm))
+			{
+				return A.Distance < B.Distance;
+			}
+			if (A.PlateId != B.PlateId)
+			{
+				return A.PlateId < B.PlateId;
+			}
+			return A.LocalTriangleId < B.LocalTriangleId;
+		});
+		if (VisibleCandidates.IsEmpty())
+		{
+			continue;
+		}
+
+		FCarrierLabPhaseIIIE64HoldRecord HoldRecord;
+		HoldRecord.SampleId = Record.SampleId;
+		HoldRecord.Step = CurrentMetrics.Step;
+		HoldRecord.SampleUnitPosition = Record.SampleUnitPosition;
+		HoldRecord.SelectionClass = Record.SelectionClass;
+		HoldRecord.MultiHitBucket = Record.MultiHitBucket;
+		HoldRecord.CandidateCount = VisibleCandidates.Num();
+
+		TSet<int32> PlateIds;
+		for (const FCarrierLabIIIE3SelectionCandidate& Candidate : VisibleCandidates)
+		{
+			PlateIds.Add(Candidate.PlateId);
+		}
+		HoldRecord.DistinctPlateCount = PlateIds.Num();
+
+		const int32 NearestCandidateIndex = 0;
+		double NearestDistance = VisibleCandidates[0].Distance;
+		double SecondDistance = TNumericLimits<double>::Max();
+		for (int32 CandidateIndex = 1; CandidateIndex < VisibleCandidates.Num(); ++CandidateIndex)
+		{
+			SecondDistance = FMath::Min(SecondDistance, VisibleCandidates[CandidateIndex].Distance);
+		}
+		HoldRecord.NearestDistanceGapKm = SecondDistance < TNumericLimits<double>::Max()
+			? FMath::Max(0.0, SecondDistance - NearestDistance)
+			: 0.0;
+		HoldRecord.bHasUniqueNearest = VisibleCandidates.Num() == 1 ||
+			HoldRecord.NearestDistanceGapKm > PhaseIIIE3RayDistanceCoincidenceToleranceKm;
+		HoldRecord.bNearestDistanceTie = !HoldRecord.bHasUniqueNearest;
+
+		double BestContinental = -TNumericLimits<double>::Max();
+		double SecondContinental = -TNumericLimits<double>::Max();
+		double BestOceanicAge = -TNumericLimits<double>::Max();
+		double SecondOceanicAge = -TNumericLimits<double>::Max();
+		int32 LowestPlateId = INDEX_NONE;
+		TMap<int32, double> ContinentalByPlate;
+		TMap<int32, double> OceanicAgeByPlate;
+		for (const int32 PlateId : PlateIds)
+		{
+			const double Continental = ComputePlateContinentalFraction(State, PlateId);
+			const double OceanicAge = ComputePlateOceanicAge(State, PlateId);
+			ContinentalByPlate.Add(PlateId, Continental);
+			OceanicAgeByPlate.Add(PlateId, OceanicAge);
+			if (Continental > BestContinental)
+			{
+				SecondContinental = BestContinental;
+				BestContinental = Continental;
+			}
+			else if (Continental > SecondContinental)
+			{
+				SecondContinental = Continental;
+			}
+			if (OceanicAge > BestOceanicAge)
+			{
+				SecondOceanicAge = BestOceanicAge;
+				BestOceanicAge = OceanicAge;
+			}
+			else if (OceanicAge > SecondOceanicAge)
+			{
+				SecondOceanicAge = OceanicAge;
+			}
+			if (LowestPlateId == INDEX_NONE || PlateId < LowestPlateId)
+			{
+				LowestPlateId = PlateId;
+			}
+		}
+		HoldRecord.bContinentalPlateTie = BestContinental - SecondContinental <= PhaseIIIE3ScalarFieldTolerance;
+		HoldRecord.bOceanicAgePlateTie = BestOceanicAge - SecondOceanicAge <= PhaseIIIE63OceanicAgeTieToleranceMa;
+
+		const int32 NearestPlateId = VisibleCandidates[NearestCandidateIndex].PlateId;
+		const double* NearestContinental = ContinentalByPlate.Find(NearestPlateId);
+		const double* NearestOceanicAge = OceanicAgeByPlate.Find(NearestPlateId);
+		HoldRecord.bNearestIsMostContinentalPlate =
+			HoldRecord.bHasUniqueNearest &&
+			NearestContinental != nullptr &&
+			BestContinental - *NearestContinental <= PhaseIIIE3ScalarFieldTolerance &&
+			!HoldRecord.bContinentalPlateTie;
+		HoldRecord.bNearestIsOlderOceanicPlate =
+			HoldRecord.bHasUniqueNearest &&
+			NearestOceanicAge != nullptr &&
+			BestOceanicAge - *NearestOceanicAge <= PhaseIIIE63OceanicAgeTieToleranceMa &&
+			!HoldRecord.bOceanicAgePlateTie;
+		HoldRecord.bNearestIsLowerPlateId =
+			HoldRecord.bHasUniqueNearest &&
+			NearestPlateId == LowestPlateId;
+
+		const FCarrierLabIIIE3SelectionCandidate& Reference = VisibleCandidates[0];
+		HoldRecord.Candidates.Reserve(VisibleCandidates.Num());
+		for (int32 CandidateIndex = 0; CandidateIndex < VisibleCandidates.Num(); ++CandidateIndex)
+		{
+			const FCarrierLabIIIE3SelectionCandidate& Candidate = VisibleCandidates[CandidateIndex];
+			FCarrierLabPhaseIIIE62CandidateSnapshot Snapshot;
+			if (!BuildPhaseIIIE62CandidateSnapshot(State, Candidate, Reference, CandidateIndex, Snapshot))
+			{
+				continue;
+			}
+
+			FCarrierLabPhaseIIIE64CandidateDiagnostic& Diagnostic = HoldRecord.Candidates.AddDefaulted_GetRef();
+			Diagnostic.Snapshot = Snapshot;
+			Diagnostic.bNearestCandidate = CandidateIndex == NearestCandidateIndex;
+			const uint64 TriangleKey = MakePlateTriangleKey(Candidate.PlateId, Candidate.LocalTriangleId);
+			Diagnostic.bSubductingMarked = SubductingTriangleKeys.Contains(TriangleKey);
+			Diagnostic.bObductionPendingMarked = ObductionTriangleKeys.Contains(TriangleKey);
+			Diagnostic.bCollisionPendingMarked = State.ConvergenceCollisionPendingTriangleKeys.Contains(TriangleKey);
+			Diagnostic.PlateContinentalFraction = ContinentalByPlate.Contains(Candidate.PlateId)
+				? ContinentalByPlate[Candidate.PlateId]
+				: 0.0;
+			Diagnostic.PlateOceanicAge = OceanicAgeByPlate.Contains(Candidate.PlateId)
+				? OceanicAgeByPlate[Candidate.PlateId]
+				: 0.0;
+
+			HoldRecord.bAnySubductingMarked = HoldRecord.bAnySubductingMarked || Diagnostic.bSubductingMarked;
+			HoldRecord.bAnyObductionPendingMarked = HoldRecord.bAnyObductionPendingMarked || Diagnostic.bObductionPendingMarked;
+			HoldRecord.bAnyCollisionPendingMarked = HoldRecord.bAnyCollisionPendingMarked || Diagnostic.bCollisionPendingMarked;
+		}
+		HoldRecord.bAnyCandidateProcessMarked =
+			HoldRecord.bAnySubductingMarked ||
+			HoldRecord.bAnyObductionPendingMarked ||
+			HoldRecord.bAnyCollisionPendingMarked;
+		AccumulatePhaseIIIE64HoldRecord(HoldRecord, OutAudit);
+	}
+
+	SelectionAudit.SelectionHash = ComputePhaseIIIE3SelectionHash(SelectionAudit.Records);
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.SampleCount = SelectionAudit.SampleCount;
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.SelectionUnresolvedMultiHitCount = SelectionAudit.UnresolvedMultiHitCount;
+	OutAudit.SelectionCrossPlateDifferentMultiHitCount = SelectionAudit.CrossPlateDifferentMultiHitCount;
+	OutAudit.SelectionThirdPlateMultiHitCount = SelectionAudit.ThirdPlateMultiHitCount;
+	OutAudit.SelectionCrossPlateEqualMultiHitCount = SelectionAudit.CrossPlateEqualMultiHitCount;
+	OutAudit.CoalescedMultiHitCount = SelectionAudit.CoalescedMultiHitCount;
+	OutAudit.SharedBoundaryTieBreakCount = SelectionAudit.SharedBoundaryTieBreakCount;
+	OutAudit.PriorOwnerFallbackCount = SelectionAudit.PriorOwnerFallbackCount;
+	OutAudit.PolicyWinnerCount = SelectionAudit.PolicyWinnerCount;
+	OutAudit.ProjectionAuthorityCount = 0;
+	OutAudit.SelectionHash = SelectionAudit.SelectionHash;
+	FinalizePhaseIIIE64DistanceStats(OutAudit);
+	OutAudit.DiagnosisHash = ComputePhaseIIIE64DiagnosisHash(OutAudit.Records);
 	OutAudit.bRan = true;
 	return true;
 }
@@ -11149,7 +11516,7 @@ int32 ACarrierLabVisualizationActor::GetNaturalCadenceSteps() const
 
 double ACarrierLabVisualizationActor::GetNaturalCadenceDeltaTMa() const
 {
-	const double ObservedSpeed = GetObservedMaxPlateSpeedMmPerYear();
+	const double ObservedSpeed = GetObservedMaxPlateSpeedForCadenceMmPerYear();
 	const double Alpha = FMath::Min(1.0, ObservedSpeed / ResamplingReferenceVelocityMmPerYear);
 	return (1.0 - Alpha) * ResamplingMMaxMa + Alpha * ResamplingMMinMa;
 }
@@ -11162,6 +11529,43 @@ double ACarrierLabVisualizationActor::GetObservedMaxPlateSpeedMmPerYear() const
 		MaxSpeed = FMath::Max(MaxSpeed, VelocityMmPerYearFromAngularSpeed(Motion.AngularSpeedRadiansPerStep));
 	}
 	return Motions.Num() > 0 ? MaxSpeed : FMath::Max(0.0, VelocityMmPerYear);
+}
+
+double ACarrierLabVisualizationActor::GetObservedMaxPlateSpeedForCadenceMmPerYear() const
+{
+	return FMath::Max(
+		CurrentMetrics.ObservedMaxPlateSpeedSinceLastRemeshMmPerYear,
+		GetObservedMaxPlateSpeedMmPerYear());
+}
+
+void ACarrierLabVisualizationActor::ResetObservedSpeedWindowForRemesh()
+{
+	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
+	CurrentMetrics.ObservedMaxPlateSpeedSinceLastRemeshMmPerYear =
+		CurrentMetrics.ObservedMaxPlateSpeedMmPerYear;
+}
+
+void ACarrierLabVisualizationActor::UpdateNaturalCadenceMetrics(const bool bAdvanceObservedSpeedWindow)
+{
+	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
+	if (bAdvanceObservedSpeedWindow ||
+		CurrentMetrics.ObservedMaxPlateSpeedSinceLastRemeshMmPerYear <= UE_DOUBLE_SMALL_NUMBER)
+	{
+		CurrentMetrics.ObservedMaxPlateSpeedSinceLastRemeshMmPerYear = FMath::Max(
+			CurrentMetrics.ObservedMaxPlateSpeedSinceLastRemeshMmPerYear,
+			CurrentMetrics.ObservedMaxPlateSpeedMmPerYear);
+	}
+
+	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
+	const int32 Cadence = GetNaturalCadenceSteps();
+	CurrentMetrics.CadenceSteps = Cadence;
+	const int32 ProposedNextStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
+	if (CurrentMetrics.NextResampleStep <= 0 ||
+		bAdvanceObservedSpeedWindow ||
+		ProposedNextStep < CurrentMetrics.NextResampleStep)
+	{
+		CurrentMetrics.NextResampleStep = ProposedNextStep;
+	}
 }
 
 void ACarrierLabVisualizationActor::ResetPhaseIIIDiagnosticCallCounts() const
@@ -11302,11 +11706,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIICostDriverAdvanceProbe(FCarrierLa
 	OutAudit.LedgerSeconds += FPlatformTime::Seconds() - StartSeconds;
 
 	++CurrentMetrics.Step;
-	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
-	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
-	const int32 Cadence = GetNaturalCadenceSteps();
-	CurrentMetrics.CadenceSteps = Cadence;
-	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
+	UpdateNaturalCadenceMetrics(true);
 
 	OutAudit.StepAfter = CurrentMetrics.Step;
 	OutAudit.ActiveTriangleCountAfter = CountActiveTriangles();
@@ -11354,7 +11754,12 @@ bool ACarrierLabVisualizationActor::AdvanceOneStepWithNaturalResampling()
 	AdvanceOneStep();
 	if (ShouldFireNaturalResamplingEvent(TargetStep))
 	{
-		return ApplyNaturalResampleEvent();
+		const bool bApplied = ApplyNaturalResampleEvent();
+		if (!bApplied)
+		{
+			CurrentMetrics.NextResampleStep = TargetStep;
+		}
+		return bApplied;
 	}
 	return false;
 }
@@ -11605,6 +12010,9 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 		SelectionAudit.SharedBoundaryTieBreakCount,
 		RebuildAudit.MajorityTriangleCount,
 		RebuildAudit.TripleJunctionCentroidSplitCount);
+	ResetObservedSpeedWindowForRemesh();
+	CurrentMetrics.NextResampleStep = 0;
+	UpdateNaturalCadenceMetrics(false);
 	CurrentMetrics.ResampleEventSeconds = FPlatformTime::Seconds() - StartSeconds;
 	CurrentMetrics.ProjectionSeconds += CurrentMetrics.ResampleEventSeconds;
 	UE_LOG(
@@ -13493,11 +13901,7 @@ void ACarrierLabVisualizationActor::AdvanceOneStep()
 	ApplyPhaseIIIC4SlabPull();
 	FinalizePhaseIIIC5ElevationLedger();
 	++CurrentMetrics.Step;
-	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
-	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
-	const int32 Cadence = GetNaturalCadenceSteps();
-	CurrentMetrics.CadenceSteps = Cadence;
-	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
+	UpdateNaturalCadenceMetrics(true);
 }
 
 void ACarrierLabVisualizationActor::CaptureDriftReference()
@@ -13969,11 +14373,7 @@ void ACarrierLabVisualizationActor::ProjectCurrentCarrier()
 	CurrentMetrics.HashSeconds = 0.0;
 	CurrentMetrics.ResampleEventSeconds = 0.0;
 	CurrentMetrics.MeshUpdateSeconds = 0.0;
-	CurrentMetrics.ObservedMaxPlateSpeedMmPerYear = GetObservedMaxPlateSpeedMmPerYear();
-	CurrentMetrics.CadenceDeltaTMa = GetNaturalCadenceDeltaTMa();
-	const int32 Cadence = GetNaturalCadenceSteps();
-	CurrentMetrics.CadenceSteps = Cadence;
-	CurrentMetrics.NextResampleStep = ((CurrentMetrics.Step / Cadence) + 1) * Cadence;
+	UpdateNaturalCadenceMetrics(false);
 
 	RenderPlateIds.Init(INDEX_NONE, State.Samples.Num());
 	RenderContinentalFractions.Init(0.0, State.Samples.Num());
@@ -14584,7 +14984,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d iiie_auto_remesh=%s cadence=%d steps / %.1f Ma vmax=%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\niiie gen/apply/rift/hold/coalesced/shared/tj=%d/%d/%d/%d/%d/%d/%d hold_buckets within/crossEq/third=%d/%d/%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R IIIE.6 remesh | 1-9/0 layers | O ocean age | G ridge"),
+		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d iiie_auto_remesh=%s cadence=%d steps / %.1f Ma vmax/current=%.3f/%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\niiie gen/apply/rift/hold/coalesced/shared/tj=%d/%d/%d/%d/%d/%d/%d hold_buckets within/crossEq/third=%d/%d/%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R IIIE.6 remesh | 1-9/0 layers | O ocean age | G ridge"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -14593,6 +14993,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		bEnableNaturalResamplingEvents ? TEXT("on") : TEXT("off"),
 		CurrentMetrics.CadenceSteps,
 		CurrentMetrics.CadenceDeltaTMa,
+		CurrentMetrics.ObservedMaxPlateSpeedSinceLastRemeshMmPerYear,
 		CurrentMetrics.ObservedMaxPlateSpeedMmPerYear,
 		CurrentMetrics.SampleCount,
 		CurrentMetrics.PlateCount,

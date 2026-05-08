@@ -154,6 +154,9 @@ struct FCarrierLabVisualizationMetrics
 	double ObservedMaxPlateSpeedMmPerYear = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
+	double ObservedMaxPlateSpeedSinceLastRemeshMmPerYear = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	double CadenceDeltaTMa = 0.0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
@@ -944,6 +947,78 @@ struct FCarrierLabPhaseIIIE62CrossPlateMultiHitAudit
 	FString SelectionHash;
 	FString DiagnosisHash;
 	TArray<FCarrierLabPhaseIIIE62HoldRecord> Records;
+};
+
+struct FCarrierLabPhaseIIIE64CandidateDiagnostic
+{
+	FCarrierLabPhaseIIIE62CandidateSnapshot Snapshot;
+	bool bSubductingMarked = false;
+	bool bObductionPendingMarked = false;
+	bool bCollisionPendingMarked = false;
+	bool bNearestCandidate = false;
+	double PlateContinentalFraction = 0.0;
+	double PlateOceanicAge = 0.0;
+};
+
+struct FCarrierLabPhaseIIIE64HoldRecord
+{
+	int32 SampleId = INDEX_NONE;
+	int32 Step = 0;
+	FVector3d SampleUnitPosition = FVector3d::UnitZ();
+	ECarrierLabPhaseIIIE3SelectionClass SelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
+	ECarrierLabPhaseIIIE3MultiHitBucket MultiHitBucket = ECarrierLabPhaseIIIE3MultiHitBucket::None;
+	int32 CandidateCount = 0;
+	int32 DistinctPlateCount = 0;
+	bool bHasUniqueNearest = false;
+	bool bNearestDistanceTie = false;
+	double NearestDistanceGapKm = 0.0;
+	bool bAnyCandidateProcessMarked = false;
+	bool bAnySubductingMarked = false;
+	bool bAnyObductionPendingMarked = false;
+	bool bAnyCollisionPendingMarked = false;
+	bool bNearestIsMostContinentalPlate = false;
+	bool bNearestIsOlderOceanicPlate = false;
+	bool bNearestIsLowerPlateId = false;
+	bool bContinentalPlateTie = false;
+	bool bOceanicAgePlateTie = false;
+	TArray<FCarrierLabPhaseIIIE64CandidateDiagnostic> Candidates;
+};
+
+struct FCarrierLabPhaseIIIE64PostMotionMultiHitAudit
+{
+	bool bRan = false;
+	int32 Step = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 SelectionUnresolvedMultiHitCount = 0;
+	int32 SelectionCrossPlateDifferentMultiHitCount = 0;
+	int32 SelectionThirdPlateMultiHitCount = 0;
+	int32 SelectionCrossPlateEqualMultiHitCount = 0;
+	int32 CoalescedMultiHitCount = 0;
+	int32 SharedBoundaryTieBreakCount = 0;
+	int32 DiagnosedHoldCount = 0;
+	int32 CrossPlateDifferentHoldCount = 0;
+	int32 ThirdPlateHoldCount = 0;
+	int32 ProcessMarkedHoldCount = 0;
+	int32 SubductingMarkedHoldCount = 0;
+	int32 ObductionPendingMarkedHoldCount = 0;
+	int32 CollisionPendingMarkedHoldCount = 0;
+	int32 UniqueNearestCrossPlateDifferentCount = 0;
+	int32 DistanceTieCrossPlateDifferentCount = 0;
+	int32 UniqueNearestThirdPlateCount = 0;
+	int32 DistanceTieThirdPlateCount = 0;
+	int32 NearestMostContinentalCount = 0;
+	int32 NearestOlderOceanicCount = 0;
+	int32 NearestLowerPlateIdCount = 0;
+	int32 PriorOwnerFallbackCount = 0;
+	int32 PolicyWinnerCount = 0;
+	int32 ProjectionAuthorityCount = 0;
+	double MaxNearestDistanceGapKm = 0.0;
+	double MedianNearestDistanceGapKm = 0.0;
+	double P95NearestDistanceGapKm = 0.0;
+	FString SelectionHash;
+	FString DiagnosisHash;
+	TArray<FCarrierLabPhaseIIIE64HoldRecord> Records;
 };
 
 struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
@@ -2361,6 +2436,8 @@ public:
 		FCarrierLabPhaseIIIE62HoldRecord& OutRecord) const;
 	bool RunPhaseIIIE62CrossPlateMultiHitDiagnosisAudit(
 		FCarrierLabPhaseIIIE62CrossPlateMultiHitAudit& OutAudit);
+	bool RunPhaseIIIE64PostMotionMultiHitDiagnosisAudit(
+		FCarrierLabPhaseIIIE64PostMotionMultiHitAudit& OutAudit);
 	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;
@@ -2510,6 +2587,9 @@ private:
 	bool RefreshProjectionRayMesh(FString& OutError);
 	void RebuildRenderMesh();
 	bool BuildRenderMeshTopology();
+	void ResetObservedSpeedWindowForRemesh();
+	void UpdateNaturalCadenceMetrics(bool bAdvanceObservedSpeedWindow);
+	double GetObservedMaxPlateSpeedForCadenceMmPerYear() const;
 	FLinearColor ColorForSampleLayer(int32 SampleId, ECarrierLabVisualizationLayer Layer) const;
 	FLinearColor ColorForSample(int32 SampleId) const;
 	void ShowHud() const;
