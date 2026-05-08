@@ -21,7 +21,7 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 | Post-rebuild IIIB tracking gate | pass | topology `df45ff4c3c0e85a0`, reset `0->1`, seed plate/local `0/170`, other `1`, active `2`, distances `2`, matrix pairs `1`, accepted positive `1`, propagation seed/added `1/1`, closure reset `1`, hash `f2cca799add92f9e`. |
 | Same-seed remesh-event replay | pass | Event hashes `99b2957f76910bf5` and `99b2957f76910bf5`. |
 
-| Live actor IIIE.6 promotion smoke | pass | applied `1`, events `0->1`, samples/plates `96/1`, gen/apply/rift/hold/coalesced/tj `0/0/0/0/73/0`, policy `0`, mode `phase_iii_e6_live gen=0 applied=0 rift_pending=0 majority=0 tj_split=0`, crust `8b7758c51944a162->5c75dc9d238d9011`. |
+| Live actor IIIE.6 promotion smoke | pass | applied `1`, events `0->1`, samples/plates `96/1`, gen/apply/rift/hold/coalesced/shared/tj `0/0/0/0/73/0/0`, policy `0`, mode `phase_iii_e6_live gen=0 applied=0 rift_pending=0 coalesced=73 shared_tiebreak=0 majority=0 tj_split=0`, crust `8b7758c51944a162->5c75dc9d238d9011`. |
 
 ## Contract Table
 
@@ -34,7 +34,7 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 | Plate-local topology rebuild/reset must be the event continuation | IIIE.6 feeds generated records into the IIIE.5 duplicate/re-index/re-compact helper and observes reset in the same event gate | Keep Stage 1.5 recovery out of the primary path | Topology hash and reset columns |
 | IIIB tracking must work after rebuild | A post-rebuild actor seeds IIIB tracking from rebuilt local topology and checks active lists, distances, matrix evidence, propagation, and hash closure | Consolidation should still rerun the `CarrierLabPhaseIIID7` computed-vs-expected regression separately; this local gate only closes the topology boundary discontinuity | Post-rebuild IIIB tracking gate |
 
-| Live actor remesh must use the latest IIIE path by default | `ApplyNaturalResampleEvent`, the R key, and the workbench remesh button route through `ApplyPhaseIIIELiveRemeshEvent`; the workbench defaults auto-remesh on and IIIE summary visible | Consolidation should exercise a default multi-plate run and accept fail-loud holds where unresolved multi-hit classes still exist | Live actor promotion smoke |
+| Live actor remesh must use the latest IIIE path by default | `ApplyNaturalResampleEvent`, the R key, and the workbench remesh button route through `ApplyPhaseIIIELiveRemeshEvent`; the workbench defaults auto-remesh on and IIIE summary visible | Consolidation should exercise a default multi-plate run and accept fail-loud holds only for classes not covered by approved IIIE.6.3 shared-boundary tie-break policy | Live actor promotion smoke |
 
 ## Forbidden Policy Checks
 
@@ -42,7 +42,7 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 |---|---|
 | Prior global owner/fraction fallback | Selection, generation, and topology counters remain zero. |
 | Projection-derived ownership authority | Topology projection-authority counter remains zero. |
-| Uncited remesh winner | Policy-winner counters remain zero; no multi-hit route is consumed. |
+| Uncited remesh winner | Policy-winner counters remain zero; the IIIE.6.3 shared-boundary tie-break is a separate named/disclosed lab policy with its own counters. |
 | Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit or promoted live natural cadence; IIIE.5 rebuild remains the authority path. |
 | Unresolved multi-hit ridge generation | Not routed; IIIE.4 receives only no-hit and filter-exhausted divergent classes. |
 | zGamma paper-fidelity overclaim | Generated records preserve `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`. |
@@ -56,6 +56,7 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 | Two-of-three mixed triangle majority | Approved CarrierLab lab policy | IIIE.5 exposes and gates the deterministic majority rule: if exactly two global-TDS vertices assign to one plate, that plate owns the rebuilt triangle. This is approved only as disclosed lab policy, not as paper text. |
 | One-one-one triple-junction topology | Approved CarrierLab centroid-split lab policy | IIIE.5 subdivides one-one-one global triangles into per-plate centroid wedges without a whole-triangle winner. |
 | Continental overwrite by divergent ridge generation | Resolved for IIIE as rifting-pending route | IIIE.6 records divergent provenance but does not apply generated oceanic crust over continental material; IIIF owns actual rifting behavior. |
+| Shared-boundary same-distance multi-hit tie-break | Approved CarrierLab lab policy | IIIE.6.3 resolves only boundary-shared classes by higher plate-level continental fraction, then older plate-level oceanic age, then lower plate id; it is not paper-cited. |
 
 ## Stop Conditions For IIIE Consolidation+
 
@@ -65,11 +66,11 @@ Verdict: PASS / IIIE.6 LIVE CADENCE PROMOTED; RIFTING-PENDING ROUTE ACTIVE. This
 - Stop if post-rebuild IIIB tracking cannot seed active lists, distance records, matrix evidence, propagation, and closure from rebuilt plate-local topology.
 - Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.
 - Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.
-
+- Stop if the IIIE.6.3 shared-boundary tie-break is counted as `bUsedPolicyWinner`, projection authority, or prior-owner fallback instead of its own disclosed lab-policy counter.
 - Stop if the actor workbench, R key, or natural remesh cadence calls Stage 1.5 as the default live remesh path.
 
 ## Next Slice Boundary
 
-Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.
+Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved shared-boundary tie-break, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.
 
 Metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIE6/phase-iii-slice-iiie6-metrics.jsonl`.

@@ -103,6 +103,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 PhaseIIIELastCoalescedMultiHitCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastSharedBoundaryTieBreakCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
@@ -732,20 +735,56 @@ enum class ECarrierLabPhaseIIIE3MultiHitBucket : uint8
 	ThirdPlate
 };
 
+enum class ECarrierLabPhaseIIIE63SharedBoundaryTieBreakRule : uint8
+{
+	None,
+	ContinentalPriority,
+	OlderOceanicAge,
+	LowerPlateId
+};
+
+enum class ECarrierLabPhaseIIIE62BarycentricShape : uint8
+{
+	Unknown,
+	Vertex,
+	Edge,
+	Interior
+};
+
+enum class ECarrierLabPhaseIIIE62HoldShape : uint8
+{
+	TwoPlateSameSourceTriangle,
+	TwoPlateSharedGlobalEdge,
+	TwoPlateSharedGlobalVertexOnly,
+	TwoPlateNoSharedGlobalVertices,
+	TwoPlateFieldMismatch,
+	ThreePlateCommonGlobalVertex,
+	ThreePlateEdgePlusIntruder,
+	ThreePlateNoCommonSourceVertex,
+	NonBoundaryOrInteriorOverlap,
+	InvalidOrUnclassified
+};
+
 struct FCarrierLabPhaseIIIE3CandidateProbe
 {
 	int32 PlateId = INDEX_NONE;
 	int32 LocalTriangleId = INDEX_NONE;
+	int32 SourceTriangleId = INDEX_NONE;
+	int32 GlobalVertexIds[3] = { INDEX_NONE, INDEX_NONE, INDEX_NONE };
 	FVector3d Bary = FVector3d(1.0, 0.0, 0.0);
 	double Distance = 1.0;
 	double ContinentalFraction = 0.0;
 	double Elevation = 0.0;
 	double HistoricalElevation = 0.0;
 	double OceanicAge = 0.0;
+	double PlateContinentalFraction = 0.0;
+	double PlateOceanicAge = 0.0;
 	FVector3d RidgeDirection = FVector3d::ZeroVector;
 	FVector3d FoldDirection = FVector3d::ZeroVector;
 	ECarrierLabPhaseIIIE3FilterReason FilterReason = ECarrierLabPhaseIIIE3FilterReason::None;
 	bool bBoundary = true;
+	bool bHasSourceTopologySnapshot = false;
+	bool bHasPlateAggregateOverride = false;
 };
 
 struct FCarrierLabPhaseIIIE3SelectionRecord
@@ -768,8 +807,18 @@ struct FCarrierLabPhaseIIIE3SelectionRecord
 	bool bUnresolvedMultiHit = false;
 	bool bCoalescedDuplicateHit = false;
 	bool bCoalescingRejectedByFieldMismatch = false;
+	bool bUsedSharedBoundaryTieBreak = false;
 	bool bUsedPolicyWinner = false;
 	bool bUsedPriorOwnerFallback = false;
+	ECarrierLabPhaseIIIE62HoldShape SharedBoundaryShapeClass = ECarrierLabPhaseIIIE62HoldShape::InvalidOrUnclassified;
+	ECarrierLabPhaseIIIE63SharedBoundaryTieBreakRule SharedBoundaryTieBreakRule = ECarrierLabPhaseIIIE63SharedBoundaryTieBreakRule::None;
+	int32 SharedBoundaryTieBreakCandidateCount = 0;
+	int32 SharedBoundaryTieBreakPlateCount = 0;
+	double SharedBoundaryTieBreakContinentalMargin = 0.0;
+	double SharedBoundaryTieBreakOceanicAgeMargin = 0.0;
+	TArray<int32> SharedBoundaryCandidatePlateIds;
+	TArray<double> SharedBoundaryCandidateContinentalFractions;
+	TArray<double> SharedBoundaryCandidateOceanicAges;
 	int32 ResolvedPlateId = INDEX_NONE;
 	int32 ResolvedLocalTriangleId = INDEX_NONE;
 	FVector3d ResolvedBary = FVector3d(1.0, 0.0, 0.0);
@@ -814,6 +863,13 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 CoalescedMultiHitCount = 0;
 	int32 CoalescedCandidateCount = 0;
 	int32 CoalescingFieldMismatchHoldCount = 0;
+	int32 SharedBoundaryTieBreakCount = 0;
+	int32 SharedBoundaryTwoPlateEdgeCount = 0;
+	int32 SharedBoundaryTwoPlateVertexOnlyCount = 0;
+	int32 SharedBoundaryThreePlateCommonVertexCount = 0;
+	int32 SharedBoundaryContinentalPriorityCount = 0;
+	int32 SharedBoundaryOlderOceanicAgeCount = 0;
+	int32 SharedBoundaryLowerPlateIdCount = 0;
 	double MaxMultiHitRayDistanceResidualKm = 0.0;
 	double MaxMultiHitScalarResidual = 0.0;
 	double MaxMultiHitElevationResidualKm = 0.0;
@@ -822,28 +878,6 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 PolicyWinnerCount = 0;
 	FString SelectionHash;
 	TArray<FCarrierLabPhaseIIIE3SelectionRecord> Records;
-};
-
-enum class ECarrierLabPhaseIIIE62BarycentricShape : uint8
-{
-	Unknown,
-	Vertex,
-	Edge,
-	Interior
-};
-
-enum class ECarrierLabPhaseIIIE62HoldShape : uint8
-{
-	TwoPlateSameSourceTriangle,
-	TwoPlateSharedGlobalEdge,
-	TwoPlateSharedGlobalVertexOnly,
-	TwoPlateNoSharedGlobalVertices,
-	TwoPlateFieldMismatch,
-	ThreePlateCommonGlobalVertex,
-	ThreePlateEdgePlusIntruder,
-	ThreePlateNoCommonSourceVertex,
-	NonBoundaryOrInteriorOverlap,
-	InvalidOrUnclassified
 };
 
 struct FCarrierLabPhaseIIIE62CandidateSnapshot
@@ -2084,6 +2118,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bEnablePhaseIIIE3DuplicateHitCoalescing = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICTrenchDepthKm = -10.0;

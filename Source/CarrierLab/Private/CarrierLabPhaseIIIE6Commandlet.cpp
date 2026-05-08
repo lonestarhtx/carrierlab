@@ -292,6 +292,7 @@ namespace
 		int32 RiftingPendingCount = 0;
 		int32 UnresolvedHoldCount = 0;
 		int32 CoalescedMultiHitCount = 0;
+		int32 SharedBoundaryTieBreakCount = 0;
 		int32 TripleJunctionSplitCount = 0;
 		int32 PolicyWinnerCount = 0;
 		FString LastRemeshMode;
@@ -542,6 +543,7 @@ namespace
 		OutResult.RiftingPendingCount = Actor->CurrentMetrics.PhaseIIIELastRiftingPendingCount;
 		OutResult.UnresolvedHoldCount = Actor->CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount;
 		OutResult.CoalescedMultiHitCount = Actor->CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount;
+		OutResult.SharedBoundaryTieBreakCount = Actor->CurrentMetrics.PhaseIIIELastSharedBoundaryTieBreakCount;
 		OutResult.TripleJunctionSplitCount = Actor->CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount;
 		OutResult.PolicyWinnerCount = Actor->CurrentMetrics.PolicyResolvedMultiHitCount;
 		OutResult.LastRemeshMode = Actor->CurrentMetrics.LastRemeshMode;
@@ -694,7 +696,7 @@ namespace
 	FString BuildLivePromotionJsonLine(const FLivePromotionResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"pass\":%s,\"applied\":%s,\"sample_count\":%d,\"plate_count\":%d,\"event_before\":%d,\"event_after\":%d,\"generated_candidate\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"unresolved_hold\":%d,\"coalesced_multi_hit\":%d,\"triple_junction_split\":%d,\"policy_winner\":%d,\"last_remesh_mode\":%s,\"crust_hash_before\":%s,\"crust_hash_after\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"fixture\":%s,\"pass\":%s,\"applied\":%s,\"sample_count\":%d,\"plate_count\":%d,\"event_before\":%d,\"event_after\":%d,\"generated_candidate\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"unresolved_hold\":%d,\"coalesced_multi_hit\":%d,\"shared_boundary_tiebreak\":%d,\"triple_junction_split\":%d,\"policy_winner\":%d,\"last_remesh_mode\":%s,\"crust_hash_before\":%s,\"crust_hash_after\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Name),
 			Result.bPass ? TEXT("true") : TEXT("false"),
 			Result.bApplied ? TEXT("true") : TEXT("false"),
@@ -707,6 +709,7 @@ namespace
 			Result.RiftingPendingCount,
 			Result.UnresolvedHoldCount,
 			Result.CoalescedMultiHitCount,
+			Result.SharedBoundaryTieBreakCount,
 			Result.TripleJunctionSplitCount,
 			Result.PolicyWinnerCount,
 			*JsonString(Result.LastRemeshMode),
@@ -803,7 +806,7 @@ namespace
 			*ReplayHashA,
 			*ReplayHashB);
 		Report += FString::Printf(
-			TEXT("| Live actor IIIE.6 promotion smoke | %s | applied `%d`, events `%d->%d`, samples/plates `%d/%d`, gen/apply/rift/hold/coalesced/tj `%d/%d/%d/%d/%d/%d`, policy `%d`, mode `%s`, crust `%s->%s`. |\n\n"),
+			TEXT("| Live actor IIIE.6 promotion smoke | %s | applied `%d`, events `%d->%d`, samples/plates `%d/%d`, gen/apply/rift/hold/coalesced/shared/tj `%d/%d/%d/%d/%d/%d/%d`, policy `%d`, mode `%s`, crust `%s->%s`. |\n\n"),
 			*PassFail(LivePromotion.bPass),
 			LivePromotion.bApplied ? 1 : 0,
 			LivePromotion.EventCountBefore,
@@ -815,6 +818,7 @@ namespace
 			LivePromotion.RiftingPendingCount,
 			LivePromotion.UnresolvedHoldCount,
 			LivePromotion.CoalescedMultiHitCount,
+			LivePromotion.SharedBoundaryTieBreakCount,
 			LivePromotion.TripleJunctionSplitCount,
 			LivePromotion.PolicyWinnerCount,
 			*LivePromotion.LastRemeshMode,
@@ -830,14 +834,14 @@ namespace
 		Report += TEXT("| Ridge generation must not silently overwrite continental material | IIIE.6 routes continental divergent generation to `rifting pending` and demonstrates in the fixture that the generated oceanic record is not applied to topology | IIIF must later consume or replace the pending route with a rifting implementation | Rifting-pending fixture |\n");
 		Report += TEXT("| Plate-local topology rebuild/reset must be the event continuation | IIIE.6 feeds generated records into the IIIE.5 duplicate/re-index/re-compact helper and observes reset in the same event gate | Keep Stage 1.5 recovery out of the primary path | Topology hash and reset columns |\n");
 		Report += TEXT("| IIIB tracking must work after rebuild | A post-rebuild actor seeds IIIB tracking from rebuilt local topology and checks active lists, distances, matrix evidence, propagation, and hash closure | Consolidation should still rerun the `CarrierLabPhaseIIID7` computed-vs-expected regression separately; this local gate only closes the topology boundary discontinuity | Post-rebuild IIIB tracking gate |\n\n");
-		Report += TEXT("| Live actor remesh must use the latest IIIE path by default | `ApplyNaturalResampleEvent`, the R key, and the workbench remesh button route through `ApplyPhaseIIIELiveRemeshEvent`; the workbench defaults auto-remesh on and IIIE summary visible | Consolidation should exercise a default multi-plate run and accept fail-loud holds where unresolved multi-hit classes still exist | Live actor promotion smoke |\n\n");
+		Report += TEXT("| Live actor remesh must use the latest IIIE path by default | `ApplyNaturalResampleEvent`, the R key, and the workbench remesh button route through `ApplyPhaseIIIELiveRemeshEvent`; the workbench defaults auto-remesh on and IIIE summary visible | Consolidation should exercise a default multi-plate run and accept fail-loud holds only for classes not covered by approved IIIE.6.3 shared-boundary tie-break policy | Live actor promotion smoke |\n\n");
 
 		Report += TEXT("## Forbidden Policy Checks\n\n");
 		Report += TEXT("| Forbidden or held policy | IIIE.6 status |\n");
 		Report += TEXT("|---|---|\n");
 		Report += TEXT("| Prior global owner/fraction fallback | Selection, generation, and topology counters remain zero. |\n");
 		Report += TEXT("| Projection-derived ownership authority | Topology projection-authority counter remains zero. |\n");
-		Report += TEXT("| Uncited remesh winner | Policy-winner counters remain zero; no multi-hit route is consumed. |\n");
+		Report += TEXT("| Uncited remesh winner | Policy-winner counters remain zero; the IIIE.6.3 shared-boundary tie-break is a separate named/disclosed lab policy with its own counters. |\n");
 		Report += TEXT("| Stage 1.5 recovery/backfill/retention/hysteresis/anchoring | Not called by the event audit or promoted live natural cadence; IIIE.5 rebuild remains the authority path. |\n");
 		Report += TEXT("| Unresolved multi-hit ridge generation | Not routed; IIIE.4 receives only no-hit and filter-exhausted divergent classes. |\n");
 		Report += TEXT("| zGamma paper-fidelity overclaim | Generated records preserve `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`. |\n");
@@ -849,7 +853,8 @@ namespace
 		Report += TEXT("| zGamma profile law | Deferred / named lab extension | Current sqrt-distance profile is geophysics-derived and realistic, but the paper/thesis do not provide a closed-form zGamma equation. |\n");
 		Report += TEXT("| Two-of-three mixed triangle majority | Approved CarrierLab lab policy | IIIE.5 exposes and gates the deterministic majority rule: if exactly two global-TDS vertices assign to one plate, that plate owns the rebuilt triangle. This is approved only as disclosed lab policy, not as paper text. |\n");
 		Report += TEXT("| One-one-one triple-junction topology | Approved CarrierLab centroid-split lab policy | IIIE.5 subdivides one-one-one global triangles into per-plate centroid wedges without a whole-triangle winner. |\n");
-		Report += TEXT("| Continental overwrite by divergent ridge generation | Resolved for IIIE as rifting-pending route | IIIE.6 records divergent provenance but does not apply generated oceanic crust over continental material; IIIF owns actual rifting behavior. |\n\n");
+		Report += TEXT("| Continental overwrite by divergent ridge generation | Resolved for IIIE as rifting-pending route | IIIE.6 records divergent provenance but does not apply generated oceanic crust over continental material; IIIF owns actual rifting behavior. |\n");
+		Report += TEXT("| Shared-boundary same-distance multi-hit tie-break | Approved CarrierLab lab policy | IIIE.6.3 resolves only boundary-shared classes by higher plate-level continental fraction, then older plate-level oceanic age, then lower plate id; it is not paper-cited. |\n\n");
 
 		Report += TEXT("## Stop Conditions For IIIE Consolidation+\n\n");
 		Report += TEXT("- Stop if unresolved multi-hit IIIE.3 classes are routed into IIIE.4 generation.\n");
@@ -857,11 +862,12 @@ namespace
 		Report += TEXT("- Stop if Stage 1.5 owner/projection/recovery behavior becomes primary IIIE remesh authority.\n");
 		Report += TEXT("- Stop if post-rebuild IIIB tracking cannot seed active lists, distance records, matrix evidence, propagation, and closure from rebuilt plate-local topology.\n");
 		Report += TEXT("- Stop if reports claim paper-faithful zGamma while generated records still report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n");
-		Report += TEXT("- Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.\n\n");
+		Report += TEXT("- Stop if the majority or centroid-split rules are described as paper-faithful rather than approved lab policies, or if triple-junction topology receives a whole-triangle winner.\n");
+		Report += TEXT("- Stop if the IIIE.6.3 shared-boundary tie-break is counted as `bUsedPolicyWinner`, projection authority, or prior-owner fallback instead of its own disclosed lab-policy counter.\n");
 		Report += TEXT("- Stop if the actor workbench, R key, or natural remesh cadence calls Stage 1.5 as the default live remesh path.\n\n");
 
 		Report += TEXT("## Next Slice Boundary\n\n");
-		Report += TEXT("Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.\n\n");
+		Report += TEXT("Next is IIIE consolidation: disclose the named lab choices (geophysics-derived zGamma, approved shared-boundary tie-break, approved two-of-three majority assignment, centroid-split triple-junction topology, and rifting-pending handoff), rerun the relevant IIIE gates, keep the inherited IIIB/IIID signature trail visible, and measure the integrated paper Table 2 cost ratio.\n\n");
 		Report += FString::Printf(TEXT("Metrics: `%s`.\n"), *MetricsPath);
 		return Report;
 	}

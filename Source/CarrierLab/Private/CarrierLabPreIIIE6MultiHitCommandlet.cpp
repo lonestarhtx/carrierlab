@@ -322,6 +322,7 @@ namespace
 			return false;
 		}
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = bEnableCoalescing;
+		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = false;
 		OutResult.bRan = Actor->RunPhaseIIIE3FilteredRemeshSelectionAudit(OutResult.Audit);
 		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
 		FinalizeDistribution(OutResult);
@@ -340,6 +341,7 @@ namespace
 		Result.Purpose = Fixture.Purpose;
 		const double StartSeconds = FPlatformTime::Seconds();
 		Actor.bEnablePhaseIIIE3DuplicateHitCoalescing = bEnableCoalescing;
+		Actor.bEnablePhaseIIIE3SharedBoundaryTieBreak = false;
 		const bool bQueried = Actor.QueryPhaseIIIE3FilteredRemeshSelectionForTest(
 			FVector3d::UnitX(),
 			Fixture.Candidates,
@@ -398,6 +400,7 @@ namespace
 			return false;
 		}
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = true;
+		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = false;
 		OutResult.EventCountBefore = Actor->CurrentMetrics.EventCount;
 		OutResult.CrustHashBefore = Actor->CurrentMetrics.CrustStateHash;
 		OutResult.bApplied = Actor->ApplyPhaseIIIELiveRemeshEvent();

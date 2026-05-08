@@ -234,6 +234,7 @@ namespace
 		OutResult.Name = Fixture.Name;
 		OutResult.Purpose = Fixture.Purpose;
 		const double StartSeconds = FPlatformTime::Seconds();
+		Actor.bEnablePhaseIIIE3SharedBoundaryTieBreak = false;
 		OutResult.bQueryReturned = Actor.QueryPhaseIIIE3FilteredRemeshSelectionForTest(Fixture.Sample, Fixture.Candidates, OutResult.Record);
 		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
 		OutResult.RecordHash = ComputeRecordHash(OutResult.Record);
@@ -402,6 +403,7 @@ namespace
 		Actor.SampleCount = 512;
 		Actor.PlateCount = 4;
 		Actor.ContinentalPlateFraction = 0.50;
+		Actor.bEnablePhaseIIIE3SharedBoundaryTieBreak = false;
 		if (!Actor.InitializeCarrier())
 		{
 			return false;
