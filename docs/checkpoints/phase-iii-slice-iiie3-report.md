@@ -22,7 +22,7 @@ Verdict: PASS / IIIE.4 UNBLOCKED. This slice implements the Phase IIIE remesh so
 | mixed-material multi-hit fails loud | pass | class `unresolved mixed-material multi-hit`, raw `2`, visible `2`, filters sub/obd/coll `0/0/0`, resolved plate `-1`, policy/prior `0/0`, hash `a055a50c9a3f2910`. |
 | third-plate multi-hit fails loud | pass | class `unresolved third-plate multi-hit`, raw `3`, visible `3`, filters sub/obd/coll `0/0/0`, resolved plate `-1`, policy/prior `0/0`, hash `ad9c95058968de25`. |
 | Same-seed filtered-selection replay | pass | Replay hashes `fed4e6557a4d1a0a` and `fed4e6557a4d1a0a`. |
-| Current-state plate-local ray smoke | pass | samples `64`, raw hits `64`, gaps `0`, unresolved `11`, policy/prior `0/0`, hashes `07c53d0004b84615` / `07c53d0004b84615`. |
+| Current-state plate-local ray smoke | pass | samples `64`, raw hits `64`, gaps `0`, unresolved `10`, policy/prior `0/0`, hashes `177deca02844aba5` / `177deca02844aba5`. |
 | Inherited IIIB independent signature regression | pass | `CarrierLabPhaseIIID7` regression artifact records computed signatures `bf8818a26ed7b1dc` / `bf8818a26ed7b1dc`, expected `bf8818a26ed7b1dc`. |
 
 ## Current-State Smoke Interpretation

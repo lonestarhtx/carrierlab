@@ -192,6 +192,7 @@ namespace
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = true;
 		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
 		Actor->bEnablePhaseIIIE3NearestHitTieBreak = true;
+		Actor->bEnablePhaseIIIE3DistanceTieFallback = false;
 
 		FCarrierLabPhaseIIIE3SelectionRecord Record;
 		Actor->QueryPhaseIIIE3FilteredRemeshSelectionForTest(
@@ -387,6 +388,7 @@ namespace
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = true;
 		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
 		Actor->bEnablePhaseIIIE3NearestHitTieBreak = !bDisableNearestHit;
+		Actor->bEnablePhaseIIIE3DistanceTieFallback = false;
 		Actor->ConfigurePhaseIIICProcessLayer(true, false);
 		Actor->FinishSpawning(FTransform::Identity);
 		return Actor;
@@ -712,9 +714,9 @@ namespace
 		Report += TEXT("- Projection-authority counter is sourced from the IIIE.5 topology rebuild path and remains zero by construction in this slice.\n\n");
 
 		Report += TEXT("## Hash Regression Strategy\n\n");
-		Report += TEXT("- Schema-additive: `FCarrierLabPhaseIIIE3SelectionRecord` gained `bUsedNearestHitTieBreak`, `NearestHitResultClass`, `NearestHitGapKm`, `NearestHitToleranceKm`, `NearestHitCandidateCount`, `NearestHitDistinctPlateCount`, `NearestHitProcessMarkedRefCount`. The `ComputePhaseIIIE3SelectionHash` version string was bumped from `CarrierLab-IIIE3-filtered-selection-v2-shared-boundary` to `CarrierLab-IIIE3-filtered-selection-v3-nearest-hit`.\n");
-		Report += FString::Printf(TEXT("- Prior IIIE.6.4 manual_step_32 selection hash (v2): `0be461d212b1a54a / ad21171e53f48d79 / 83de07ebd0edbf2a` (projection/state/crust). New IIIE.6.4 baseline selection hash (v3, IIIE.6.5 disabled, zero-valued fields): `%s`. The hashes differ purely from the v2->v3 mixer change; behaviour is identical.\n"), *Baseline.Audit.SelectionHash);
-		Report += FString::Printf(TEXT("- New IIIE.6.5 default 100k/40 seed-42 manual_step_32 selection hash (v3, IIIE.6.5 enabled): `%s`. This is new evidence of the resolver's behaviour and will lock in for upstream IIIE.6.x consumers.\n\n"), *Manual.Audit.SelectionHash);
+		Report += TEXT("- Schema-additive: `FCarrierLabPhaseIIIE3SelectionRecord` gained `bUsedNearestHitTieBreak`, `NearestHitResultClass`, `NearestHitGapKm`, `NearestHitToleranceKm`, `NearestHitCandidateCount`, `NearestHitDistinctPlateCount`, `NearestHitProcessMarkedRefCount`; later IIIE.6.6 added zero-valued distance-tie fallback fields while this commandlet keeps that resolver disabled. The `ComputePhaseIIIE3SelectionHash` version string is now `CarrierLab-IIIE3-filtered-selection-v4-distance-tie-fallback`.\n");
+		Report += FString::Printf(TEXT("- Prior IIIE.6.4 manual_step_32 selection hash (v2): `0be461d212b1a54a / ad21171e53f48d79 / 83de07ebd0edbf2a` (projection/state/crust). New IIIE.6.4 baseline selection hash (v4, IIIE.6.5 disabled, IIIE.6.6 zero-valued): `%s`. The hashes differ from schema/mixer changes; behaviour is identical.\n"), *Baseline.Audit.SelectionHash);
+		Report += FString::Printf(TEXT("- IIIE.6.5 default 100k/40 seed-42 manual_step_32 selection hash (v4, IIIE.6.5 enabled and IIIE.6.6 disabled): `%s`. This remains the historical nearest-hit blocker-reduction evidence with the residual 4 ties held.\n\n"), *Manual.Audit.SelectionHash);
 
 		Report += TEXT("## Stop Conditions Preserved\n\n");
 		Report += TEXT("- Stop if any `bUsedPolicyWinner`, `bUsedPriorOwnerFallback`, or projection-authority counter becomes nonzero on any record or in any aggregate.\n");

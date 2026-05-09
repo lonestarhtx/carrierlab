@@ -97,6 +97,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 PhaseIIIELastRiftingPendingCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastInvalidRecordCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
@@ -107,6 +110,9 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastNearestHitTieBreakCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastDistanceTieFallbackCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
@@ -758,6 +764,15 @@ enum class ECarrierLabPhaseIIIE65NearestHitResult : uint8
 	UnsupportedHeld
 };
 
+enum class ECarrierLabPhaseIIIE66DistanceTieFallbackLayer : uint8
+{
+	None,
+	ContinentalPriority,
+	OlderOceanicAge,
+	LowerPlateId,
+	Unresolved
+};
+
 enum class ECarrierLabPhaseIIIE62BarycentricShape : uint8
 {
 	Unknown,
@@ -824,6 +839,7 @@ struct FCarrierLabPhaseIIIE3SelectionRecord
 	bool bCoalescingRejectedByFieldMismatch = false;
 	bool bUsedSharedBoundaryTieBreak = false;
 	bool bUsedNearestHitTieBreak = false;
+	bool bUsedDistanceTieFallback = false;
 	bool bUsedPolicyWinner = false;
 	bool bUsedPriorOwnerFallback = false;
 	ECarrierLabPhaseIIIE62HoldShape SharedBoundaryShapeClass = ECarrierLabPhaseIIIE62HoldShape::InvalidOrUnclassified;
@@ -841,6 +857,11 @@ struct FCarrierLabPhaseIIIE3SelectionRecord
 	int32 NearestHitCandidateCount = 0;
 	int32 NearestHitDistinctPlateCount = 0;
 	int32 NearestHitProcessMarkedRefCount = 0;
+	ECarrierLabPhaseIIIE66DistanceTieFallbackLayer DistanceTieFallbackLayer = ECarrierLabPhaseIIIE66DistanceTieFallbackLayer::None;
+	int32 DistanceTieFallbackCandidateCount = 0;
+	int32 DistanceTieFallbackPlateCount = 0;
+	double DistanceTieFallbackContinentalMargin = 0.0;
+	double DistanceTieFallbackOceanicAgeMargin = 0.0;
 	int32 ResolvedPlateId = INDEX_NONE;
 	int32 ResolvedLocalTriangleId = INDEX_NONE;
 	FVector3d ResolvedBary = FVector3d(1.0, 0.0, 0.0);
@@ -897,6 +918,19 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 NearestHitDistanceTieHeldCount = 0;
 	int32 NearestHitUnsupportedHeldCount = 0;
 	bool bNearestHitTieBreakDisabled = false;
+	int32 DistanceTieFallbackCount = 0;
+	int32 DistanceTieFallbackCrossPlateDifferentCount = 0;
+	int32 DistanceTieFallbackThirdPlateCount = 0;
+	int32 DistanceTieFallbackLayer1WinsCount = 0;
+	int32 DistanceTieFallbackLayer2WinsCount = 0;
+	int32 DistanceTieFallbackLayer3WinsCount = 0;
+	int32 DistanceTieFallbackCrossPlateDifferentLayer1Count = 0;
+	int32 DistanceTieFallbackCrossPlateDifferentLayer2Count = 0;
+	int32 DistanceTieFallbackCrossPlateDifferentLayer3Count = 0;
+	int32 DistanceTieFallbackThirdPlateLayer1Count = 0;
+	int32 DistanceTieFallbackThirdPlateLayer2Count = 0;
+	int32 DistanceTieFallbackThirdPlateLayer3Count = 0;
+	bool bDistanceTieFallbackDisabled = false;
 	double MaxMultiHitRayDistanceResidualKm = 0.0;
 	double MaxMultiHitScalarResidual = 0.0;
 	double MaxMultiHitElevationResidualKm = 0.0;
@@ -2223,6 +2257,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bEnablePhaseIIIE3NearestHitTieBreak = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bEnablePhaseIIIE3DistanceTieFallback = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICTrenchDepthKm = -10.0;

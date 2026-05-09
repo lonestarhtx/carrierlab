@@ -197,6 +197,7 @@ namespace
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = true;
 		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
 		Actor->bEnablePhaseIIIE3NearestHitTieBreak = false;
+		Actor->bEnablePhaseIIIE3DistanceTieFallback = false;
 		Actor->ConfigurePhaseIIICProcessLayer(true, false);
 		Actor->FinishSpawning(FTransform::Identity);
 		return Actor;
@@ -723,7 +724,7 @@ namespace
 		Report += TEXT("\n");
 
 		Report += TEXT("## Nearest-Hit Diagnostic\n\n");
-		Report += TEXT("Nearest-hit is computed as a parallel diagnostic for both `cross_plate_different` and `third_plate` holds. It is not a remesh source-selection rule for this commandlet, which runs with `bEnablePhaseIIIE3NearestHitTieBreak = false` so the historical 24,600-hold distribution is preserved as the diagnostic baseline. A unique nearest requires the nearest and second-nearest ray distances to differ by more than `1e-9 km`; ties remain ties.\n\n");
+		Report += TEXT("Nearest-hit is computed as a parallel diagnostic for both `cross_plate_different` and `third_plate` holds. It is not a remesh source-selection rule for this commandlet, which runs with `bEnablePhaseIIIE3NearestHitTieBreak = false` and `bEnablePhaseIIIE3DistanceTieFallback = false` so the historical 24,600-hold distribution is preserved as the diagnostic baseline. A unique nearest requires the nearest and second-nearest ray distances to differ by more than `1e-9 km`; ties remain ties.\n\n");
 		Report += TEXT("| Scenario | Unique nearest crossDiff | Distance tie crossDiff | Unique nearest thirdPlate | Distance tie thirdPlate | More continental | Older oceanic | Lower plate id | Median gap km | P95 gap km |\n");
 		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
 		for (const FScenarioResult& Scenario : Scenarios)
