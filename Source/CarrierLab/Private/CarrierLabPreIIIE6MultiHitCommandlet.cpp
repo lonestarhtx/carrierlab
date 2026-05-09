@@ -182,6 +182,10 @@ namespace
 		Actor->Seed = 42;
 		Actor->ContinentalPlateFraction = FMath::Clamp(ContinentalPlateFraction, 0.0, 1.0);
 		Actor->bEnableNaturalResamplingEvents = false;
+		// Pre-IIIE.6.1 is the historical same-plate coalescing audit; keep
+		// later shared-boundary/nearest-hit resolvers disabled so its baseline
+		// buckets remain reproducible while IIIE.6.5 is default-on elsewhere.
+		Actor->bEnablePhaseIIIE3NearestHitTieBreak = false;
 		Actor->ConfigurePhaseIIICProcessLayer(true, false);
 		Actor->FinishSpawning(FTransform::Identity);
 		return Actor;

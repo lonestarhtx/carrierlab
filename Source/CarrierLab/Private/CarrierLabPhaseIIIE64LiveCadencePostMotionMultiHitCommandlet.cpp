@@ -196,6 +196,7 @@ namespace
 		Actor->bEnableNaturalResamplingEvents = false;
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = true;
 		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
+		Actor->bEnablePhaseIIIE3NearestHitTieBreak = false;
 		Actor->ConfigurePhaseIIICProcessLayer(true, false);
 		Actor->FinishSpawning(FTransform::Identity);
 		return Actor;
@@ -401,6 +402,8 @@ namespace
 		HashMix(Hash, static_cast<uint64>(Result.Audit.ProcessMarkedHoldCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.Audit.UniqueNearestCrossPlateDifferentCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.Audit.DistanceTieCrossPlateDifferentCount + 1));
+		HashMix(Hash, static_cast<uint64>(Result.Audit.UniqueNearestThirdPlateCount + 1));
+		HashMix(Hash, static_cast<uint64>(Result.Audit.DistanceTieThirdPlateCount + 1));
 		HashMixDouble(Hash, Result.Audit.MedianNearestDistanceGapKm);
 		HashMixDouble(Hash, Result.Audit.P95NearestDistanceGapKm);
 		for (const TCHAR Ch : Result.Audit.SelectionHash)
@@ -479,7 +482,7 @@ namespace
 	FString ScenarioJsonLine(const FScenarioResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"type\":\"scenario\",\"scenario\":%s,\"automatic\":%s,\"pass\":%s,\"applied\":%s,\"target_step\":%d,\"step_before\":%d,\"step_after\":%d,\"events_before\":%d,\"events_after\":%d,\"next_before\":%d,\"next_after\":%d,\"speed_mm_per_year\":%.17g,\"observed_window_speed_mm_per_year\":%.17g,\"cadence_delta_t_ma\":%.17g,\"cadence_steps\":%d,\"unresolved\":%d,\"cross_plate_different\":%d,\"third_plate\":%d,\"cross_plate_equal\":%d,\"coalesced\":%d,\"shared_tiebreak\":%d,\"process_marked\":%d,\"unique_nearest_cross_plate_different\":%d,\"distance_tie_cross_plate_different\":%d,\"nearest_more_continental\":%d,\"nearest_older_oceanic\":%d,\"nearest_lower_plate_id\":%d,\"median_nearest_gap_km\":%.17g,\"p95_nearest_gap_km\":%.17g,\"selection_hash\":%s,\"diagnosis_hash\":%s,\"last_remesh_mode\":%s}"),
+			TEXT("{\"type\":\"scenario\",\"scenario\":%s,\"automatic\":%s,\"pass\":%s,\"applied\":%s,\"target_step\":%d,\"step_before\":%d,\"step_after\":%d,\"events_before\":%d,\"events_after\":%d,\"next_before\":%d,\"next_after\":%d,\"speed_mm_per_year\":%.17g,\"observed_window_speed_mm_per_year\":%.17g,\"cadence_delta_t_ma\":%.17g,\"cadence_steps\":%d,\"unresolved\":%d,\"cross_plate_different\":%d,\"third_plate\":%d,\"cross_plate_equal\":%d,\"coalesced\":%d,\"shared_tiebreak\":%d,\"process_marked\":%d,\"unique_nearest_cross_plate_different\":%d,\"distance_tie_cross_plate_different\":%d,\"unique_nearest_third_plate\":%d,\"distance_tie_third_plate\":%d,\"nearest_more_continental\":%d,\"nearest_older_oceanic\":%d,\"nearest_lower_plate_id\":%d,\"median_nearest_gap_km\":%.17g,\"p95_nearest_gap_km\":%.17g,\"selection_hash\":%s,\"diagnosis_hash\":%s,\"last_remesh_mode\":%s}"),
 			*JsonString(Result.Name),
 			*BoolText(Result.bAutomatic),
 			*BoolText(Result.bPass),
@@ -504,6 +507,8 @@ namespace
 			Result.Audit.ProcessMarkedHoldCount,
 			Result.Audit.UniqueNearestCrossPlateDifferentCount,
 			Result.Audit.DistanceTieCrossPlateDifferentCount,
+			Result.Audit.UniqueNearestThirdPlateCount,
+			Result.Audit.DistanceTieThirdPlateCount,
 			Result.Audit.NearestMostContinentalCount,
 			Result.Audit.NearestOlderOceanicCount,
 			Result.Audit.NearestLowerPlateIdCount,
@@ -718,16 +723,18 @@ namespace
 		Report += TEXT("\n");
 
 		Report += TEXT("## Nearest-Hit Diagnostic\n\n");
-		Report += TEXT("Nearest-hit is computed as a parallel diagnostic for `cross_plate_different` holds only. It is not a remesh source-selection rule. A unique nearest requires the nearest and second-nearest ray distances to differ by more than `1e-9 km`; ties remain ties.\n\n");
-		Report += TEXT("| Scenario | Unique nearest | Distance tie | More continental | Older oceanic | Lower plate id | Median gap km | P95 gap km |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|\n");
+		Report += TEXT("Nearest-hit is computed as a parallel diagnostic for both `cross_plate_different` and `third_plate` holds. It is not a remesh source-selection rule for this commandlet, which runs with `bEnablePhaseIIIE3NearestHitTieBreak = false` so the historical 24,600-hold distribution is preserved as the diagnostic baseline. A unique nearest requires the nearest and second-nearest ray distances to differ by more than `1e-9 km`; ties remain ties.\n\n");
+		Report += TEXT("| Scenario | Unique nearest crossDiff | Distance tie crossDiff | Unique nearest thirdPlate | Distance tie thirdPlate | More continental | Older oceanic | Lower plate id | Median gap km | P95 gap km |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
 		for (const FScenarioResult& Scenario : Scenarios)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %d | %d | %d | %d | %d | %.6g | %.6g |\n"),
+				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %.6g | %.6g |\n"),
 				*Scenario.Name,
 				Scenario.Audit.UniqueNearestCrossPlateDifferentCount,
 				Scenario.Audit.DistanceTieCrossPlateDifferentCount,
+				Scenario.Audit.UniqueNearestThirdPlateCount,
+				Scenario.Audit.DistanceTieThirdPlateCount,
 				Scenario.Audit.NearestMostContinentalCount,
 				Scenario.Audit.NearestOlderOceanicCount,
 				Scenario.Audit.NearestLowerPlateIdCount,

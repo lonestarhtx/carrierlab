@@ -28,22 +28,22 @@ Manual rows compare before/after a same-step remesh click. The automatic row spa
 
 ## Nearest-Hit Diagnostic
 
-Nearest-hit is computed as a parallel diagnostic for `cross_plate_different` holds only. It is not a remesh source-selection rule. A unique nearest requires the nearest and second-nearest ray distances to differ by more than `1e-9 km`; ties remain ties.
+Nearest-hit is computed as a parallel diagnostic for both `cross_plate_different` and `third_plate` holds. It is not a remesh source-selection rule for this commandlet, which runs with `bEnablePhaseIIIE3NearestHitTieBreak = false` so the historical 24,600-hold distribution is preserved as the diagnostic baseline. A unique nearest requires the nearest and second-nearest ray distances to differ by more than `1e-9 km`; ties remain ties.
 
-| Scenario | Unique nearest | Distance tie | More continental | Older oceanic | Lower plate id | Median gap km | P95 gap km |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| manual_step_10 | 22697 | 2 | 0 | 0 | 11645 | 4.35571e-06 | 1.51563e-05 |
-| manual_step_20 | 22186 | 3 | 0 | 0 | 11944 | 4.41178e-06 | 1.52905e-05 |
-| manual_step_32 | 16141 | 3 | 0 | 0 | 10378 | 4.07054e-06 | 1.45231e-05 |
-| manual_step_60 | 16278 | 2 | 0 | 0 | 11640 | 4.07439e-06 | 1.43079e-05 |
-| auto_cadence_step_32 | 16141 | 3 | 0 | 0 | 10378 | 4.07054e-06 | 1.45231e-05 |
+| Scenario | Unique nearest crossDiff | Distance tie crossDiff | Unique nearest thirdPlate | Distance tie thirdPlate | More continental | Older oceanic | Lower plate id | Median gap km | P95 gap km |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| manual_step_10 | 22697 | 2 | 1578 | 0 | 0 | 0 | 11645 | 4.35571e-06 | 1.51563e-05 |
+| manual_step_20 | 22186 | 3 | 4848 | 1 | 0 | 0 | 11944 | 4.41178e-06 | 1.52905e-05 |
+| manual_step_32 | 16141 | 3 | 8455 | 1 | 0 | 0 | 10378 | 4.07054e-06 | 1.45231e-05 |
+| manual_step_60 | 16278 | 2 | 10168 | 3 | 0 | 0 | 11640 | 4.07439e-06 | 1.43079e-05 |
+| auto_cadence_step_32 | 16141 | 3 | 8455 | 1 | 0 | 0 | 10378 | 4.07054e-06 | 1.45231e-05 |
 
 ## Artifacts
 
 - JSONL metrics: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/Saved/CarrierLab/PhaseIII/IIIE64LiveCadencePostMotionMultiHit/phase-iii-slice-iiie6-4-live-cadence-post-motion-multihit-diagnosis-metrics.jsonl`
 - Spatial diagnostic PNG: `C:/Users/Michael/Documents/Unreal Projects/CarrierLab/docs/checkpoints/phase-iii-slice-iiie6-4-spatial-distribution.png`
 - PNG layout: each row is a scenario in table order; left panel colors unresolved class (`cross_plate_different` red, `third_plate` magenta), right panel colors diagnostic shape (`unique nearest` cyan, `distance tie` blue, process-marked yellow).
-- Scenario replay hash: `e90b215bc80c2919`
+- Scenario replay hash: `366ac4465ebe4176`
 
 ## Stop Conditions Preserved
 

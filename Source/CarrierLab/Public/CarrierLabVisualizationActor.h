@@ -106,6 +106,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 PhaseIIIELastSharedBoundaryTieBreakCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastNearestHitTieBreakCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
@@ -746,6 +749,15 @@ enum class ECarrierLabPhaseIIIE63SharedBoundaryTieBreakRule : uint8
 	LowerPlateId
 };
 
+enum class ECarrierLabPhaseIIIE65NearestHitResult : uint8
+{
+	NotApplied,
+	UniqueNearestCrossPlateDifferent,
+	UniqueNearestThirdPlate,
+	DistanceTieHeld,
+	UnsupportedHeld
+};
+
 enum class ECarrierLabPhaseIIIE62BarycentricShape : uint8
 {
 	Unknown,
@@ -811,6 +823,7 @@ struct FCarrierLabPhaseIIIE3SelectionRecord
 	bool bCoalescedDuplicateHit = false;
 	bool bCoalescingRejectedByFieldMismatch = false;
 	bool bUsedSharedBoundaryTieBreak = false;
+	bool bUsedNearestHitTieBreak = false;
 	bool bUsedPolicyWinner = false;
 	bool bUsedPriorOwnerFallback = false;
 	ECarrierLabPhaseIIIE62HoldShape SharedBoundaryShapeClass = ECarrierLabPhaseIIIE62HoldShape::InvalidOrUnclassified;
@@ -822,6 +835,12 @@ struct FCarrierLabPhaseIIIE3SelectionRecord
 	TArray<int32> SharedBoundaryCandidatePlateIds;
 	TArray<double> SharedBoundaryCandidateContinentalFractions;
 	TArray<double> SharedBoundaryCandidateOceanicAges;
+	ECarrierLabPhaseIIIE65NearestHitResult NearestHitResultClass = ECarrierLabPhaseIIIE65NearestHitResult::NotApplied;
+	double NearestHitGapKm = 0.0;
+	double NearestHitToleranceKm = 0.0;
+	int32 NearestHitCandidateCount = 0;
+	int32 NearestHitDistinctPlateCount = 0;
+	int32 NearestHitProcessMarkedRefCount = 0;
 	int32 ResolvedPlateId = INDEX_NONE;
 	int32 ResolvedLocalTriangleId = INDEX_NONE;
 	FVector3d ResolvedBary = FVector3d(1.0, 0.0, 0.0);
@@ -873,6 +892,11 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 SharedBoundaryContinentalPriorityCount = 0;
 	int32 SharedBoundaryOlderOceanicAgeCount = 0;
 	int32 SharedBoundaryLowerPlateIdCount = 0;
+	int32 NearestHitCrossPlateDifferentResolvedCount = 0;
+	int32 NearestHitThirdPlateResolvedCount = 0;
+	int32 NearestHitDistanceTieHeldCount = 0;
+	int32 NearestHitUnsupportedHeldCount = 0;
+	bool bNearestHitTieBreakDisabled = false;
 	double MaxMultiHitRayDistanceResidualKm = 0.0;
 	double MaxMultiHitScalarResidual = 0.0;
 	double MaxMultiHitElevationResidualKm = 0.0;
@@ -2196,6 +2220,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bEnablePhaseIIIE3NearestHitTieBreak = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICTrenchDepthKm = -10.0;
