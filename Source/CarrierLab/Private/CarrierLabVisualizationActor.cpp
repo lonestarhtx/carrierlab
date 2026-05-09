@@ -3835,6 +3835,7 @@ namespace
 		const ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass,
 		const FCarrierLabPhaseIIIE2BoundaryQueryAudit& BoundaryAudit,
 		const double SignedSeparationVelocity,
+		const bool bRestoreNonSeparatingAnomalyVeto,
 		FCarrierLabPhaseIIIE4OceanicGenerationRecord& OutRecord)
 	{
 		OutRecord = FCarrierLabPhaseIIIE4OceanicGenerationRecord();
@@ -3870,8 +3871,12 @@ namespace
 
 		if (!(SignedSeparationVelocity > 0.0))
 		{
-			OutRecord.bNonSeparatingAnomaly = true;
-			return;
+			if (bRestoreNonSeparatingAnomalyVeto)
+			{
+				OutRecord.bNonSeparatingAnomaly = true;
+				return;
+			}
+			OutRecord.bGeneratedWithNonPositiveSeparation = true;
 		}
 
 		const double QDistanceDenominator = BoundaryAudit.Q1DistanceKm + BoundaryAudit.Q2DistanceKm;
@@ -6576,7 +6581,13 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE4DivergentOceanicFieldsForTest
 	{
 		QueryPhaseIIIE2ContinuousBoundaryPairForTest(SamplePosition, BoundaryEdges, BoundaryAudit);
 	}
-	PopulatePhaseIIIE4OceanicRecord(SamplePosition, SourceSelectionClass, BoundaryAudit, SignedSeparationVelocity, OutRecord);
+	PopulatePhaseIIIE4OceanicRecord(
+		SamplePosition,
+		SourceSelectionClass,
+		BoundaryAudit,
+		SignedSeparationVelocity,
+		bRestoreNonSeparatingAnomalyVeto,
+		OutRecord);
 	return true;
 }
 
@@ -6603,7 +6614,13 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE4DivergentOceanicFieldsFromCur
 			BoundaryAudit.Q1PlateId,
 			BoundaryAudit.Q2PlateId)
 		: 0.0;
-	PopulatePhaseIIIE4OceanicRecord(SamplePosition, SourceSelectionClass, BoundaryAudit, SignedSeparationVelocity, OutRecord);
+	PopulatePhaseIIIE4OceanicRecord(
+		SamplePosition,
+		SourceSelectionClass,
+		BoundaryAudit,
+		SignedSeparationVelocity,
+		bRestoreNonSeparatingAnomalyVeto,
+		OutRecord);
 	return true;
 }
 
@@ -7801,6 +7818,9 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE67ApplyPathInvalidRecordsDiagnos
 	OutAudit.SelectionUnresolvedMultiHitCount = SelectionAudit.UnresolvedMultiHitCount;
 	OutAudit.SelectionHash = SelectionAudit.SelectionHash;
 	OutAudit.SpatialInvalidCounts.Init(0, 12 * 6);
+	TArray<int32> SpatialGeneratedNonPositiveCounts;
+	SpatialGeneratedNonPositiveCounts.Init(0, 12 * 6);
+	TArray<double> NonPositiveSeparationMagnitudes;
 
 	TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord> VertexRecords;
 	VertexRecords.SetNum(State.Samples.Num());
@@ -7930,7 +7950,9 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE67ApplyPathInvalidRecordsDiagnos
 		{
 			Record.bBoundaryPairFound = OceanicRecord->bBoundaryPairFound;
 			Record.bNonSeparatingAnomaly = OceanicRecord->bNonSeparatingAnomaly;
+			Record.bGeneratedWithNonPositiveSeparation = OceanicRecord->bGeneratedWithNonPositiveSeparation;
 			Record.bGeneratedOceanicCrust = OceanicRecord->bGeneratedOceanicCrust;
+			Record.SignedSeparationVelocity = OceanicRecord->SignedSeparationVelocity;
 		}
 
 		if (!State.Samples.IsValidIndex(SelectionRecord.SampleId))
@@ -8063,6 +8085,21 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE67ApplyPathInvalidRecordsDiagnos
 			}
 
 			++OutAudit.GeneratedCandidateCount;
+			if (OceanicRecord.bGeneratedWithNonPositiveSeparation)
+			{
+				++OutAudit.GeneratedWithNonPositiveSeparationCount;
+				NonPositiveSeparationMagnitudes.Add(FMath::Abs(OceanicRecord.SignedSeparationVelocity));
+				const FVector3d Unit = Sample.UnitPosition.GetSafeNormal();
+				const double LatitudeDegrees = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Unit.Z, -1.0, 1.0)));
+				const double LongitudeDegrees = FMath::RadiansToDegrees(FMath::Atan2(Unit.Y, Unit.X));
+				const int32 SpatialLonBin = FMath::Clamp(FMath::FloorToInt((LongitudeDegrees + 180.0) / 30.0), 0, 11);
+				const int32 SpatialLatBin = FMath::Clamp(FMath::FloorToInt((LatitudeDegrees + 90.0) / 30.0), 0, 5);
+				const int32 SpatialIndex = SpatialLatBin * 12 + SpatialLonBin;
+				if (SpatialGeneratedNonPositiveCounts.IsValidIndex(SpatialIndex))
+				{
+					++SpatialGeneratedNonPositiveCounts[SpatialIndex];
+				}
+			}
 			VertexRecord.bResolvedSingleHit = false;
 			VertexRecord.bDivergentGapRoute = true;
 			VertexRecord.OceanicRecord = OceanicRecord;
@@ -8108,6 +8145,16 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE67ApplyPathInvalidRecordsDiagnos
 	}
 	OutAudit.RecordBuildSeconds = FPlatformTime::Seconds() - RecordBuildStartSeconds;
 	OutAudit.TotalSeconds = FPlatformTime::Seconds() - TotalStartSeconds;
+	if (NonPositiveSeparationMagnitudes.Num() > 0)
+	{
+		NonPositiveSeparationMagnitudes.Sort();
+		OutAudit.NonPositiveSeparationMinMagnitude = NonPositiveSeparationMagnitudes[0];
+		OutAudit.NonPositiveSeparationMaxMagnitude = NonPositiveSeparationMagnitudes.Last();
+		const int32 MedianIndex = NonPositiveSeparationMagnitudes.Num() / 2;
+		OutAudit.NonPositiveSeparationMedianMagnitude = (NonPositiveSeparationMagnitudes.Num() % 2) == 0
+			? 0.5 * (NonPositiveSeparationMagnitudes[MedianIndex - 1] + NonPositiveSeparationMagnitudes[MedianIndex])
+			: NonPositiveSeparationMagnitudes[MedianIndex];
+	}
 
 	uint64 Hash = 1469598103934665603ull;
 	HashMixString(Hash, TEXT("CarrierLab-IIIE67-apply-invalid-records-v1"));
@@ -8120,6 +8167,18 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE67ApplyPathInvalidRecordsDiagnos
 	HashMix(Hash, static_cast<uint64>(OutAudit.AppliedGeneratedCount + 1));
 	HashMix(Hash, static_cast<uint64>(OutAudit.RiftingPendingCount + 1));
 	HashMix(Hash, static_cast<uint64>(OutAudit.InvalidWithAnyProcessFilterCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.GeneratedWithNonPositiveSeparationCount + 1));
+	HashMixDouble(Hash, OutAudit.NonPositiveSeparationMinMagnitude);
+	HashMixDouble(Hash, OutAudit.NonPositiveSeparationMedianMagnitude);
+	HashMixDouble(Hash, OutAudit.NonPositiveSeparationMaxMagnitude);
+	uint64 NonPositiveSpatialHash = 1469598103934665603ull;
+	HashMixString(NonPositiveSpatialHash, TEXT("CarrierLab-IIIE67-nonpositive-spatial-v1"));
+	for (const int32 Count : SpatialGeneratedNonPositiveCounts)
+	{
+		HashMix(NonPositiveSpatialHash, static_cast<uint64>(Count + 1));
+	}
+	OutAudit.NonPositiveSeparationSpatialHash = HashToString(NonPositiveSpatialHash);
+	HashMixString(Hash, OutAudit.NonPositiveSeparationSpatialHash);
 	for (const FCarrierLabPhaseIIIE67InvalidRecord& Record : OutAudit.Records)
 	{
 		HashMix(Hash, static_cast<uint64>(Record.SampleId + 2));
@@ -12474,6 +12533,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.PhaseIIIELastGeneratedCandidateCount = 0;
 	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = 0;
 	CurrentMetrics.PhaseIIIELastRiftingPendingCount = 0;
+	CurrentMetrics.PhaseIIIELastGeneratedWithNonPositiveSeparationCount = 0;
 	CurrentMetrics.PhaseIIIELastInvalidRecordCount = 0;
 	CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount = 0;
 	CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount = 0;
@@ -12566,6 +12626,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	int32 GeneratedCandidateCount = 0;
 	int32 AppliedGeneratedCount = 0;
 	int32 RiftingPendingCount = 0;
+	int32 GeneratedWithNonPositiveSeparationCount = 0;
 
 	for (const FCarrierLabPhaseIIIE3SelectionRecord& SelectionRecord : SelectionAudit.Records)
 	{
@@ -12623,6 +12684,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 			}
 
 			++GeneratedCandidateCount;
+			GeneratedWithNonPositiveSeparationCount += OceanicRecord.bGeneratedWithNonPositiveSeparation ? 1 : 0;
 			VertexRecord.bResolvedSingleHit = false;
 			VertexRecord.bDivergentGapRoute = true;
 			VertexRecord.OceanicRecord = OceanicRecord;
@@ -12668,6 +12730,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 
 	CurrentMetrics.LastNonSeparatingGapFillCount = NonSeparatingGapFillCount;
 	CurrentMetrics.LastNoBoundaryPairMissCount = NoBoundaryPairMissCount;
+	CurrentMetrics.PhaseIIIELastGeneratedWithNonPositiveSeparationCount = GeneratedWithNonPositiveSeparationCount;
 	CurrentMetrics.PhaseIIIELastGeneratedCandidateCount = GeneratedCandidateCount;
 	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = AppliedGeneratedCount;
 	CurrentMetrics.PhaseIIIELastRiftingPendingCount = RiftingPendingCount;
@@ -12720,6 +12783,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.LastGapFillCount = GeneratedCandidateCount;
 	CurrentMetrics.LastNonSeparatingGapFillCount = NonSeparatingGapFillCount;
 	CurrentMetrics.LastNoBoundaryPairMissCount = NoBoundaryPairMissCount;
+	CurrentMetrics.PhaseIIIELastGeneratedWithNonPositiveSeparationCount = GeneratedWithNonPositiveSeparationCount;
 	CurrentMetrics.PolicyResolvedMultiHitCount = SelectionAudit.PolicyWinnerCount + RebuildAudit.PolicyWinnerCount;
 	CurrentMetrics.PhaseIIIELastGeneratedCandidateCount = GeneratedCandidateCount;
 	CurrentMetrics.PhaseIIIELastAppliedGeneratedCount = AppliedGeneratedCount;
@@ -12737,10 +12801,11 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.PhaseIIIELastThirdPlateHoldCount = 0;
 	CurrentMetrics.PhaseIIIELastTripleJunctionSplitCount = RebuildAudit.TripleJunctionCentroidSplitCount;
 	CurrentMetrics.LastRemeshMode = FString::Printf(
-		TEXT("phase_iii_e6_live gen=%d applied=%d rift_pending=%d coalesced=%d shared_tiebreak=%d nearest_hit=%d distance_tie_fallback=%d majority=%d tj_split=%d"),
+		TEXT("phase_iii_e6_live_apply gen=%d applied=%d rift_pending=%d nonpos_sep=%d coalesced=%d shared_tiebreak=%d nearest_hit=%d distance_tie_fallback=%d majority=%d tj_split=%d"),
 		GeneratedCandidateCount,
 		AppliedGeneratedCount,
 		RiftingPendingCount,
+		GeneratedWithNonPositiveSeparationCount,
 		SelectionAudit.CoalescedMultiHitCount,
 		SelectionAudit.SharedBoundaryTieBreakCount,
 		CurrentMetrics.PhaseIIIELastNearestHitTieBreakCount,
@@ -15721,7 +15786,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 	}
 
 	return FString::Printf(
-		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d iiie_auto_remesh=%s cadence=%d steps / %.1f Ma vmax/current=%.3f/%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d nonsep_gap=%d no_boundary_pair=%d policy_multi=%d nan=%d\niiie gen/apply/rift/invalid/hold/coalesced/shared/nearest/dtie/tj=%d/%d/%d/%d/%d/%d/%d/%d/%d/%d hold_buckets within/crossEq/third=%d/%d/%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R IIIE.6 remesh | 1-9/0 layers | O ocean age | G ridge"),
+		TEXT("CarrierLab Phase III Viewer | %s | layer=%s\nstep=%d next_resample=%d events=%d iiie_auto_remesh=%s cadence=%d steps / %.1f Ma vmax/current=%.3f/%.3f mm/yr\nsamples=%d plates=%d miss=%d multi=%d boundary_vertices=%d boundary_degenerate=%d gap_fill=%d legacy_nonsep_hold=%d no_boundary_pair=%d policy_multi=%d nan=%d\niiie gen/apply/rift/nonpos/invalid/hold/coalesced/shared/nearest/dtie/tj=%d/%d/%d/%d/%d/%d/%d/%d/%d/%d/%d hold_buckets within/crossEq/third=%d/%d/%d\nphaseIII active=%d dist_records=%d matrix_pairs/evidence=%d/%d hits=%d sub/obd/coll=%d/%d/%d reset=%d\ncrust ocean=%d ridge=%d fold=%d hist=%d elev=[%.3f, %.3f]km max_age=%.3fMa remesh_mode=%s\nAuthCAF=%.6f ProjCAF=%.6f drift_mean=%.9fkm drift_p95=%.9fkm hash=%s crust_hash=%s conv_hash=%s\nprojection=%.3fs bvh=%.3fs query=%.3fs drift=%.3fs boundary=%.3fs hash_time=%.3fs render=%.3fs resample=%.3fs\nSpace play/pause | . step | R IIIE.6 remesh | 1-9/0 layers | O ocean age | G ridge"),
 		bPlaying ? TEXT("PLAY") : TEXT("PAUSED"),
 		LayerName,
 		CurrentMetrics.Step,
@@ -15746,6 +15811,7 @@ FString ACarrierLabVisualizationActor::BuildHudText() const
 		CurrentMetrics.PhaseIIIELastGeneratedCandidateCount,
 		CurrentMetrics.PhaseIIIELastAppliedGeneratedCount,
 		CurrentMetrics.PhaseIIIELastRiftingPendingCount,
+		CurrentMetrics.PhaseIIIELastGeneratedWithNonPositiveSeparationCount,
 		CurrentMetrics.PhaseIIIELastInvalidRecordCount,
 		CurrentMetrics.PhaseIIIELastUnresolvedMultiHitHoldCount,
 		CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount,

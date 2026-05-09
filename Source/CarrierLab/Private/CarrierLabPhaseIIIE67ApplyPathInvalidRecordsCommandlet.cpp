@@ -179,6 +179,7 @@ namespace
 	{
 		FString Name;
 		int32 TargetStep = 0;
+		bool bRestoreNonSeparatingAnomalyVeto = false;
 		bool bRan = false;
 		bool bPass = false;
 		double WarmupSeconds = 0.0;
@@ -186,11 +187,17 @@ namespace
 		FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit Audit;
 	};
 
-	bool RunScenario(UWorld& World, const FString& Name, const int32 TargetStep, FScenarioResult& OutResult)
+	bool RunScenario(
+		UWorld& World,
+		const FString& Name,
+		const int32 TargetStep,
+		const bool bRestoreNonSeparatingAnomalyVeto,
+		FScenarioResult& OutResult)
 	{
 		OutResult = FScenarioResult();
 		OutResult.Name = Name;
 		OutResult.TargetStep = TargetStep;
+		OutResult.bRestoreNonSeparatingAnomalyVeto = bRestoreNonSeparatingAnomalyVeto;
 		UE_LOG(LogTemp, Display, TEXT("CarrierLabPhaseIIIE67ApplyPathInvalidRecords: scenario start %s step=%d"), *Name, TargetStep);
 		const double ScenarioStartSeconds = FPlatformTime::Seconds();
 		ACarrierLabVisualizationActor* Actor = SpawnDefaultActor(World);
@@ -202,6 +209,7 @@ namespace
 			}
 			return false;
 		}
+		Actor->bRestoreNonSeparatingAnomalyVeto = bRestoreNonSeparatingAnomalyVeto;
 
 		const double WarmupStartSeconds = FPlatformTime::Seconds();
 		for (int32 StepIndex = 0; StepIndex < TargetStep; ++StepIndex)
@@ -214,7 +222,6 @@ namespace
 		OutResult.bPass =
 			OutResult.bRan &&
 			OutResult.Audit.SelectionUnresolvedMultiHitCount == 0 &&
-			OutResult.Audit.InvalidRecordCount > 0 &&
 			PrimaryReasonSum(OutResult.Audit) == OutResult.Audit.InvalidRecordCount;
 
 		Actor->Destroy();
@@ -222,13 +229,15 @@ namespace
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("CarrierLabPhaseIIIE67ApplyPathInvalidRecords: scenario done %s pass=%d invalid=%d no_boundary=%d nonsep=%d gen=%d applied=%d rift=%d select=%.3fs record=%.3fs query=%.3fs total=%.3fs"),
+			TEXT("CarrierLabPhaseIIIE67ApplyPathInvalidRecords: scenario done %s pass=%d restore_veto=%d invalid=%d no_boundary=%d nonsep=%d gen=%d nonpos_gen=%d applied=%d rift=%d select=%.3fs record=%.3fs query=%.3fs total=%.3fs"),
 			*Name,
 			OutResult.bPass ? 1 : 0,
+			bRestoreNonSeparatingAnomalyVeto ? 1 : 0,
 			OutResult.Audit.InvalidRecordCount,
 			OutResult.Audit.DivergentGapNoBoundaryPairCount,
 			OutResult.Audit.DivergentGapNonSeparatingCount,
 			OutResult.Audit.GeneratedCandidateCount,
+			OutResult.Audit.GeneratedWithNonPositiveSeparationCount,
 			OutResult.Audit.AppliedGeneratedCount,
 			OutResult.Audit.RiftingPendingCount,
 			OutResult.Audit.SelectionSeconds,
@@ -246,13 +255,15 @@ namespace
 			A.Audit.DiagnosisHash == B.Audit.DiagnosisHash &&
 			A.Audit.InvalidRecordCount == B.Audit.InvalidRecordCount &&
 			A.Audit.DivergentGapNoBoundaryPairCount == B.Audit.DivergentGapNoBoundaryPairCount &&
-			A.Audit.DivergentGapNonSeparatingCount == B.Audit.DivergentGapNonSeparatingCount;
+			A.Audit.DivergentGapNonSeparatingCount == B.Audit.DivergentGapNonSeparatingCount &&
+			A.Audit.GeneratedWithNonPositiveSeparationCount == B.Audit.GeneratedWithNonPositiveSeparationCount &&
+			A.Audit.NonPositiveSeparationSpatialHash == B.Audit.NonPositiveSeparationSpatialHash;
 	}
 
 	FString InvalidRecordJsonLine(const FString& ScenarioName, const FCarrierLabPhaseIIIE67InvalidRecord& Record)
 	{
 		return FString::Printf(
-			TEXT("{\"type\":\"invalid_record\",\"scenario\":%s,\"sample_id\":%d,\"step\":%d,\"reason\":%s,\"selection_class\":%s,\"bucket\":%s,\"resolved_plate_id\":%d,\"oceanic_assigned_plate_id\":%d,\"raw_candidates\":%d,\"post_filter_candidates\":%d,\"filtered_subducting\":%d,\"filtered_obduction\":%d,\"filtered_collision\":%d,\"boundary_pair_found\":%s,\"nonseparating\":%s,\"generated_oceanic\":%s,\"sample_unit_valid\":%s,\"sample_fields_valid\":%s,\"continental_fraction\":%.17g,\"elevation\":%.17g,\"historical_elevation\":%.17g,\"oceanic_age\":%.17g,\"latitude\":%.17g,\"longitude\":%.17g,\"spatial_lon_bin\":%d,\"spatial_lat_bin\":%d}"),
+			TEXT("{\"type\":\"invalid_record\",\"scenario\":%s,\"sample_id\":%d,\"step\":%d,\"reason\":%s,\"selection_class\":%s,\"bucket\":%s,\"resolved_plate_id\":%d,\"oceanic_assigned_plate_id\":%d,\"raw_candidates\":%d,\"post_filter_candidates\":%d,\"filtered_subducting\":%d,\"filtered_obduction\":%d,\"filtered_collision\":%d,\"boundary_pair_found\":%s,\"nonseparating\":%s,\"generated_nonpositive_separation\":%s,\"generated_oceanic\":%s,\"signed_separation_velocity\":%.17g,\"sample_unit_valid\":%s,\"sample_fields_valid\":%s,\"continental_fraction\":%.17g,\"elevation\":%.17g,\"historical_elevation\":%.17g,\"oceanic_age\":%.17g,\"latitude\":%.17g,\"longitude\":%.17g,\"spatial_lon_bin\":%d,\"spatial_lat_bin\":%d}"),
 			*JsonString(ScenarioName),
 			Record.SampleId,
 			Record.Step,
@@ -268,7 +279,9 @@ namespace
 			Record.FilteredCollisionPendingCount,
 			*BoolText(Record.bBoundaryPairFound),
 			*BoolText(Record.bNonSeparatingAnomaly),
+			*BoolText(Record.bGeneratedWithNonPositiveSeparation),
 			*BoolText(Record.bGeneratedOceanicCrust),
+			Record.SignedSeparationVelocity,
 			*BoolText(Record.bSampleUnitValid),
 			*BoolText(Record.bSampleFieldsValid),
 			Record.ContinentalFraction,
@@ -285,9 +298,10 @@ namespace
 	{
 		const FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit& A = Result.Audit;
 		return FString::Printf(
-			TEXT("{\"type\":\"scenario\",\"name\":%s,\"pass\":%s,\"target_step\":%d,\"sample_count\":%d,\"plate_count\":%d,\"selection_resolved\":%d,\"selection_gaps\":%d,\"selection_unresolved\":%d,\"invalid_records\":%d,\"reason_sum\":%d,\"invalid_sample_index\":%d,\"invalid_unit_anomaly\":%d,\"field_anomaly\":%d,\"resolved_invalid_plate\":%d,\"no_boundary_pair\":%d,\"nonseparating\":%d,\"generation_other_failure\":%d,\"invalid_assigned_plate\":%d,\"unhandled_selection\":%d,\"generated\":%d,\"applied_generated\":%d,\"rifting_pending\":%d,\"invalid_nohit_gap\":%d,\"invalid_filter_exhausted_gap\":%d,\"invalid_resolved_single\":%d,\"invalid_unhandled_selection_class\":%d,\"invalid_any_process_filter\":%d,\"invalid_subducting_filter\":%d,\"invalid_obduction_filter\":%d,\"invalid_collision_filter\":%d,\"rifting_any_process_filter\":%d,\"warmup_seconds\":%.6f,\"total_seconds\":%.6f,\"selection_seconds\":%.6f,\"record_build_seconds\":%.6f,\"divergent_query_seconds\":%.6f,\"resolved_record_seconds\":%.6f,\"validation_seconds\":%.6f,\"selection_hash\":%s,\"diagnosis_hash\":%s}"),
+			TEXT("{\"type\":\"scenario\",\"name\":%s,\"pass\":%s,\"restore_nonseparating_veto\":%s,\"target_step\":%d,\"sample_count\":%d,\"plate_count\":%d,\"selection_resolved\":%d,\"selection_gaps\":%d,\"selection_unresolved\":%d,\"invalid_records\":%d,\"reason_sum\":%d,\"invalid_sample_index\":%d,\"invalid_unit_anomaly\":%d,\"field_anomaly\":%d,\"resolved_invalid_plate\":%d,\"no_boundary_pair\":%d,\"nonseparating\":%d,\"generation_other_failure\":%d,\"invalid_assigned_plate\":%d,\"unhandled_selection\":%d,\"generated\":%d,\"generated_nonpositive_separation\":%d,\"nonpositive_separation_min_abs\":%.12g,\"nonpositive_separation_median_abs\":%.12g,\"nonpositive_separation_max_abs\":%.12g,\"nonpositive_separation_spatial_hash\":%s,\"applied_generated\":%d,\"rifting_pending\":%d,\"invalid_nohit_gap\":%d,\"invalid_filter_exhausted_gap\":%d,\"invalid_resolved_single\":%d,\"invalid_unhandled_selection_class\":%d,\"invalid_any_process_filter\":%d,\"invalid_subducting_filter\":%d,\"invalid_obduction_filter\":%d,\"invalid_collision_filter\":%d,\"rifting_any_process_filter\":%d,\"warmup_seconds\":%.6f,\"total_seconds\":%.6f,\"selection_seconds\":%.6f,\"record_build_seconds\":%.6f,\"divergent_query_seconds\":%.6f,\"resolved_record_seconds\":%.6f,\"validation_seconds\":%.6f,\"selection_hash\":%s,\"diagnosis_hash\":%s}"),
 			*JsonString(Result.Name),
 			*BoolText(Result.bPass),
+			*BoolText(Result.bRestoreNonSeparatingAnomalyVeto),
 			Result.TargetStep,
 			A.SampleCount,
 			A.PlateCount,
@@ -306,6 +320,11 @@ namespace
 			A.GeneratedGapInvalidAssignedPlateCount,
 			A.UnhandledSelectionClassCount,
 			A.GeneratedCandidateCount,
+			A.GeneratedWithNonPositiveSeparationCount,
+			A.NonPositiveSeparationMinMagnitude,
+			A.NonPositiveSeparationMedianMagnitude,
+			A.NonPositiveSeparationMaxMagnitude,
+			*JsonString(A.NonPositiveSeparationSpatialHash),
 			A.AppliedGeneratedCount,
 			A.RiftingPendingCount,
 			A.InvalidNoHitDivergentGapCount,
@@ -380,13 +399,13 @@ namespace
 		const bool bPass = bAllScenariosPass && bReplayPass;
 
 		FString Report;
-		Report += TEXT("# Phase IIIE.6.7 Apply-Path Invalid Records Diagnosis\n\n");
+		Report += TEXT("# Phase IIIE.6.7 / IIIE.6.9 Apply-Path Invalid Records Diagnosis\n\n");
 		Report += FString::Printf(
-			TEXT("**Verdict:** %s / DIAGNOSTIC ONLY. IIIE.6.6 closes selection multi-hit holds; IIIE.6.7 classifies the later live-apply vertex-record-builder invalid-record gate and does not change remesh behavior.\n\n"),
+			TEXT("**Verdict:** %s / PAPER-LITERAL ZERO-HIT CHECK. IIIE.6.6 closes selection multi-hit holds; IIIE.6.9 demotes the CarrierLab-invented non-positive-separation veto to an opt-in historical baseline and records generated non-positive-separation samples diagnostically.\n\n"),
 			bPass ? TEXT("PASS") : TEXT("FAIL"));
 
 		Report += TEXT("## Exact Validation Check\n\n");
-		Report += TEXT("The live apply path increments `InvalidRecordCount` in the vertex-record builder loop and then holds here:\n\n");
+		Report += TEXT("The live apply path still increments `InvalidRecordCount` for true invalid vertex records and holds here. Under default IIIE.6.9 behavior, non-positive signed separation is no longer one of those invalid reasons; the restored-veto scenario below intentionally re-enables the old IIIE.4 hold for baseline reproducibility.\n\n");
 		Report += TEXT("```cpp\n");
 		Report += TEXT("CurrentMetrics.PhaseIIIELastInvalidRecordCount = InvalidRecordCount;\n");
 		Report += TEXT("if (InvalidRecordCount > 0)\n");
@@ -404,7 +423,7 @@ namespace
 		Report += TEXT("    return false;\n");
 		Report += TEXT("}\n");
 		Report += TEXT("```\n\n");
-		Report += TEXT("Primary invalid reasons below correspond to the individual `++InvalidRecordCount; continue;` sites before that hold. Sample unit/field columns are diagnostic anomaly flags among those invalid records, not new behavior.\n\n");
+		Report += TEXT("Primary invalid reasons below correspond to the individual `++InvalidRecordCount; continue;` sites before that hold. Sample unit/field columns are diagnostic anomaly flags among those invalid records. `Generated with non-positive separation` is an observability counter, not an invalid-record reason under default behavior.\n\n");
 
 		Report += TEXT("## Scenario Summary\n\n");
 		Report += TEXT("| Scenario | Result | Evidence |\n");
@@ -413,16 +432,18 @@ namespace
 		{
 			const FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit& A = Result.Audit;
 			Report += FString::Printf(
-				TEXT("| %s | %s | step `%d`, selection resolved/gap/unresolved `%d/%d/%d`, invalid `%d`, primary sum `%d`, gen/applied/rift `%d/%d/%d`, noBoundary/nonsep/other `%d/%d/%d`, invalid assigned `%d`, unhandled `%d`, process any/sub/obd/coll `%d/%d/%d/%d`, hashes `%s/%s` |\n"),
+				TEXT("| %s | %s | step `%d`, restore-veto `%d`, selection resolved/gap/unresolved `%d/%d/%d`, invalid `%d`, primary sum `%d`, gen/nonpos/applied/rift `%d/%d/%d/%d`, noBoundary/nonsep/other `%d/%d/%d`, invalid assigned `%d`, unhandled `%d`, process any/sub/obd/coll `%d/%d/%d/%d`, nonpos min/median/max `%g/%g/%g`, spatial `%s`, hashes `%s/%s` |\n"),
 				*Result.Name,
 				*PassFail(Result.bPass),
 				A.Step,
+				Result.bRestoreNonSeparatingAnomalyVeto ? 1 : 0,
 				A.SelectionResolvedSingleHitCount,
 				A.SelectionDivergentGapRouteCount,
 				A.SelectionUnresolvedMultiHitCount,
 				A.InvalidRecordCount,
 				PrimaryReasonSum(A),
 				A.GeneratedCandidateCount,
+				A.GeneratedWithNonPositiveSeparationCount,
 				A.AppliedGeneratedCount,
 				A.RiftingPendingCount,
 				A.DivergentGapNoBoundaryPairCount,
@@ -434,24 +455,29 @@ namespace
 				A.InvalidWithSubductingFilterCount,
 				A.InvalidWithObductionFilterCount,
 				A.InvalidWithCollisionFilterCount,
+				A.NonPositiveSeparationMinMagnitude,
+				A.NonPositiveSeparationMedianMagnitude,
+				A.NonPositiveSeparationMaxMagnitude,
+				*A.NonPositiveSeparationSpatialHash,
 				*A.SelectionHash,
 				*A.DiagnosisHash);
 		}
 		Report += FString::Printf(TEXT("\nSame-seed replay: **%s**.\n\n"), *PassFail(bReplayPass));
 
 		Report += TEXT("## Reason Distribution\n\n");
-		Report += TEXT("| Scenario | Invalid sample | Resolved bad plate | No boundary pair | Non-separating | Other generation failure | Generated bad plate | Unhandled class | Unit anomaly | Field anomaly |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		Report += TEXT("| Scenario | Invalid sample | Resolved bad plate | No boundary pair | Non-separating invalid | Generated with non-positive separation | Other generation failure | Generated bad plate | Unhandled class | Unit anomaly | Field anomaly |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
 		for (const FScenarioResult& Result : Results)
 		{
 			const FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit& A = Result.Audit;
 			Report += FString::Printf(
-				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n"),
+				TEXT("| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n"),
 				*Result.Name,
 				A.InvalidSampleIndexCount,
 				A.ResolvedHitInvalidPlateCount,
 				A.DivergentGapNoBoundaryPairCount,
 				A.DivergentGapNonSeparatingCount,
+				A.GeneratedWithNonPositiveSeparationCount,
 				A.DivergentGapGenerationOtherFailureCount,
 				A.GeneratedGapInvalidAssignedPlateCount,
 				A.UnhandledSelectionClassCount,
@@ -518,16 +544,16 @@ namespace
 
 		Report += TEXT("## Artifacts\n\n");
 		Report += FString::Printf(TEXT("- JSONL metrics: `%s`\n"), *MetricsPath);
-		Report += TEXT("- JSONL includes one `scenario` row per run and one `invalid_record` row per invalid sample with reason, process-filter counters, source selection class, and spatial bin.\n\n");
+		Report += TEXT("- JSONL includes one `scenario` row per run and one `invalid_record` row per invalid sample with reason, process-filter counters, source selection class, and spatial bin. Default paper-literal runs may have zero `invalid_record` rows; restored-veto runs preserve the older non-separating invalid sample rows.\n\n");
 
 		Report += TEXT("## Stop Conditions Preserved\n\n");
-		Report += TEXT("- Diagnose only: no invalid-record fix, no Stage 1.5 fallback, no remesh mutation promotion.\n");
+		Report += TEXT("- No Stage 1.5 fallback and no prior-owner retention. The only behavior change is removal of the default non-positive-separation veto from zero-hit gap generation.\n");
 		Report += TEXT("- Stop if primary invalid reasons do not sum exactly to the live `InvalidRecordCount`.\n");
 		Report += TEXT("- Stop if selection unresolved multi-hit reappears; that would regress IIIE.6.6 rather than diagnose apply-path records.\n");
 		Report += TEXT("- Stop if invalid records correlate heavily with process-filtered candidates; that redirects the next slice toward IIIB/IIIC/IIID marking rather than continuous boundary-pair generation.\n\n");
 
 		Report += TEXT("## Recommendation\n\n");
-		Report += TEXT("Use this report to choose the next implementation slice. If invalids are dominated by `divergent_gap_no_boundary_pair`, the next slice should inspect why the current-state continuous boundary-pair builder cannot find two plate frontiers for valid divergent-gap routes after motion. If invalids are dominated by `divergent_gap_nonseparating`, the next slice should inspect signed separation/ridge-direction eligibility. Do not relax the invalid-record hold until the dominant reason is fixed or explicitly approved as a named lab policy.\n");
+		Report += TEXT("Default paper-literal runs should have zero invalid records from the former `divergent_gap_nonseparating` class while reporting how many samples generated with non-positive signed separation. If any default run still has invalid records, inspect its remaining reason distribution before treating live cadence as visually unblocked. The restored-veto scenario is a historical baseline only.\n");
 		return Report;
 	}
 }
@@ -553,26 +579,38 @@ int32 UCarrierLabPhaseIIIE67ApplyPathInvalidRecordsCommandlet::Main(const FStrin
 	IFileManager::Get().MakeDirectory(*OutputDir, true);
 	const FString MetricsPath = OutputDir / TEXT("metrics.jsonl");
 
-	const TArray<TPair<FString, int32>> ScenarioSpecs = {
-		TPair<FString, int32>(TEXT("manual_step_60_apply_record_builder"), 60),
-		TPair<FString, int32>(TEXT("manual_step_60_replay_apply_record_builder"), 60)
+	struct FScenarioSpec
+	{
+		FString Name;
+		int32 Step = 0;
+		bool bRestoreNonSeparatingAnomalyVeto = false;
+	};
+	const TArray<FScenarioSpec> ScenarioSpecs = {
+		{ TEXT("manual_step_60_paper_literal_record_builder"), 60, false },
+		{ TEXT("manual_step_60_paper_literal_replay_record_builder"), 60, false },
+		{ TEXT("manual_step_60_restored_veto_baseline_record_builder"), 60, true }
 	};
 
 	TArray<FScenarioResult> Results;
-	for (const TPair<FString, int32>& ScenarioSpec : ScenarioSpecs)
+	for (const FScenarioSpec& ScenarioSpec : ScenarioSpecs)
 	{
 		FScenarioResult Result;
-		RunScenario(*World, ScenarioSpec.Key, ScenarioSpec.Value, Result);
+		RunScenario(
+			*World,
+			ScenarioSpec.Name,
+			ScenarioSpec.Step,
+			ScenarioSpec.bRestoreNonSeparatingAnomalyVeto,
+			Result);
 		Results.Add(Result);
 	}
 
 	const FScenarioResult* Step60 = Results.FindByPredicate([](const FScenarioResult& Result)
 	{
-		return Result.Name == TEXT("manual_step_60_apply_record_builder");
+		return Result.Name == TEXT("manual_step_60_paper_literal_record_builder");
 	});
 	const FScenarioResult* Step60Replay = Results.FindByPredicate([](const FScenarioResult& Result)
 	{
-		return Result.Name == TEXT("manual_step_60_replay_apply_record_builder");
+		return Result.Name == TEXT("manual_step_60_paper_literal_replay_record_builder");
 	});
 	const bool bReplayPass = Step60 != nullptr && Step60Replay != nullptr && ReplayMatches(*Step60, *Step60Replay);
 

@@ -211,8 +211,10 @@ namespace
 		TArray<FCarrierLabPhaseIIIE2BoundaryEdgeProbe> Edges;
 		ECarrierLabPhaseIIIE3SelectionClass SourceSelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
 		double SignedSeparationVelocity = 0.002;
+		bool bRestoreNonSeparatingAnomalyVeto = false;
 		bool bExpectGenerated = true;
 		bool bExpectNonSeparatingAnomaly = false;
+		bool bExpectGeneratedWithNonPositiveSeparation = false;
 		bool bExpectRejectedNonDivergentRoute = false;
 		bool bExpectRejectedUnresolvedMultiHit = false;
 		bool bExpectBoundaryPairFound = true;
@@ -362,6 +364,7 @@ namespace
 		HashMix(Hash, Record.bRejectedUnresolvedMultiHit ? 2ull : 1ull);
 		HashMix(Hash, Record.bBoundaryPairFound ? 2ull : 1ull);
 		HashMix(Hash, Record.bNonSeparatingAnomaly ? 2ull : 1ull);
+		HashMix(Hash, Record.bGeneratedWithNonPositiveSeparation ? 2ull : 1ull);
 		HashMix(Hash, Record.bUsedZGammaDistanceProfilePlaceholder ? 2ull : 1ull);
 		HashMix(Hash, Record.bUsedZGammaGeophysicsDerivedProfile ? 2ull : 1ull);
 		HashMix(Hash, Record.bPaperFaithfulZGammaProfile ? 2ull : 1ull);
@@ -445,7 +448,9 @@ namespace
 		{
 			bPass =
 				bPass &&
-				OutResult.Record.SignedSeparationVelocity > 0.0 &&
+				(Fixture.bExpectGeneratedWithNonPositiveSeparation
+					? OutResult.Record.SignedSeparationVelocity <= 0.0
+					: OutResult.Record.SignedSeparationVelocity > 0.0) &&
 				(Fixture.bExpectDegenerateRidgeDirection
 					? OutResult.Record.RidgeDirectionMagnitude <= VectorTolerance
 					: OutResult.Record.RidgeDirectionMagnitude > 1.0 - VectorTolerance) &&
@@ -464,6 +469,7 @@ namespace
 		OutResult.Name = Fixture.Name;
 		OutResult.Purpose = Fixture.Purpose;
 		OutResult.ExpectedRecordHash = Fixture.ExpectedRecordHash;
+		Actor.bRestoreNonSeparatingAnomalyVeto = Fixture.bRestoreNonSeparatingAnomalyVeto;
 		const double StartSeconds = FPlatformTime::Seconds();
 		OutResult.bQueryReturned = Actor.QueryPhaseIIIE4DivergentOceanicFieldsForTest(
 			Fixture.Sample,
@@ -479,6 +485,7 @@ namespace
 			OutResult.bQueryReturned &&
 			OutResult.Record.bGeneratedOceanicCrust == Fixture.bExpectGenerated &&
 			OutResult.Record.bNonSeparatingAnomaly == Fixture.bExpectNonSeparatingAnomaly &&
+			OutResult.Record.bGeneratedWithNonPositiveSeparation == Fixture.bExpectGeneratedWithNonPositiveSeparation &&
 			OutResult.Record.bRejectedNonDivergentRoute == Fixture.bExpectRejectedNonDivergentRoute &&
 			OutResult.Record.bRejectedUnresolvedMultiHit == Fixture.bExpectRejectedUnresolvedMultiHit &&
 			OutResult.Record.bBoundaryPairFound == Fixture.bExpectBoundaryPairFound &&
@@ -497,7 +504,7 @@ namespace
 		Fixture.Sample = UnitFromLonLat(0.0, 10.0);
 		Fixture.SourceSelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
 		AddDefaultDivergentEdges(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("32a28e51fcaf9160");
+		Fixture.ExpectedRecordHash = TEXT("2f869587566161f9");
 		return Fixture;
 	}
 
@@ -507,16 +514,28 @@ namespace
 		Fixture.Name = TEXT("filter-exhausted divergent oceanic generation");
 		Fixture.Purpose = TEXT("a zero-valid-hit-after-filtering route creates the same paper fields without prior-owner fallback");
 		Fixture.SourceSelectionClass = ECarrierLabPhaseIIIE3SelectionClass::DivergentGapAfterFiltering;
-		Fixture.ExpectedRecordHash = TEXT("c90b56f3d3fbe57e");
+		Fixture.ExpectedRecordHash = TEXT("240d4374070ed0cb");
 		return Fixture;
 	}
 
 	FFixtureSpec MakeNonSeparatingAnomalyFixture()
 	{
 		FFixtureSpec Fixture = MakeNoHitGenerationFixture();
-		Fixture.Name = TEXT("non-separating q1/q2 anomaly");
-		Fixture.Purpose = TEXT("gap fill does not fire when the q1/q2 signed separating velocity is non-positive");
+		Fixture.Name = TEXT("non-positive separation generation observability");
+		Fixture.Purpose = TEXT("paper-literal zero-hit generation continues when the q1/q2 signed separating velocity is non-positive and records the condition diagnostically");
 		Fixture.SignedSeparationVelocity = -0.002;
+		Fixture.bExpectGeneratedWithNonPositiveSeparation = true;
+		Fixture.ExpectedRecordHash = TEXT("d8d7e6a7a434cbd0");
+		return Fixture;
+	}
+
+	FFixtureSpec MakeRestoredNonSeparatingVetoFixture()
+	{
+		FFixtureSpec Fixture = MakeNoHitGenerationFixture();
+		Fixture.Name = TEXT("restored non-separating veto baseline");
+		Fixture.Purpose = TEXT("the explicit legacy opt-out reproduces the old CarrierLab-invented non-separating anomaly hold for historical baseline audits");
+		Fixture.SignedSeparationVelocity = -0.002;
+		Fixture.bRestoreNonSeparatingAnomalyVeto = true;
 		Fixture.bExpectGenerated = false;
 		Fixture.bExpectNonSeparatingAnomaly = true;
 		Fixture.ExpectedAssignedPlateId = INDEX_NONE;
@@ -533,7 +552,7 @@ namespace
 		Fixture.bExpectZGammaDistanceProfilePlaceholder = false;
 		Fixture.bExpectZGammaGeophysicsDerivedProfile = false;
 		Fixture.bExpectPaperFaithfulZGammaProfile = false;
-		Fixture.ExpectedRecordHash = TEXT("88944ad285a45615");
+		Fixture.ExpectedRecordHash = TEXT("bd36f88f2284a7bc");
 		return Fixture;
 	}
 
@@ -547,7 +566,7 @@ namespace
 		Fixture.bExpectRejectedNonDivergentRoute = true;
 		Fixture.bExpectBoundaryPairFound = false;
 		SetEmptyBoundaryExpectations(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("3a44945e4d5ad4d1");
+		Fixture.ExpectedRecordHash = TEXT("e470b046e7d717b0");
 		return Fixture;
 	}
 
@@ -562,7 +581,7 @@ namespace
 		Fixture.bExpectRejectedUnresolvedMultiHit = true;
 		Fixture.bExpectBoundaryPairFound = false;
 		SetEmptyBoundaryExpectations(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("6c3bb0a64bbd3c63");
+		Fixture.ExpectedRecordHash = TEXT("e38a01c58860d3c6");
 		return Fixture;
 	}
 
@@ -576,7 +595,7 @@ namespace
 		Fixture.bExpectGenerated = false;
 		Fixture.bExpectBoundaryPairFound = false;
 		SetEmptyBoundaryExpectations(Fixture);
-		Fixture.ExpectedRecordHash = TEXT("7ac6c1268fa36161");
+		Fixture.ExpectedRecordHash = TEXT("7b703a36dee02260");
 		return Fixture;
 	}
 
@@ -610,7 +629,7 @@ namespace
 		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d(0.072673655516996297, 0.5520112177799954, -0.83066368359212817);
-		Fixture.ExpectedRecordHash = TEXT("d77fbb140ef3f995");
+		Fixture.ExpectedRecordHash = TEXT("ce371b6a0b248d14");
 		return Fixture;
 	}
 
@@ -644,7 +663,7 @@ namespace
 		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d(0.0, 0.84984737297332824, -0.52702888217851274);
-		Fixture.ExpectedRecordHash = TEXT("abc50b7cd8593821");
+		Fixture.ExpectedRecordHash = TEXT("10c3eb89d6f4b460");
 		return Fixture;
 	}
 
@@ -679,7 +698,7 @@ namespace
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d::ZeroVector;
 		Fixture.bExpectDegenerateRidgeDirection = true;
-		Fixture.ExpectedRecordHash = TEXT("c7f41eef236c1a71");
+		Fixture.ExpectedRecordHash = TEXT("3c1905f538f28d30");
 		return Fixture;
 	}
 
@@ -713,7 +732,7 @@ namespace
 		Fixture.ExpectedElevation = BlendElevation(Fixture.ExpectedAlpha, Fixture.ExpectedZBar, Fixture.ExpectedZGamma);
 		Fixture.ExpectedOceanicAge = 0.0;
 		Fixture.ExpectedRidgeDirection = FVector3d(0.0, 1.0, 0.0);
-		Fixture.ExpectedRecordHash = TEXT("e831d7112bfc7f49");
+		Fixture.ExpectedRecordHash = TEXT("6aca0669c499a5b8");
 		return Fixture;
 	}
 
@@ -758,7 +777,7 @@ namespace
 	FString BuildJsonLine(const FFixtureResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"fixture\":%s,\"purpose\":%s,\"pass\":%s,\"query_returned\":%s,\"source_class\":%s,\"generated\":%s,\"boundary_pair_found\":%s,\"nonseparating_anomaly\":%s,\"rejected_nondivergent_route\":%s,\"rejected_unresolved_multi_hit\":%s,\"zgamma_distance_profile_placeholder\":%s,\"zgamma_geophysics_derived_profile\":%s,\"paper_faithful_zgamma_profile\":%s,\"q1_plate\":%d,\"q2_plate\":%d,\"assigned_plate\":%d,\"signed_separation_velocity\":%.12g,\"q1_distance_km\":%.12g,\"q2_distance_km\":%.12g,\"ridge_distance_km\":%.12g,\"nearest_boundary_distance_km\":%.12g,\"alpha\":%.12g,\"zbar\":%.12g,\"zgamma\":%.12g,\"zgamma_profile_distance_km\":%.12g,\"zgamma_profile_reference_distance_km\":%.12g,\"zgamma_profile_t\":%.12g,\"elevation\":%.12g,\"oceanic_age\":%.12g,\"ridge_direction_magnitude\":%.12g,\"ridge_radial_dot\":%.12g,\"q1_distance_residual_km\":%.12g,\"q2_distance_residual_km\":%.12g,\"ridge_distance_residual_km\":%.12g,\"nearest_boundary_distance_residual_km\":%.12g,\"qgamma_residual\":%.12g,\"alpha_residual\":%.12g,\"zbar_residual\":%.12g,\"zgamma_residual\":%.12g,\"zgamma_profile_distance_residual_km\":%.12g,\"zgamma_profile_reference_residual_km\":%.12g,\"zgamma_profile_t_residual\":%.12g,\"elevation_residual\":%.12g,\"oceanic_age_residual\":%.12g,\"ridge_direction_residual\":%.12g,\"record_hash\":%s,\"expected_record_hash\":%s,\"record_hash_match\":%s}"),
+			TEXT("{\"fixture\":%s,\"purpose\":%s,\"pass\":%s,\"query_returned\":%s,\"source_class\":%s,\"generated\":%s,\"boundary_pair_found\":%s,\"nonseparating_anomaly\":%s,\"generated_nonpositive_separation\":%s,\"rejected_nondivergent_route\":%s,\"rejected_unresolved_multi_hit\":%s,\"zgamma_distance_profile_placeholder\":%s,\"zgamma_geophysics_derived_profile\":%s,\"paper_faithful_zgamma_profile\":%s,\"q1_plate\":%d,\"q2_plate\":%d,\"assigned_plate\":%d,\"signed_separation_velocity\":%.12g,\"q1_distance_km\":%.12g,\"q2_distance_km\":%.12g,\"ridge_distance_km\":%.12g,\"nearest_boundary_distance_km\":%.12g,\"alpha\":%.12g,\"zbar\":%.12g,\"zgamma\":%.12g,\"zgamma_profile_distance_km\":%.12g,\"zgamma_profile_reference_distance_km\":%.12g,\"zgamma_profile_t\":%.12g,\"elevation\":%.12g,\"oceanic_age\":%.12g,\"ridge_direction_magnitude\":%.12g,\"ridge_radial_dot\":%.12g,\"q1_distance_residual_km\":%.12g,\"q2_distance_residual_km\":%.12g,\"ridge_distance_residual_km\":%.12g,\"nearest_boundary_distance_residual_km\":%.12g,\"qgamma_residual\":%.12g,\"alpha_residual\":%.12g,\"zbar_residual\":%.12g,\"zgamma_residual\":%.12g,\"zgamma_profile_distance_residual_km\":%.12g,\"zgamma_profile_reference_residual_km\":%.12g,\"zgamma_profile_t_residual\":%.12g,\"elevation_residual\":%.12g,\"oceanic_age_residual\":%.12g,\"ridge_direction_residual\":%.12g,\"record_hash\":%s,\"expected_record_hash\":%s,\"record_hash_match\":%s}"),
 			*JsonString(Result.Name),
 			*JsonString(Result.Purpose),
 			Result.bPass ? TEXT("true") : TEXT("false"),
@@ -767,6 +786,7 @@ namespace
 			Result.Record.bGeneratedOceanicCrust ? TEXT("true") : TEXT("false"),
 			Result.Record.bBoundaryPairFound ? TEXT("true") : TEXT("false"),
 			Result.Record.bNonSeparatingAnomaly ? TEXT("true") : TEXT("false"),
+			Result.Record.bGeneratedWithNonPositiveSeparation ? TEXT("true") : TEXT("false"),
 			Result.Record.bRejectedNonDivergentRoute ? TEXT("true") : TEXT("false"),
 			Result.Record.bRejectedUnresolvedMultiHit ? TEXT("true") : TEXT("false"),
 			Result.Record.bUsedZGammaDistanceProfilePlaceholder ? TEXT("true") : TEXT("false"),
@@ -842,7 +862,7 @@ namespace
 		Report += TEXT("- `zBar(p)` is compared against fixture-owned expected constants for distance interpolation between q1/q2 boundary elevations.\n");
 		Report += TEXT("- Pre-IIIE.6 replaces the Earth-radius linear placeholder with the accepted geophysics-derived extension `zGamma(dGamma) = z_e + (z_o - z_e) * sqrt(clamp(dGamma / 3000 km, 0, 1))`, anchored to thesis Table 3.2 constants: ridge peak `-1 km`, abyssal plain `-6 km`.\n");
 		Report += TEXT("- `zGamma` remains a paper-fidelity hold. Thesis section 3.3.2.1 names a generic ridge profile and section 3.3.2.3 defines qGamma, but the local extraction has no closed-form zGamma curve. Generated records therefore report `bUsedZGammaGeophysicsDerivedProfile = true` and `bPaperFaithfulZGammaProfile = false`.\n");
-		Report += TEXT("- Resolved single-hit and unresolved multi-hit classes are rejected before field generation. Non-positive signed separating velocity is an anomaly, not a fallback.\n\n");
+		Report += TEXT("- Resolved single-hit and unresolved multi-hit classes are rejected before field generation. Non-positive signed separating velocity is diagnostic only by default; the explicit `bRestoreNonSeparatingAnomalyVeto` opt-out reproduces the old CarrierLab-invented anomaly hold for historical baseline audits.\n\n");
 
 		Report += TEXT("## Gates\n\n");
 		Report += TEXT("| Gate | Result | Evidence |\n");
@@ -850,13 +870,14 @@ namespace
 		for (const FFixtureResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %s | class `%s`, generated `%d`, boundary `%d`, anomaly `%d`, rejected `%d/%d`, q1/q2 `%d/%d`, assigned `%d`, signed velocity `%.6g`, q dist residuals `%.3g/%.3g km`, ridge/nearest residuals `%.3g/%.3g km`, qGamma residual `%.3g`, alpha/elev residuals `%.3g/%.3g`, zGamma profile residuals `%.3g km/%.3g km/%.3g`, placeholder/geophysics/paper `%d/%d/%d`, ridge residual `%.3g`, radial dot `%.3g`, hash `%s`, expected `%s`, match `%d`. |\n"),
+				TEXT("| %s | %s | class `%s`, generated `%d`, boundary `%d`, anomaly `%d`, nonpos-generated `%d`, rejected `%d/%d`, q1/q2 `%d/%d`, assigned `%d`, signed velocity `%.6g`, q dist residuals `%.3g/%.3g km`, ridge/nearest residuals `%.3g/%.3g km`, qGamma residual `%.3g`, alpha/elev residuals `%.3g/%.3g`, zGamma profile residuals `%.3g km/%.3g km/%.3g`, placeholder/geophysics/paper `%d/%d/%d`, ridge residual `%.3g`, radial dot `%.3g`, hash `%s`, expected `%s`, match `%d`. |\n"),
 				*Result.Name,
 				*PassFail(Result.bPass),
 				*SelectionClassName(Result.Record.SourceSelectionClass),
 				Result.Record.bGeneratedOceanicCrust ? 1 : 0,
 				Result.Record.bBoundaryPairFound ? 1 : 0,
 				Result.Record.bNonSeparatingAnomaly ? 1 : 0,
+				Result.Record.bGeneratedWithNonPositiveSeparation ? 1 : 0,
 				Result.Record.bRejectedNonDivergentRoute ? 1 : 0,
 				Result.Record.bRejectedUnresolvedMultiHit ? 1 : 0,
 				Result.Record.Q1PlateId,
@@ -967,6 +988,7 @@ int32 UCarrierLabPhaseIIIE4Commandlet::Main(const FString& Params)
 	Fixtures.Add(MakeNoHitGenerationFixture());
 	Fixtures.Add(MakeFilterExhaustedGenerationFixture());
 	Fixtures.Add(MakeNonSeparatingAnomalyFixture());
+	Fixtures.Add(MakeRestoredNonSeparatingVetoFixture());
 	Fixtures.Add(MakeResolvedRouteRejectedFixture());
 	Fixtures.Add(MakeUnresolvedRouteRejectedFixture());
 	Fixtures.Add(MakeNoBoundaryPairFixture());

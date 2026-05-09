@@ -84,6 +84,9 @@ struct FCarrierLabVisualizationMetrics
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 LastNoBoundaryPairMissCount = 0;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastGeneratedWithNonPositiveSeparationCount = 0;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics")
 	int32 PolicyResolvedMultiHitCount = 0;
 
@@ -1109,9 +1112,11 @@ struct FCarrierLabPhaseIIIE67InvalidRecord
 	int32 PostFilterCandidateCount = 0;
 	bool bBoundaryPairFound = false;
 	bool bNonSeparatingAnomaly = false;
+	bool bGeneratedWithNonPositiveSeparation = false;
 	bool bGeneratedOceanicCrust = false;
 	bool bSampleUnitValid = true;
 	bool bSampleFieldsValid = true;
+	double SignedSeparationVelocity = 0.0;
 	double ContinentalFraction = 0.0;
 	double Elevation = 0.0;
 	double HistoricalElevation = 0.0;
@@ -1155,6 +1160,11 @@ struct FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit
 	int32 RiftingPendingWithAnyProcessFilterCount = 0;
 	int32 NoBoundaryPairMissCount = 0;
 	int32 NonSeparatingGapFillCount = 0;
+	int32 GeneratedWithNonPositiveSeparationCount = 0;
+	double NonPositiveSeparationMinMagnitude = 0.0;
+	double NonPositiveSeparationMedianMagnitude = 0.0;
+	double NonPositiveSeparationMaxMagnitude = 0.0;
+	FString NonPositiveSeparationSpatialHash;
 	double TotalSeconds = 0.0;
 	double SelectionSeconds = 0.0;
 	double RecordBuildSeconds = 0.0;
@@ -1177,6 +1187,7 @@ struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
 	bool bRejectedUnresolvedMultiHit = false;
 	bool bBoundaryPairFound = false;
 	bool bNonSeparatingAnomaly = false;
+	bool bGeneratedWithNonPositiveSeparation = false;
 	bool bUsedPolicyWinner = false;
 	bool bUsedPriorOwnerFallback = false;
 	int32 Q1PlateId = INDEX_NONE;
@@ -2348,6 +2359,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bEnablePhaseIIIE3DistanceTieFallback = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bRestoreNonSeparatingAnomalyVeto = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICTrenchDepthKm = -10.0;
