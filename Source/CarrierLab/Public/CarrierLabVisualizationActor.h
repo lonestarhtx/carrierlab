@@ -1079,6 +1079,94 @@ struct FCarrierLabPhaseIIIE64PostMotionMultiHitAudit
 	TArray<FCarrierLabPhaseIIIE64HoldRecord> Records;
 };
 
+enum class ECarrierLabPhaseIIIE67InvalidRecordReason : uint8
+{
+	None,
+	InvalidSampleIndex,
+	InvalidSampleUnitPosition,
+	SampleFieldOutOfRange,
+	ResolvedHitInvalidPlate,
+	DivergentGapNoBoundaryPair,
+	DivergentGapNonSeparating,
+	DivergentGapGenerationOtherFailure,
+	GeneratedGapInvalidAssignedPlate,
+	UnhandledSelectionClass
+};
+
+struct FCarrierLabPhaseIIIE67InvalidRecord
+{
+	int32 SampleId = INDEX_NONE;
+	int32 Step = 0;
+	ECarrierLabPhaseIIIE67InvalidRecordReason Reason = ECarrierLabPhaseIIIE67InvalidRecordReason::None;
+	ECarrierLabPhaseIIIE3SelectionClass SelectionClass = ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap;
+	ECarrierLabPhaseIIIE3MultiHitBucket MultiHitBucket = ECarrierLabPhaseIIIE3MultiHitBucket::None;
+	int32 ResolvedPlateId = INDEX_NONE;
+	int32 OceanicAssignedPlateId = INDEX_NONE;
+	int32 FilteredSubductingCount = 0;
+	int32 FilteredObductionPendingCount = 0;
+	int32 FilteredCollisionPendingCount = 0;
+	int32 RawCandidateCount = 0;
+	int32 PostFilterCandidateCount = 0;
+	bool bBoundaryPairFound = false;
+	bool bNonSeparatingAnomaly = false;
+	bool bGeneratedOceanicCrust = false;
+	bool bSampleUnitValid = true;
+	bool bSampleFieldsValid = true;
+	double ContinentalFraction = 0.0;
+	double Elevation = 0.0;
+	double HistoricalElevation = 0.0;
+	double OceanicAge = 0.0;
+	double LatitudeDegrees = 0.0;
+	double LongitudeDegrees = 0.0;
+	int32 SpatialLonBin = 0;
+	int32 SpatialLatBin = 0;
+};
+
+struct FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit
+{
+	bool bRan = false;
+	int32 Step = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 SelectionResolvedSingleHitCount = 0;
+	int32 SelectionDivergentGapRouteCount = 0;
+	int32 SelectionUnresolvedMultiHitCount = 0;
+	int32 InvalidRecordCount = 0;
+	int32 InvalidSampleIndexCount = 0;
+	int32 InvalidSampleUnitPositionCount = 0;
+	int32 SampleFieldOutOfRangeCount = 0;
+	int32 ResolvedHitInvalidPlateCount = 0;
+	int32 DivergentGapNoBoundaryPairCount = 0;
+	int32 DivergentGapNonSeparatingCount = 0;
+	int32 DivergentGapGenerationOtherFailureCount = 0;
+	int32 GeneratedGapInvalidAssignedPlateCount = 0;
+	int32 UnhandledSelectionClassCount = 0;
+	int32 GeneratedCandidateCount = 0;
+	int32 AppliedGeneratedCount = 0;
+	int32 RiftingPendingCount = 0;
+	int32 InvalidNoHitDivergentGapCount = 0;
+	int32 InvalidFilterExhaustedDivergentGapCount = 0;
+	int32 InvalidResolvedSingleHitCount = 0;
+	int32 InvalidUnhandledSelectionCount = 0;
+	int32 InvalidWithAnyProcessFilterCount = 0;
+	int32 InvalidWithSubductingFilterCount = 0;
+	int32 InvalidWithObductionFilterCount = 0;
+	int32 InvalidWithCollisionFilterCount = 0;
+	int32 RiftingPendingWithAnyProcessFilterCount = 0;
+	int32 NoBoundaryPairMissCount = 0;
+	int32 NonSeparatingGapFillCount = 0;
+	double TotalSeconds = 0.0;
+	double SelectionSeconds = 0.0;
+	double RecordBuildSeconds = 0.0;
+	double DivergentQuerySeconds = 0.0;
+	double ResolvedRecordSeconds = 0.0;
+	double ValidationSeconds = 0.0;
+	FString SelectionHash;
+	FString DiagnosisHash;
+	TArray<int32> SpatialInvalidCounts;
+	TArray<FCarrierLabPhaseIIIE67InvalidRecord> Records;
+};
+
 struct FCarrierLabPhaseIIIE4OceanicGenerationRecord
 {
 	int32 SampleId = INDEX_NONE;
@@ -2502,6 +2590,8 @@ public:
 		FCarrierLabPhaseIIIE62CrossPlateMultiHitAudit& OutAudit);
 	bool RunPhaseIIIE64PostMotionMultiHitDiagnosisAudit(
 		FCarrierLabPhaseIIIE64PostMotionMultiHitAudit& OutAudit);
+	bool RunPhaseIIIE67ApplyPathInvalidRecordsDiagnosisAudit(
+		FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit& OutAudit);
 	bool GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const;
 	bool GetPhaseIIIB2DistanceAudit(FCarrierLabPhaseIIIB2DistanceAudit& OutAudit) const;
 	bool GetPhaseIIIB3SubductionMatrixAudit(FCarrierLabPhaseIIIB3SubductionMatrixAudit& OutAudit) const;

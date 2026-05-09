@@ -7775,6 +7775,369 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE64PostMotionMultiHitDiagnosisAud
 	return true;
 }
 
+bool ACarrierLabVisualizationActor::RunPhaseIIIE67ApplyPathInvalidRecordsDiagnosisAudit(
+	FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit& OutAudit)
+{
+	OutAudit = FCarrierLabPhaseIIIE67ApplyPathInvalidRecordsAudit();
+	if (!bInitialized)
+	{
+		return false;
+	}
+
+	const double TotalStartSeconds = FPlatformTime::Seconds();
+	const double SelectionStartSeconds = FPlatformTime::Seconds();
+	FCarrierLabPhaseIIIE3RemeshSelectionAudit SelectionAudit;
+	if (!RunPhaseIIIE3FilteredRemeshSelectionAudit(SelectionAudit))
+	{
+		return false;
+	}
+	OutAudit.SelectionSeconds = FPlatformTime::Seconds() - SelectionStartSeconds;
+
+	OutAudit.Step = CurrentMetrics.Step;
+	OutAudit.SampleCount = State.Samples.Num();
+	OutAudit.PlateCount = State.Plates.Num();
+	OutAudit.SelectionResolvedSingleHitCount = SelectionAudit.PostFilterSingleHitCount;
+	OutAudit.SelectionDivergentGapRouteCount = SelectionAudit.DivergentGapRouteCount;
+	OutAudit.SelectionUnresolvedMultiHitCount = SelectionAudit.UnresolvedMultiHitCount;
+	OutAudit.SelectionHash = SelectionAudit.SelectionHash;
+	OutAudit.SpatialInvalidCounts.Init(0, 12 * 6);
+
+	TArray<FCarrierLabPhaseIIIE5RemeshVertexRecord> VertexRecords;
+	VertexRecords.SetNum(State.Samples.Num());
+
+	auto IsFiniteVector = [](const FVector3d& Value)
+	{
+		return FMath::IsFinite(Value.X) && FMath::IsFinite(Value.Y) && FMath::IsFinite(Value.Z);
+	};
+
+	auto IsSampleUnitValid = [&IsFiniteVector](const FVector3d& UnitPosition)
+	{
+		if (!IsFiniteVector(UnitPosition))
+		{
+			return false;
+		}
+		return FMath::Abs(UnitPosition.SizeSquared() - 1.0) <= 1.0e-6;
+	};
+
+	auto AreSampleFieldsValid = [&IsFiniteVector](const CarrierLab::FSphereSample& Sample)
+	{
+		return
+			FMath::IsFinite(Sample.ContinentalFraction) &&
+			Sample.ContinentalFraction >= -1.0e-9 &&
+			Sample.ContinentalFraction <= 1.0 + 1.0e-9 &&
+			FMath::IsFinite(Sample.Elevation) &&
+			FMath::IsFinite(Sample.HistoricalElevation) &&
+			FMath::IsFinite(Sample.OceanicAge) &&
+			Sample.OceanicAge >= -1.0e-9 &&
+			IsFiniteVector(Sample.RidgeDirection) &&
+			IsFiniteVector(Sample.FoldDirection);
+	};
+
+	auto AccumulateReason = [&OutAudit](const ECarrierLabPhaseIIIE67InvalidRecordReason Reason)
+	{
+		switch (Reason)
+		{
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::InvalidSampleIndex:
+			++OutAudit.InvalidSampleIndexCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::InvalidSampleUnitPosition:
+			++OutAudit.InvalidSampleUnitPositionCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::SampleFieldOutOfRange:
+			++OutAudit.SampleFieldOutOfRangeCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::ResolvedHitInvalidPlate:
+			++OutAudit.ResolvedHitInvalidPlateCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::DivergentGapNoBoundaryPair:
+			++OutAudit.DivergentGapNoBoundaryPairCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::DivergentGapNonSeparating:
+			++OutAudit.DivergentGapNonSeparatingCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::DivergentGapGenerationOtherFailure:
+			++OutAudit.DivergentGapGenerationOtherFailureCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::GeneratedGapInvalidAssignedPlate:
+			++OutAudit.GeneratedGapInvalidAssignedPlateCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::UnhandledSelectionClass:
+			++OutAudit.UnhandledSelectionClassCount;
+			break;
+		case ECarrierLabPhaseIIIE67InvalidRecordReason::None:
+		default:
+			break;
+		}
+	};
+
+	auto AccumulateInvalid = [this, &OutAudit, &IsSampleUnitValid, &AreSampleFieldsValid, &AccumulateReason](
+		const FCarrierLabPhaseIIIE3SelectionRecord& SelectionRecord,
+		const ECarrierLabPhaseIIIE67InvalidRecordReason Reason,
+		const FCarrierLabPhaseIIIE4OceanicGenerationRecord* OceanicRecord)
+	{
+		++OutAudit.InvalidRecordCount;
+		AccumulateReason(Reason);
+
+		switch (SelectionRecord.SelectionClass)
+		{
+		case ECarrierLabPhaseIIIE3SelectionClass::NoHitDivergentGap:
+			++OutAudit.InvalidNoHitDivergentGapCount;
+			break;
+		case ECarrierLabPhaseIIIE3SelectionClass::DivergentGapAfterFiltering:
+			++OutAudit.InvalidFilterExhaustedDivergentGapCount;
+			break;
+		case ECarrierLabPhaseIIIE3SelectionClass::ResolvedSingleHit:
+			++OutAudit.InvalidResolvedSingleHitCount;
+			break;
+		default:
+			++OutAudit.InvalidUnhandledSelectionCount;
+			break;
+		}
+
+		if (SelectionRecord.FilteredSubductingCount > 0 ||
+			SelectionRecord.FilteredObductionPendingCount > 0 ||
+			SelectionRecord.FilteredCollisionPendingCount > 0)
+		{
+			++OutAudit.InvalidWithAnyProcessFilterCount;
+		}
+		if (SelectionRecord.FilteredSubductingCount > 0)
+		{
+			++OutAudit.InvalidWithSubductingFilterCount;
+		}
+		if (SelectionRecord.FilteredObductionPendingCount > 0)
+		{
+			++OutAudit.InvalidWithObductionFilterCount;
+		}
+		if (SelectionRecord.FilteredCollisionPendingCount > 0)
+		{
+			++OutAudit.InvalidWithCollisionFilterCount;
+		}
+
+		FCarrierLabPhaseIIIE67InvalidRecord& Record = OutAudit.Records.AddDefaulted_GetRef();
+		Record.SampleId = SelectionRecord.SampleId;
+		Record.Step = CurrentMetrics.Step;
+		Record.Reason = Reason;
+		Record.SelectionClass = SelectionRecord.SelectionClass;
+		Record.MultiHitBucket = SelectionRecord.MultiHitBucket;
+		Record.ResolvedPlateId = SelectionRecord.ResolvedPlateId;
+		Record.OceanicAssignedPlateId = OceanicRecord != nullptr ? OceanicRecord->AssignedPlateId : INDEX_NONE;
+		Record.FilteredSubductingCount = SelectionRecord.FilteredSubductingCount;
+		Record.FilteredObductionPendingCount = SelectionRecord.FilteredObductionPendingCount;
+		Record.FilteredCollisionPendingCount = SelectionRecord.FilteredCollisionPendingCount;
+		Record.RawCandidateCount = SelectionRecord.RawCandidateCount;
+		Record.PostFilterCandidateCount = SelectionRecord.PostFilterCandidateCount;
+		if (OceanicRecord != nullptr)
+		{
+			Record.bBoundaryPairFound = OceanicRecord->bBoundaryPairFound;
+			Record.bNonSeparatingAnomaly = OceanicRecord->bNonSeparatingAnomaly;
+			Record.bGeneratedOceanicCrust = OceanicRecord->bGeneratedOceanicCrust;
+		}
+
+		if (!State.Samples.IsValidIndex(SelectionRecord.SampleId))
+		{
+			Record.bSampleUnitValid = false;
+			Record.bSampleFieldsValid = false;
+			return;
+		}
+
+		const CarrierLab::FSphereSample& Sample = State.Samples[SelectionRecord.SampleId];
+		Record.bSampleUnitValid = IsSampleUnitValid(Sample.UnitPosition);
+		Record.bSampleFieldsValid = AreSampleFieldsValid(Sample);
+		if (!Record.bSampleUnitValid)
+		{
+			++OutAudit.InvalidSampleUnitPositionCount;
+		}
+		if (!Record.bSampleFieldsValid)
+		{
+			++OutAudit.SampleFieldOutOfRangeCount;
+		}
+		Record.ContinentalFraction = Sample.ContinentalFraction;
+		Record.Elevation = Sample.Elevation;
+		Record.HistoricalElevation = Sample.HistoricalElevation;
+		Record.OceanicAge = Sample.OceanicAge;
+		const FVector3d Unit = Sample.UnitPosition.GetSafeNormal();
+		Record.LatitudeDegrees = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Unit.Z, -1.0, 1.0)));
+		Record.LongitudeDegrees = FMath::RadiansToDegrees(FMath::Atan2(Unit.Y, Unit.X));
+		Record.SpatialLonBin = FMath::Clamp(FMath::FloorToInt((Record.LongitudeDegrees + 180.0) / 30.0), 0, 11);
+		Record.SpatialLatBin = FMath::Clamp(FMath::FloorToInt((Record.LatitudeDegrees + 90.0) / 30.0), 0, 5);
+		const int32 SpatialIndex = Record.SpatialLatBin * 12 + Record.SpatialLonBin;
+		if (OutAudit.SpatialInvalidCounts.IsValidIndex(SpatialIndex))
+		{
+			++OutAudit.SpatialInvalidCounts[SpatialIndex];
+		}
+	};
+
+	const double RecordBuildStartSeconds = FPlatformTime::Seconds();
+	int32 ProcessedRecordCount = 0;
+	int32 DivergentRecordCount = 0;
+	double LastProgressLogSeconds = RecordBuildStartSeconds;
+	for (const FCarrierLabPhaseIIIE3SelectionRecord& SelectionRecord : SelectionAudit.Records)
+	{
+		++ProcessedRecordCount;
+		const double ValidationStartSeconds = FPlatformTime::Seconds();
+		if (!State.Samples.IsValidIndex(SelectionRecord.SampleId) || !VertexRecords.IsValidIndex(SelectionRecord.SampleId))
+		{
+			OutAudit.ValidationSeconds += FPlatformTime::Seconds() - ValidationStartSeconds;
+			AccumulateInvalid(SelectionRecord, ECarrierLabPhaseIIIE67InvalidRecordReason::InvalidSampleIndex, nullptr);
+			continue;
+		}
+
+		const CarrierLab::FSphereSample& Sample = State.Samples[SelectionRecord.SampleId];
+		FCarrierLabPhaseIIIE5RemeshVertexRecord& VertexRecord = VertexRecords[SelectionRecord.SampleId];
+		VertexRecord.SampleId = Sample.Id;
+		VertexRecord.AssignedPlateId = Sample.PlateId;
+		VertexRecord.PreRemeshContinentalFraction = Sample.ContinentalFraction;
+		VertexRecord.PreRemeshElevation = Sample.Elevation;
+		VertexRecord.ContinentalFraction = Sample.ContinentalFraction;
+		VertexRecord.Elevation = Sample.Elevation;
+		VertexRecord.HistoricalElevation = Sample.HistoricalElevation;
+		VertexRecord.OceanicAge = Sample.OceanicAge;
+		VertexRecord.RidgeDirection = Sample.RidgeDirection;
+		VertexRecord.FoldDirection = Sample.FoldDirection;
+		OutAudit.ValidationSeconds += FPlatformTime::Seconds() - ValidationStartSeconds;
+
+		if (SelectionRecord.SelectionClass == ECarrierLabPhaseIIIE3SelectionClass::ResolvedSingleHit)
+		{
+			const double ResolvedStartSeconds = FPlatformTime::Seconds();
+			if (!State.Plates.IsValidIndex(SelectionRecord.ResolvedPlateId))
+			{
+				OutAudit.ResolvedRecordSeconds += FPlatformTime::Seconds() - ResolvedStartSeconds;
+				AccumulateInvalid(SelectionRecord, ECarrierLabPhaseIIIE67InvalidRecordReason::ResolvedHitInvalidPlate, nullptr);
+				continue;
+			}
+			VertexRecord.AssignedPlateId = SelectionRecord.ResolvedPlateId;
+			VertexRecord.bResolvedSingleHit = true;
+			VertexRecord.ContinentalFraction = SelectionRecord.ContinentalFraction;
+			VertexRecord.Elevation = SelectionRecord.Elevation;
+			VertexRecord.HistoricalElevation = SelectionRecord.HistoricalElevation;
+			VertexRecord.OceanicAge = SelectionRecord.OceanicAge;
+			VertexRecord.RidgeDirection = SelectionRecord.RidgeDirection;
+			VertexRecord.FoldDirection = SelectionRecord.FoldDirection;
+			OutAudit.ResolvedRecordSeconds += FPlatformTime::Seconds() - ResolvedStartSeconds;
+			continue;
+		}
+
+		if (IsPhaseIIIE4DivergentGapRoute(SelectionRecord.SelectionClass))
+		{
+			++DivergentRecordCount;
+			FCarrierLabPhaseIIIE4OceanicGenerationRecord OceanicRecord;
+			const double QueryStartSeconds = FPlatformTime::Seconds();
+			QueryPhaseIIIE4DivergentOceanicFieldsFromCurrentStateForTest(
+				Sample.UnitPosition,
+				SelectionRecord.SelectionClass,
+				OceanicRecord);
+			OutAudit.DivergentQuerySeconds += FPlatformTime::Seconds() - QueryStartSeconds;
+			const double NowSeconds = FPlatformTime::Seconds();
+			if (NowSeconds - LastProgressLogSeconds >= 30.0)
+			{
+				UE_LOG(
+					LogTemp,
+					Display,
+					TEXT("CarrierLab IIIE.6.7 record-builder progress: step=%d processed=%d/%d divergent=%d invalid=%d query_s=%.3f"),
+					CurrentMetrics.Step,
+					ProcessedRecordCount,
+					SelectionAudit.Records.Num(),
+					DivergentRecordCount,
+					OutAudit.InvalidRecordCount,
+					OutAudit.DivergentQuerySeconds);
+				LastProgressLogSeconds = NowSeconds;
+			}
+
+			const double DivergentValidationStartSeconds = FPlatformTime::Seconds();
+			if (!OceanicRecord.bGeneratedOceanicCrust)
+			{
+				OutAudit.NoBoundaryPairMissCount += OceanicRecord.bBoundaryPairFound ? 0 : 1;
+				OutAudit.NonSeparatingGapFillCount += OceanicRecord.bNonSeparatingAnomaly ? 1 : 0;
+				ECarrierLabPhaseIIIE67InvalidRecordReason Reason = ECarrierLabPhaseIIIE67InvalidRecordReason::DivergentGapGenerationOtherFailure;
+				if (!OceanicRecord.bBoundaryPairFound)
+				{
+					Reason = ECarrierLabPhaseIIIE67InvalidRecordReason::DivergentGapNoBoundaryPair;
+				}
+				else if (OceanicRecord.bNonSeparatingAnomaly)
+				{
+					Reason = ECarrierLabPhaseIIIE67InvalidRecordReason::DivergentGapNonSeparating;
+				}
+				OutAudit.ValidationSeconds += FPlatformTime::Seconds() - DivergentValidationStartSeconds;
+				AccumulateInvalid(SelectionRecord, Reason, &OceanicRecord);
+				continue;
+			}
+
+			++OutAudit.GeneratedCandidateCount;
+			VertexRecord.bResolvedSingleHit = false;
+			VertexRecord.bDivergentGapRoute = true;
+			VertexRecord.OceanicRecord = OceanicRecord;
+			VertexRecord.OceanicRecord.SampleId = Sample.Id;
+			VertexRecord.bUsedZGammaDistanceProfilePlaceholder = OceanicRecord.bUsedZGammaDistanceProfilePlaceholder;
+			VertexRecord.bUsedZGammaGeophysicsDerivedProfile = OceanicRecord.bUsedZGammaGeophysicsDerivedProfile;
+			VertexRecord.bPaperFaithfulZGammaProfile = OceanicRecord.bPaperFaithfulZGammaProfile;
+
+			if (Sample.ContinentalFraction > PhaseIIIEContinentalOverwriteThreshold)
+			{
+				++OutAudit.RiftingPendingCount;
+				if (SelectionRecord.FilteredSubductingCount > 0 ||
+					SelectionRecord.FilteredObductionPendingCount > 0 ||
+					SelectionRecord.FilteredCollisionPendingCount > 0)
+				{
+					++OutAudit.RiftingPendingWithAnyProcessFilterCount;
+				}
+				OutAudit.ValidationSeconds += FPlatformTime::Seconds() - DivergentValidationStartSeconds;
+				continue;
+			}
+
+			if (!State.Plates.IsValidIndex(OceanicRecord.AssignedPlateId))
+			{
+				OutAudit.ValidationSeconds += FPlatformTime::Seconds() - DivergentValidationStartSeconds;
+				AccumulateInvalid(SelectionRecord, ECarrierLabPhaseIIIE67InvalidRecordReason::GeneratedGapInvalidAssignedPlate, &OceanicRecord);
+				continue;
+			}
+			++OutAudit.AppliedGeneratedCount;
+			VertexRecord.bGeneratedOceanicCrust = true;
+			VertexRecord.AssignedPlateId = OceanicRecord.AssignedPlateId;
+			VertexRecord.ContinentalFraction = 0.0;
+			VertexRecord.Elevation = OceanicRecord.Elevation;
+			VertexRecord.HistoricalElevation = 0.0;
+			VertexRecord.OceanicAge = OceanicRecord.OceanicAge;
+			VertexRecord.RidgeDirection = OceanicRecord.RidgeDirection;
+			VertexRecord.FoldDirection = FVector3d::ZeroVector;
+			OutAudit.ValidationSeconds += FPlatformTime::Seconds() - DivergentValidationStartSeconds;
+			continue;
+		}
+
+		VertexRecord.bUnresolvedMultiHit = SelectionRecord.bUnresolvedMultiHit;
+		AccumulateInvalid(SelectionRecord, ECarrierLabPhaseIIIE67InvalidRecordReason::UnhandledSelectionClass, nullptr);
+	}
+	OutAudit.RecordBuildSeconds = FPlatformTime::Seconds() - RecordBuildStartSeconds;
+	OutAudit.TotalSeconds = FPlatformTime::Seconds() - TotalStartSeconds;
+
+	uint64 Hash = 1469598103934665603ull;
+	HashMixString(Hash, TEXT("CarrierLab-IIIE67-apply-invalid-records-v1"));
+	HashMix(Hash, static_cast<uint64>(OutAudit.Step + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.SampleCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.InvalidRecordCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.DivergentGapNoBoundaryPairCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.DivergentGapNonSeparatingCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.GeneratedCandidateCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.AppliedGeneratedCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.RiftingPendingCount + 1));
+	HashMix(Hash, static_cast<uint64>(OutAudit.InvalidWithAnyProcessFilterCount + 1));
+	for (const FCarrierLabPhaseIIIE67InvalidRecord& Record : OutAudit.Records)
+	{
+		HashMix(Hash, static_cast<uint64>(Record.SampleId + 2));
+		HashMix(Hash, static_cast<uint64>(Record.Reason) + 1ull);
+		HashMix(Hash, static_cast<uint64>(Record.SelectionClass) + 1ull);
+		HashMix(Hash, static_cast<uint64>(Record.MultiHitBucket) + 1ull);
+		HashMix(Hash, static_cast<uint64>(Record.FilteredSubductingCount + 1));
+		HashMix(Hash, static_cast<uint64>(Record.FilteredObductionPendingCount + 1));
+		HashMix(Hash, static_cast<uint64>(Record.FilteredCollisionPendingCount + 1));
+		HashMix(Hash, static_cast<uint64>(Record.OceanicAssignedPlateId + 2));
+		HashMix(Hash, static_cast<uint64>(Record.SpatialLonBin + 1));
+		HashMix(Hash, static_cast<uint64>(Record.SpatialLatBin + 1));
+	}
+	OutAudit.DiagnosisHash = HashToString(Hash);
+	OutAudit.bRan = true;
+	return true;
+}
+
 bool ACarrierLabVisualizationActor::GetPhaseIIIB1TrackingAudit(FCarrierLabPhaseIIIB1TrackingAudit& OutAudit) const
 {
 	OutAudit = FCarrierLabPhaseIIIB1TrackingAudit();
