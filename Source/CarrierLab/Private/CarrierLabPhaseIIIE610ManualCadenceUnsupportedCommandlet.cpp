@@ -171,7 +171,7 @@ namespace
 				FPaths::ProjectSavedDir(),
 				TEXT("CarrierLab"),
 				TEXT("PhaseIII"),
-				TEXT("IIIE610ManualCadenceUnsupportedMultiHit")));
+				TEXT("IIIE611MixedMaterialNearestHit")));
 	}
 
 	FString GetReportPath(const FString& Params)
@@ -183,7 +183,7 @@ namespace
 				FPaths::ProjectDir(),
 				TEXT("docs"),
 				TEXT("checkpoints"),
-				TEXT("phase-iii-slice-iiie6-10-manual-cadence-unsupported-multihit-diagnosis.md")));
+				TEXT("phase-iii-slice-iiie6-11-mixed-material-resolution.md")));
 	}
 
 	int32 ShapeIndex(const ECarrierLabPhaseIIIE62HoldShape Shape)
@@ -370,6 +370,7 @@ namespace
 		bool bAutomatic = false;
 		bool bAttemptApply = false;
 		bool bStep16HeldAttemptBeforeTarget = false;
+		bool bDisableMixedMaterialNearestHit = false;
 	};
 
 	struct FScenarioResult
@@ -379,6 +380,7 @@ namespace
 		bool bAutomatic = false;
 		bool bAttemptApply = false;
 		bool bStep16HeldAttemptBeforeTarget = false;
+		bool bDisableMixedMaterialNearestHit = false;
 		bool bRan = false;
 		bool bPass = false;
 		bool bApplied = false;
@@ -409,7 +411,10 @@ namespace
 		FString ScenarioHash;
 	};
 
-	ACarrierLabVisualizationActor* SpawnEditorDefaultActor(UWorld& World, const bool bAutomatic)
+	ACarrierLabVisualizationActor* SpawnEditorDefaultActor(
+		UWorld& World,
+		const bool bAutomatic,
+		const bool bDisableMixedMaterialNearestHit)
 	{
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -434,6 +439,7 @@ namespace
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = true;
 		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
 		Actor->bEnablePhaseIIIE3NearestHitTieBreak = true;
+		Actor->bExtendPhaseIIIE3NearestHitToMixedMaterial = !bDisableMixedMaterialNearestHit;
 		Actor->bEnablePhaseIIIE3DistanceTieFallback = true;
 		Actor->bRestoreNonSeparatingAnomalyVeto = false;
 		Actor->ConfigurePhaseIIICProcessLayer(true, false);
@@ -465,15 +471,18 @@ namespace
 		HashMix(Hash, static_cast<uint64>(Result.TargetStep + 1));
 		HashMix(Hash, Result.bAutomatic ? 3ull : 1ull);
 		HashMix(Hash, Result.bAttemptApply ? 5ull : 1ull);
+		HashMix(Hash, Result.bDisableMixedMaterialNearestHit ? 7ull : 1ull);
 		HashMix(Hash, static_cast<uint64>(Result.Audit.SelectionUnresolvedMultiHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.Audit.SelectionCrossPlateDifferentMultiHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.Audit.SelectionThirdPlateMultiHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.Audit.SelectionCrossPlateEqualMultiHitCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.SelectionAudit.NearestHitCrossPlateDifferentResolvedCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.SelectionAudit.NearestHitThirdPlateResolvedCount + 1));
+		HashMix(Hash, static_cast<uint64>(Result.SelectionAudit.NearestHitMixedMaterialResolvedCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.SelectionAudit.NearestHitDistanceTieHeldCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.SelectionAudit.NearestHitUnsupportedHeldCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.SelectionAudit.DistanceTieFallbackCount + 1));
+		HashMix(Hash, static_cast<uint64>(Result.SelectionAudit.DistanceTieFallbackMixedMaterialCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.UnsupportedLikeHoldCount + 1));
 		HashMix(Hash, static_cast<uint64>(Result.ProcessMarkedUnsupportedCount + 1));
 		for (const int32 Count : Result.ShapeStats.Counts)
@@ -526,12 +535,13 @@ namespace
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("CarrierLabPhaseIIIE610ManualCadenceUnsupported: scenario start %s step=%d auto=%d apply=%d step16_hold_before_target=%d"),
+			TEXT("CarrierLabPhaseIIIE611MixedMaterialNearestHit: scenario start %s step=%d auto=%d apply=%d step16_hold_before_target=%d mixed_extension_disabled=%d"),
 			*Scenario.Name,
 			Scenario.TargetStep,
 			Scenario.bAutomatic ? 1 : 0,
 			Scenario.bAttemptApply ? 1 : 0,
-			Scenario.bStep16HeldAttemptBeforeTarget ? 1 : 0);
+			Scenario.bStep16HeldAttemptBeforeTarget ? 1 : 0,
+			Scenario.bDisableMixedMaterialNearestHit ? 1 : 0);
 
 		OutResult = FScenarioResult();
 		OutResult.Name = Scenario.Name;
@@ -539,8 +549,12 @@ namespace
 		OutResult.bAutomatic = Scenario.bAutomatic;
 		OutResult.bAttemptApply = Scenario.bAttemptApply;
 		OutResult.bStep16HeldAttemptBeforeTarget = Scenario.bStep16HeldAttemptBeforeTarget;
+		OutResult.bDisableMixedMaterialNearestHit = Scenario.bDisableMixedMaterialNearestHit;
 		const double StartSeconds = FPlatformTime::Seconds();
-		ACarrierLabVisualizationActor* Actor = SpawnEditorDefaultActor(World, Scenario.bAutomatic);
+		ACarrierLabVisualizationActor* Actor = SpawnEditorDefaultActor(
+			World,
+			Scenario.bAutomatic,
+			Scenario.bDisableMixedMaterialNearestHit);
 		if (Actor == nullptr || !Actor->InitializeCarrier())
 		{
 			if (Actor != nullptr)
@@ -598,6 +612,15 @@ namespace
 			OutResult.bRan = Actor->RunPhaseIIIE64PostMotionMultiHitDiagnosisAudit(OutResult.Audit);
 			if (Scenario.bAttemptApply)
 			{
+				UE_LOG(
+					LogTemp,
+					Display,
+					TEXT("CarrierLabPhaseIIIE611MixedMaterialNearestHit: apply probe begin %s unresolved=%d unsupported=%d nearest_mixed=%d dtie_mixed=%d"),
+					*Scenario.Name,
+					OutResult.SelectionAudit.UnresolvedMultiHitCount,
+					OutResult.SelectionAudit.NearestHitUnsupportedHeldCount,
+					OutResult.SelectionAudit.NearestHitMixedMaterialResolvedCount,
+					OutResult.SelectionAudit.DistanceTieFallbackMixedMaterialCount);
 				OutResult.bApplied = Actor->ApplyPhaseIIIELiveRemeshEvent();
 			}
 			OutResult.StepAfter = Actor->CurrentMetrics.Step;
@@ -614,39 +637,48 @@ namespace
 			OutResult.Audit.PolicyWinnerCount == 0 &&
 			OutResult.Audit.PriorOwnerFallbackCount == 0 &&
 			OutResult.Audit.ProjectionAuthorityCount == 0;
-		const bool bNoMutationOnManualHold =
+		const bool bSelectionClosed =
+			OutResult.SelectionAudit.UnresolvedMultiHitCount == 0 &&
+			OutResult.SelectionAudit.NearestHitUnsupportedHeldCount == 0 &&
+			OutResult.Audit.SelectionUnresolvedMultiHitCount == 0 &&
+			OutResult.UnsupportedLikeHoldCount == 0;
+		const bool bLiveApplySucceeded =
 			!Scenario.bAttemptApply ||
-			Scenario.bAutomatic ||
+			(OutResult.bApplied &&
+				OutResult.EventCountAfter == OutResult.EventCountBefore + 1 &&
+				OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live_apply")));
+		const bool bBaselineHoldModeHonest =
+			!Scenario.bAttemptApply ||
+			OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live_hold_unresolved_multi_hit"));
+		const bool bBaselineNoMutation =
+			!Scenario.bAttemptApply ||
 			(OutResult.EventCountAfter == OutResult.EventCountBefore &&
 				OutResult.ProjectionHashAfter == OutResult.ProjectionHashBefore &&
 				OutResult.StateHashAfter == OutResult.StateHashBefore &&
 				OutResult.CrustHashAfter == OutResult.CrustHashBefore);
-		const bool bNoRemeshEventApplied =
-			!Scenario.bAttemptApply ||
-			(!OutResult.bApplied && OutResult.EventCountAfter == OutResult.EventCountBefore);
-		const bool bHoldModeHonest =
-			!Scenario.bAttemptApply ||
-			OutResult.LastRemeshMode.StartsWith(TEXT("phase_iii_e6_live_hold_unresolved_multi_hit"));
-		OutResult.bPass =
+		const bool bBaselineReproduced =
+			Scenario.bDisableMixedMaterialNearestHit &&
 			OutResult.bRan &&
 			bForbiddenZero &&
-			bNoRemeshEventApplied &&
 			OutResult.Audit.DiagnosedHoldCount == OutResult.Audit.SelectionUnresolvedMultiHitCount &&
 			OutResult.UnsupportedLikeHoldCount == OutResult.Audit.SelectionUnresolvedMultiHitCount &&
 			OutResult.UnsupportedLikeHoldCount == OutResult.SelectionAudit.NearestHitUnsupportedHeldCount &&
 			OutResult.ProcessMarkedUnsupportedCount == 0 &&
-			bNoMutationOnManualHold &&
-			bHoldModeHonest;
+			bBaselineNoMutation &&
+			bBaselineHoldModeHonest;
+		OutResult.bPass = Scenario.bDisableMixedMaterialNearestHit
+			? bBaselineReproduced
+			: (OutResult.bRan && bForbiddenZero && bSelectionClosed && bLiveApplySucceeded);
 		OutResult.Seconds = FPlatformTime::Seconds() - StartSeconds;
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("CarrierLabPhaseIIIE610ManualCadenceUnsupported: scenario done %s unresolved=%d unsupported=%d mixed=%d third=%d pass=%d seconds=%.3f"),
+			TEXT("CarrierLabPhaseIIIE611MixedMaterialNearestHit: scenario done %s unresolved=%d unsupported=%d nearest_mixed=%d dtie_mixed=%d pass=%d seconds=%.3f"),
 			*Scenario.Name,
 			OutResult.Audit.SelectionUnresolvedMultiHitCount,
 			OutResult.UnsupportedLikeHoldCount,
-			OutResult.BucketStats.Counts[BucketIndex(ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial)],
-			OutResult.BucketStats.Counts[BucketIndex(ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate)],
+			OutResult.SelectionAudit.NearestHitMixedMaterialResolvedCount,
+			OutResult.SelectionAudit.DistanceTieFallbackMixedMaterialCount,
 			OutResult.bPass ? 1 : 0,
 			OutResult.Seconds);
 		Actor->Destroy();
@@ -721,12 +753,13 @@ namespace
 	FString ScenarioJsonLine(const FScenarioResult& Result)
 	{
 		return FString::Printf(
-			TEXT("{\"type\":\"scenario\",\"scenario\":%s,\"pass\":%s,\"automatic\":%s,\"attempt_apply\":%s,\"step16_held_attempt_before_target\":%s,\"target_step\":%d,\"step_before\":%d,\"step_after\":%d,\"events_before\":%d,\"events_after\":%d,\"next_before\":%d,\"next_after\":%d,\"unresolved\":%d,\"unsupported_like_holds\":%d,\"cross_plate_different\":%d,\"third_plate\":%d,\"cross_plate_equal\":%d,\"mixed_material\":%d,\"coalesced\":%d,\"shared_tiebreak\":%d,\"nearest_cross\":%d,\"nearest_third\":%d,\"nearest_tie\":%d,\"nearest_unsupported\":%d,\"distance_tie_fallback\":%d,\"process_marked\":%d,\"shape_edge\":%d,\"shape_vertex\":%d,\"shape_field_mismatch\":%d,\"shape_common_vertex\":%d,\"shape_non_boundary\":%d,\"max_ray_residual_km\":%.17g,\"max_scalar_residual\":%.17g,\"max_elevation_residual_km\":%.17g,\"max_unit_vector_residual\":%.17g,\"selection_hash\":%s,\"diagnosis_hash\":%s,\"scenario_hash\":%s,\"last_remesh_mode\":%s,\"seconds\":%.6f}"),
+			TEXT("{\"type\":\"scenario\",\"scenario\":%s,\"pass\":%s,\"automatic\":%s,\"attempt_apply\":%s,\"step16_held_attempt_before_target\":%s,\"mixed_material_extension_disabled\":%s,\"target_step\":%d,\"step_before\":%d,\"step_after\":%d,\"events_before\":%d,\"events_after\":%d,\"next_before\":%d,\"next_after\":%d,\"unresolved\":%d,\"unsupported_like_holds\":%d,\"cross_plate_different\":%d,\"third_plate\":%d,\"cross_plate_equal\":%d,\"mixed_material_hold_bucket\":%d,\"mixed_material_selection_bucket\":%d,\"coalesced\":%d,\"shared_tiebreak\":%d,\"nearest_cross\":%d,\"nearest_third\":%d,\"nearest_mixed\":%d,\"nearest_tie\":%d,\"nearest_unsupported\":%d,\"distance_tie_fallback\":%d,\"distance_tie_fallback_mixed\":%d,\"process_marked\":%d,\"shape_edge\":%d,\"shape_vertex\":%d,\"shape_field_mismatch\":%d,\"shape_common_vertex\":%d,\"shape_non_boundary\":%d,\"max_ray_residual_km\":%.17g,\"max_scalar_residual\":%.17g,\"max_elevation_residual_km\":%.17g,\"max_unit_vector_residual\":%.17g,\"selection_hash\":%s,\"diagnosis_hash\":%s,\"scenario_hash\":%s,\"last_remesh_mode\":%s,\"seconds\":%.6f}"),
 			*JsonString(Result.Name),
 			*BoolText(Result.bPass),
 			*BoolText(Result.bAutomatic),
 			*BoolText(Result.bAttemptApply),
 			*BoolText(Result.bStep16HeldAttemptBeforeTarget),
+			*BoolText(Result.bDisableMixedMaterialNearestHit),
 			Result.TargetStep,
 			Result.StepBefore,
 			Result.StepAfter,
@@ -740,13 +773,16 @@ namespace
 			Result.Audit.SelectionThirdPlateMultiHitCount,
 			Result.Audit.SelectionCrossPlateEqualMultiHitCount,
 			Result.BucketStats.Counts[BucketIndex(ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial)],
+			Result.SelectionAudit.MixedMaterialMultiHitCount,
 			Result.Audit.CoalescedMultiHitCount,
 			Result.Audit.SharedBoundaryTieBreakCount,
 			Result.SelectionAudit.NearestHitCrossPlateDifferentResolvedCount,
 			Result.SelectionAudit.NearestHitThirdPlateResolvedCount,
+			Result.SelectionAudit.NearestHitMixedMaterialResolvedCount,
 			Result.SelectionAudit.NearestHitDistanceTieHeldCount,
 			Result.SelectionAudit.NearestHitUnsupportedHeldCount,
 			Result.SelectionAudit.DistanceTieFallbackCount,
+			Result.SelectionAudit.DistanceTieFallbackMixedMaterialCount,
 			Result.ProcessMarkedUnsupportedCount,
 			Result.ShapeStats.Counts[ShapeIndex(ECarrierLabPhaseIIIE62HoldShape::TwoPlateSharedGlobalEdge)],
 			Result.ShapeStats.Counts[ShapeIndex(ECarrierLabPhaseIIIE62HoldShape::TwoPlateSharedGlobalVertexOnly)],
@@ -767,28 +803,43 @@ namespace
 	FString BuildReport(const TArray<FScenarioResult>& Results, const FString& JsonPath)
 	{
 		bool bAllPass = true;
-		int32 MaxUnsupported = 0;
-		int32 MaxMixedMaterial = 0;
-		int32 MaxProcessMarked = 0;
+		int32 MaxPromotedUnsupported = 0;
+		int32 MaxPromotedMixedHoldBucket = 0;
+		int32 MaxPromotedMixedSelectionBucket = 0;
+		int32 MaxPromotedProcessMarked = 0;
+		int32 MaxBaselineUnsupported = 0;
 		for (const FScenarioResult& Result : Results)
 		{
 			bAllPass = bAllPass && Result.bPass;
-			MaxUnsupported = FMath::Max(MaxUnsupported, Result.UnsupportedLikeHoldCount);
-			MaxMixedMaterial = FMath::Max(MaxMixedMaterial, Result.BucketStats.Counts[BucketIndex(ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial)]);
-			MaxProcessMarked = FMath::Max(MaxProcessMarked, Result.ProcessMarkedUnsupportedCount);
+			if (Result.bDisableMixedMaterialNearestHit)
+			{
+				MaxBaselineUnsupported = FMath::Max(MaxBaselineUnsupported, Result.UnsupportedLikeHoldCount);
+			}
+			else
+			{
+				MaxPromotedUnsupported = FMath::Max(MaxPromotedUnsupported, Result.UnsupportedLikeHoldCount);
+				MaxPromotedMixedHoldBucket = FMath::Max(
+					MaxPromotedMixedHoldBucket,
+					Result.BucketStats.Counts[BucketIndex(ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial)]);
+				MaxPromotedMixedSelectionBucket = FMath::Max(
+					MaxPromotedMixedSelectionBucket,
+					Result.SelectionAudit.MixedMaterialMultiHitCount);
+				MaxPromotedProcessMarked = FMath::Max(MaxPromotedProcessMarked, Result.ProcessMarkedUnsupportedCount);
+			}
 		}
 
 		FString Report;
-		Report += TEXT("# Phase IIIE.6.10 Manual Cadence Unsupported Multi-Hit Diagnosis\n\n");
+		Report += TEXT("# Phase IIIE.6.11 Mixed-Material Nearest-Hit Resolution\n\n");
 		Report += FString::Printf(
-			TEXT("**Verdict:** %s / DIAGNOSTIC ONLY. Selection still holds fail-loud at editor-default continental material; this slice classifies the unsupported multi-hit bucket and does not resolve, coalesce, skip, or mutate those records.\n\n"),
+			TEXT("**Verdict:** %s. IIIE.6.11 amends the existing nearest-hit lab policy to include mixed-material strict unique-nearest records, while mixed-material distance ties flow through the existing IIIE.6.6 fallback hierarchy. Baseline rows keep the IIIE.6.10 hold reproducible with the extension disabled.\n\n"),
 			bAllPass ? TEXT("PASS") : TEXT("FAIL"));
 
 		Report += TEXT("## Scope\n\n");
-		Report += TEXT("- IIIE.6.10 changes no remesh semantics. It adds a commandlet and report only.\n");
+		Report += TEXT("- IIIE.6.11 changes remesh source selection semantics only for the existing nearest-hit lab policy's mixed-material bucket coverage.\n");
 		Report += TEXT("- The diagnostic uses the live actor editor defaults that exposed the problem: `100000` samples, `40` plates, seed `42`, speed `66.6666666667 mm/yr`, and `ContinentalPlateFraction = 0.30`.\n");
 		Report += TEXT("- Earlier IIIE.6.4/6.5/6.6 default commandlets forced `ContinentalPlateFraction = 0.0`, which made them all-ocean harnesses and did not cover the mixed-material editor path visible in the live actor.\n");
-		Report += TEXT("- A held remesh remains honest: event count and hashes do not change on manual hold, and the mode string stays `phase_iii_e6_live_hold_unresolved_multi_hit_*`.\n\n");
+		Report += TEXT("- With `bExtendPhaseIIIE3NearestHitToMixedMaterial = false`, held remesh remains honest: event count and hashes do not change on manual hold, and the mode string stays `phase_iii_e6_live_hold_unresolved_multi_hit_*`.\n\n");
+		Report += TEXT("- The default commandlet runs a cadence selection sweep. Passing `-ApplyProbeStep=N` adds one default-scale manual live-apply proof at that step; `-AutoApplyProbe` adds the natural-cadence apply proof; `-FullApplySweep` upgrades every swept manual row to live apply. Use the monitored runner for apply modes.\n\n");
 
 		Report += TEXT("## Default Parity Gate\n\n");
 		Report += TEXT("| Field | Value | Gate |\n");
@@ -800,6 +851,7 @@ namespace
 		Report += FString::Printf(TEXT("| VelocityMmPerYear | `%.10g` | observed-speed default used by the workbench |\n"), DefaultVelocityMmPerYear);
 		Report += TEXT("| Phase III process layer | `on` | matches workbench default; slab pull remains off |\n");
 		Report += TEXT("| IIIE resolvers | `coalescing/shared/nearest/distance-tie on` | audited IIIE.6 selection chain, not Stage 1.5 |\n");
+		Report += TEXT("| Mixed-material nearest-hit extension | `on` for promoted rows; `off` for baseline rows | preserves IIIE.6.10 evidence while closing live default path |\n");
 		Report += TEXT("| Non-separating veto | `off` | IIIE.6.9 paper-literal zero-hit generation restored |\n\n");
 
 		Report += TEXT("## Cadence Sweep\n\n");
@@ -808,11 +860,12 @@ namespace
 		for (const FScenarioResult& Result : Results)
 		{
 			Report += FString::Printf(
-				TEXT("| %s | %s | auto `%d`, apply `%d`, step `%d->%d`, events `%d->%d`, next `%d->%d`, unresolved `%d`, unsupported `%d`, buckets cross/third/equal/mixed `%d/%d/%d/%d`, nearest cross/third/tie/unsupported `%d/%d/%d/%d`, dtie fallback `%d`, process `%d`, mode `%s`, hash `%s`, %.2fs |\n"),
+				TEXT("| %s | %s | auto `%d`, apply `%d`, extension_disabled `%d`, step `%d->%d`, events `%d->%d`, next `%d->%d`, unresolved `%d`, unsupported `%d`, buckets cross/third/equal/mixed `%d/%d/%d/%d`, nearest cross/third/mixed/tie/unsupported `%d/%d/%d/%d/%d`, dtie fallback total/mixed `%d/%d`, process `%d`, mode `%s`, hash `%s`, %.2fs |\n"),
 				*Result.Name,
 				*PassFail(Result.bPass),
 				Result.bAutomatic ? 1 : 0,
 				Result.bAttemptApply ? 1 : 0,
+				Result.bDisableMixedMaterialNearestHit ? 1 : 0,
 				Result.StepBefore,
 				Result.StepAfter,
 				Result.EventCountBefore,
@@ -827,9 +880,11 @@ namespace
 				Result.BucketStats.Counts[BucketIndex(ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial)],
 				Result.SelectionAudit.NearestHitCrossPlateDifferentResolvedCount,
 				Result.SelectionAudit.NearestHitThirdPlateResolvedCount,
+				Result.SelectionAudit.NearestHitMixedMaterialResolvedCount,
 				Result.SelectionAudit.NearestHitDistanceTieHeldCount,
 				Result.SelectionAudit.NearestHitUnsupportedHeldCount,
 				Result.SelectionAudit.DistanceTieFallbackCount,
+				Result.SelectionAudit.DistanceTieFallbackMixedMaterialCount,
 				Result.ProcessMarkedUnsupportedCount,
 				*Result.LastRemeshMode,
 				*Result.ScenarioHash,
@@ -876,17 +931,21 @@ namespace
 
 		Report += TEXT("## Interpretation\n\n");
 		Report += FString::Printf(
-			TEXT("- Max unsupported count across the sweep: `%d`.\n- Max mixed-material bucket count across the sweep: `%d`.\n- Max process-marked unsupported count across the sweep: `%d`.\n"),
-			MaxUnsupported,
-			MaxMixedMaterial,
-			MaxProcessMarked);
-		Report += TEXT("- Because the harness now uses `ContinentalPlateFraction = 0.30`, IIIE.6.10 directly covers the live editor path from the screenshots rather than the older all-ocean diagnostic path.\n");
-		Report += TEXT("- If `mixed_material` dominates, the next slice should decide whether mixed continental/oceanic post-motion multi-hits are paper-domain ownership, a named lab policy, or upstream process-state marking. IIIE.6.10 deliberately does not make that decision.\n\n");
+			TEXT("- Max promoted-row unsupported count across the sweep: `%d`.\n- Max promoted-row held mixed-material bucket count across the sweep: `%d`.\n- Max promoted-row mixed-material selection bucket count resolved by the amendment: `%d`.\n- Max promoted-row process-marked unsupported count across the sweep: `%d`.\n- Max extension-disabled baseline unsupported count: `%d`.\n"),
+			MaxPromotedUnsupported,
+			MaxPromotedMixedHoldBucket,
+			MaxPromotedMixedSelectionBucket,
+			MaxPromotedProcessMarked,
+			MaxBaselineUnsupported);
+		Report += TEXT("- Because the harness now uses `ContinentalPlateFraction = 0.30`, IIIE.6.11 directly covers the live editor path from the screenshots rather than the older all-ocean diagnostic path.\n");
+		Report += TEXT("- The promoted rows must show `unsupported == 0`, `unresolved == 0`, and live apply mode. The extension-disabled rows must reproduce the IIIE.6.10 mixed-material hold as historical evidence.\n");
+		Report += TEXT("- Mixed-material nearest-hit remains an amendment to the existing nearest-hit lab policy, not a new paper-cited rule and not an eighth IIIE lab policy.\n\n");
 
 		Report += TEXT("## Stop Conditions Preserved\n\n");
-		Report += TEXT("- Stop if any unsupported record mutates topology, uses prior-owner fallback, uses projection-derived authority, or routes through Stage 1.5.\n");
-		Report += TEXT("- Stop if a manual held remesh increments events or changes projection/state/crust hashes.\n");
-		Report += TEXT("- Stop if process-state marks explain a substantial fraction of unsupported records; that would redirect the next slice to IIIB/IIIC/IIID marking rather than a remesh tie-break policy.\n\n");
+		Report += TEXT("- Stop if any promoted-row unsupported record remains after the amendment.\n");
+		Report += TEXT("- Stop if the extension-disabled baseline mutates topology, uses prior-owner fallback, uses projection-derived authority, or routes through Stage 1.5.\n");
+		Report += TEXT("- Stop if a baseline held remesh increments events or changes projection/state/crust hashes.\n");
+		Report += TEXT("- Stop if process-state marks explain a substantial fraction of any remaining unsupported records; that would redirect to IIIB/IIIC/IIID marking rather than remesh tie-break policy.\n\n");
 
 		Report += FString::Printf(TEXT("## Artifacts\n\n- JSONL metrics: `%s`\n"), *JsonPath);
 		return Report;
@@ -910,28 +969,60 @@ int32 UCarrierLabPhaseIIIE610ManualCadenceUnsupportedCommandlet::Main(const FStr
 	}
 
 	const FString OutputRoot = GetOutputRoot(Params);
-	const FString JsonPath = FPaths::Combine(OutputRoot, TEXT("phase-iii-slice-iiie6-10-manual-cadence-unsupported-multihit-diagnosis.jsonl"));
+	const FString JsonPath = FPaths::Combine(OutputRoot, TEXT("phase-iii-slice-iiie6-11-mixed-material-resolution.jsonl"));
 	const FString ReportPath = GetReportPath(Params);
+	const bool bFullApplySweep = FParse::Param(*Params, TEXT("FullApplySweep"));
+	const bool bAutoApplyProbe = FParse::Param(*Params, TEXT("AutoApplyProbe"));
+	const bool bPostStep16ApplyProbe = FParse::Param(*Params, TEXT("PostStep16ApplyProbe"));
+	const bool bBaselineApply = FParse::Param(*Params, TEXT("BaselineApply"));
+	const bool bOnlyApplyProbe = FParse::Param(*Params, TEXT("OnlyApplyProbe"));
+	int32 ApplyProbeStep = INDEX_NONE;
+	FParse::Value(*Params, TEXT("ApplyProbeStep="), ApplyProbeStep);
 	IFileManager::Get().MakeDirectory(*OutputRoot, true);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(ReportPath), true);
 
-		const TArray<FScenario> Scenarios = {
-			{ TEXT("manual_step_1_selection"), 1, false, false, false },
-			{ TEXT("manual_step_8_selection"), 8, false, false, false },
-			{ TEXT("manual_step_15_selection"), 15, false, false, false },
-			{ TEXT("manual_step_16_apply_probe"), 16, false, true, false },
-			{ TEXT("manual_step_17_selection"), 17, false, false, false },
-			{ TEXT("manual_step_20_selection"), 20, false, false, false },
-		{ TEXT("manual_step_24_selection"), 24, false, false, false },
-		{ TEXT("manual_step_32_apply_probe"), 32, false, true, false },
-		{ TEXT("manual_step_32_replay_selection"), 32, false, false, false },
-		{ TEXT("manual_step_32_after_step16_hold"), 32, false, true, true },
-		{ TEXT("manual_step_33_apply_probe"), 33, false, true, false },
-		{ TEXT("manual_step_40_selection"), 40, false, false, false },
-		{ TEXT("manual_step_48_selection"), 48, false, false, false },
-		{ TEXT("manual_step_60_selection"), 60, false, false, false },
-		{ TEXT("auto_cadence_step_32_apply_probe"), 32, true, true, false }
+	auto ShouldApplyStep = [bFullApplySweep, ApplyProbeStep](const int32 Step)
+	{
+		return bFullApplySweep || ApplyProbeStep == Step;
 	};
+
+	TArray<FScenario> Scenarios;
+	const int32 SweepSteps[] = { 1, 8, 15, 16, 17, 20, 24, 32, 33, 40, 48, 60 };
+	if (bOnlyApplyProbe && ApplyProbeStep > 0)
+	{
+		Scenarios.Add({
+			FString::Printf(TEXT("manual_step_%d_apply_probe_only"), ApplyProbeStep),
+			ApplyProbeStep,
+			false,
+			true,
+			false,
+			false });
+	}
+	else
+	{
+		for (const int32 Step : SweepSteps)
+		{
+			const bool bApply = ShouldApplyStep(Step);
+			Scenarios.Add({
+				FString::Printf(TEXT("manual_step_%d_%s"), Step, bApply ? TEXT("apply_probe") : TEXT("selection")),
+				Step,
+				false,
+				bApply,
+				false,
+				false });
+		}
+		Scenarios.Add({ TEXT("manual_step_32_replay_selection"), 32, false, false, false, false });
+		if (bPostStep16ApplyProbe)
+		{
+			Scenarios.Add({ TEXT("manual_step_32_after_step16_apply_probe"), 32, false, true, true, false });
+		}
+		if (bAutoApplyProbe)
+		{
+			Scenarios.Add({ TEXT("auto_cadence_step_32_apply_probe"), 32, true, true, false, false });
+		}
+		Scenarios.Add({ bBaselineApply ? TEXT("baseline_step_16_mixed_material_extension_disabled_apply") : TEXT("baseline_step_16_mixed_material_extension_disabled_selection"), 16, false, bBaselineApply, false, true });
+		Scenarios.Add({ bBaselineApply ? TEXT("baseline_step_32_mixed_material_extension_disabled_apply") : TEXT("baseline_step_32_mixed_material_extension_disabled_selection"), 32, false, bBaselineApply, false, true });
+	}
 
 	TArray<FScenarioResult> Results;
 	Results.Reserve(Scenarios.Num());
@@ -941,26 +1032,30 @@ int32 UCarrierLabPhaseIIIE610ManualCadenceUnsupportedCommandlet::Main(const FStr
 		RunScenario(*World, Scenario, Result);
 	}
 
-	bool bSameSeedReplay = false;
-	const FScenarioResult* Step32Apply = nullptr;
+	bool bSameSeedReplay = bOnlyApplyProbe;
+	const FScenarioResult* Step32Primary = nullptr;
 	const FScenarioResult* Step32Replay = nullptr;
 	for (const FScenarioResult& Result : Results)
 	{
-		if (Result.Name == TEXT("manual_step_32_apply_probe"))
+		if (Result.TargetStep == 32 &&
+			!Result.bAutomatic &&
+			!Result.bStep16HeldAttemptBeforeTarget &&
+			!Result.bDisableMixedMaterialNearestHit &&
+			Step32Primary == nullptr)
 		{
-			Step32Apply = &Result;
+			Step32Primary = &Result;
 		}
 		else if (Result.Name == TEXT("manual_step_32_replay_selection"))
 		{
 			Step32Replay = &Result;
 		}
 	}
-	if (Step32Apply != nullptr && Step32Replay != nullptr)
+	if (Step32Primary != nullptr && Step32Replay != nullptr)
 	{
 		bSameSeedReplay =
-			Step32Apply->SelectionAudit.SelectionHash == Step32Replay->SelectionAudit.SelectionHash &&
-			Step32Apply->Audit.DiagnosisHash == Step32Replay->Audit.DiagnosisHash &&
-			Step32Apply->UnsupportedLikeHoldCount == Step32Replay->UnsupportedLikeHoldCount;
+			Step32Primary->SelectionAudit.SelectionHash == Step32Replay->SelectionAudit.SelectionHash &&
+			Step32Primary->Audit.DiagnosisHash == Step32Replay->Audit.DiagnosisHash &&
+			Step32Primary->UnsupportedLikeHoldCount == Step32Replay->UnsupportedLikeHoldCount;
 	}
 
 	FString JsonLines;
@@ -976,7 +1071,7 @@ int32 UCarrierLabPhaseIIIE610ManualCadenceUnsupportedCommandlet::Main(const FStr
 
 	FString Report = BuildReport(Results, JsonPath);
 	Report += FString::Printf(
-		TEXT("\n## Replay Check\n\n- Manual step-32 apply probe vs selection replay: `%s`.\n"),
+		TEXT("\n## Replay Check\n\n- Manual step-32 primary row vs selection replay: `%s`.\n"),
 		bSameSeedReplay ? TEXT("selection and diagnosis hashes match") : TEXT("MISMATCH"));
 	FFileHelper::SaveStringToFile(Report, *ReportPath);
 

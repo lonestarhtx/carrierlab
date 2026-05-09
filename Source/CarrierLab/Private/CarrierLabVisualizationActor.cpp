@@ -2793,6 +2793,7 @@ namespace
 
 	bool TryResolveIIIE65NearestHitTieBreak(
 		const TArray<FCarrierLabIIIE3SelectionCandidate>& VisibleCandidates,
+		const bool bExtendNearestHitToMixedMaterial,
 		FCarrierLabPhaseIIIE3SelectionRecord& OutRecord,
 		FCarrierLabIIIE3SelectionCandidate& OutWinner)
 	{
@@ -2814,7 +2815,9 @@ namespace
 
 		const bool bSupportedBucket =
 			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateDifferent ||
-			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate;
+			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate ||
+			(OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial &&
+				bExtendNearestHitToMixedMaterial);
 		if (!bSupportedBucket)
 		{
 			OutRecord.NearestHitResultClass = ECarrierLabPhaseIIIE65NearestHitResult::UnsupportedHeld;
@@ -2854,10 +2857,19 @@ namespace
 		}
 
 		OutRecord.bUsedNearestHitTieBreak = true;
-		OutRecord.NearestHitResultClass =
-			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate
-				? ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestThirdPlate
-				: ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestCrossPlateDifferent;
+		if (OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate)
+		{
+			OutRecord.NearestHitResultClass = ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestThirdPlate;
+		}
+		else if (OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial)
+		{
+			OutRecord.NearestHitResultClass = ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestMixedMaterial;
+			OutRecord.bUsedNearestHitOnMixedMaterial = true;
+		}
+		else
+		{
+			OutRecord.NearestHitResultClass = ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestCrossPlateDifferent;
+		}
 		OutWinner = VisibleCandidates[NearestIndex];
 		return true;
 	}
@@ -2879,7 +2891,8 @@ namespace
 
 		const bool bSupportedBucket =
 			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateDifferent ||
-			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate;
+			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate ||
+			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial;
 		if (!bSupportedBucket)
 		{
 			OutRecord.DistanceTieFallbackLayer = ECarrierLabPhaseIIIE66DistanceTieFallbackLayer::Unresolved;
@@ -2916,6 +2929,8 @@ namespace
 		}
 
 		OutRecord.bUsedDistanceTieFallback = true;
+		OutRecord.bUsedDistanceTieFallbackOnMixedMaterial =
+			OutRecord.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial;
 		OutRecord.DistanceTieFallbackLayer = Layer;
 		OutRecord.DistanceTieFallbackCandidateCount = VisibleCandidates.Num();
 		OutRecord.DistanceTieFallbackPlateCount = PlateStats.Num();
@@ -2931,6 +2946,7 @@ namespace
 		const bool bEnableDuplicateHitCoalescing,
 		const bool bEnableSharedBoundaryTieBreak,
 		const bool bEnableNearestHitTieBreak,
+		const bool bExtendNearestHitToMixedMaterial,
 		const bool bEnableDistanceTieFallback,
 		const CarrierLab::FCarrierState* SharedBoundaryTieBreakState,
 		FCarrierLabPhaseIIIE3SelectionRecord& OutRecord)
@@ -3062,7 +3078,11 @@ namespace
 		if (bEnableNearestHitTieBreak)
 		{
 			FCarrierLabIIIE3SelectionCandidate NearestHitWinner;
-			if (TryResolveIIIE65NearestHitTieBreak(VisibleCandidates, OutRecord, NearestHitWinner))
+			if (TryResolveIIIE65NearestHitTieBreak(
+				VisibleCandidates,
+				bExtendNearestHitToMixedMaterial,
+				OutRecord,
+				NearestHitWinner))
 			{
 				OutRecord.EffectiveCandidateCount = 1;
 				OutRecord.SelectionClass = ECarrierLabPhaseIIIE3SelectionClass::ResolvedSingleHit;
@@ -3194,6 +3214,10 @@ namespace
 			{
 				++Audit.NearestHitThirdPlateResolvedCount;
 			}
+			else if (Record.NearestHitResultClass == ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestMixedMaterial)
+			{
+				++Audit.NearestHitMixedMaterialResolvedCount;
+			}
 			else
 			{
 				++Audit.NearestHitCrossPlateDifferentResolvedCount;
@@ -3248,6 +3272,7 @@ namespace
 			++Audit.DistanceTieFallbackCount;
 			const bool bCrossPlateDifferent = Record.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::CrossPlateDifferent;
 			const bool bThirdPlate = Record.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate;
+			const bool bMixedMaterial = Record.MultiHitBucket == ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial;
 			if (bCrossPlateDifferent)
 			{
 				++Audit.DistanceTieFallbackCrossPlateDifferentCount;
@@ -3255,6 +3280,10 @@ namespace
 			else if (bThirdPlate)
 			{
 				++Audit.DistanceTieFallbackThirdPlateCount;
+			}
+			else if (bMixedMaterial)
+			{
+				++Audit.DistanceTieFallbackMixedMaterialCount;
 			}
 
 			switch (Record.DistanceTieFallbackLayer)
@@ -3269,6 +3298,10 @@ namespace
 				{
 					++Audit.DistanceTieFallbackThirdPlateLayer1Count;
 				}
+				else if (bMixedMaterial)
+				{
+					++Audit.DistanceTieFallbackMixedMaterialLayer1Count;
+				}
 				break;
 			case ECarrierLabPhaseIIIE66DistanceTieFallbackLayer::OlderOceanicAge:
 				++Audit.DistanceTieFallbackLayer2WinsCount;
@@ -3280,6 +3313,10 @@ namespace
 				{
 					++Audit.DistanceTieFallbackThirdPlateLayer2Count;
 				}
+				else if (bMixedMaterial)
+				{
+					++Audit.DistanceTieFallbackMixedMaterialLayer2Count;
+				}
 				break;
 			case ECarrierLabPhaseIIIE66DistanceTieFallbackLayer::LowerPlateId:
 				++Audit.DistanceTieFallbackLayer3WinsCount;
@@ -3290,6 +3327,10 @@ namespace
 				else if (bThirdPlate)
 				{
 					++Audit.DistanceTieFallbackThirdPlateLayer3Count;
+				}
+				else if (bMixedMaterial)
+				{
+					++Audit.DistanceTieFallbackMixedMaterialLayer3Count;
 				}
 				break;
 			case ECarrierLabPhaseIIIE66DistanceTieFallbackLayer::Unresolved:
@@ -3343,7 +3384,7 @@ namespace
 	FString ComputePhaseIIIE3SelectionHash(const TArray<FCarrierLabPhaseIIIE3SelectionRecord>& Records)
 	{
 		uint64 Hash = 1469598103934665603ull;
-		HashMixString(Hash, TEXT("CarrierLab-IIIE3-filtered-selection-v4-distance-tie-fallback"));
+		HashMixString(Hash, TEXT("CarrierLab-IIIE3-filtered-selection-v5-mixed-material-nearest-hit"));
 		HashMix(Hash, static_cast<uint64>(Records.Num() + 1));
 		for (const FCarrierLabPhaseIIIE3SelectionRecord& Record : Records)
 		{
@@ -3371,7 +3412,9 @@ namespace
 			HashMix(Hash, static_cast<uint64>(Record.bCoalescingRejectedByFieldMismatch ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUsedSharedBoundaryTieBreak ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUsedNearestHitTieBreak ? 2 : 1));
+			HashMix(Hash, static_cast<uint64>(Record.bUsedNearestHitOnMixedMaterial ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUsedDistanceTieFallback ? 2 : 1));
+			HashMix(Hash, static_cast<uint64>(Record.bUsedDistanceTieFallbackOnMixedMaterial ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUsedPolicyWinner ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.bUsedPriorOwnerFallback ? 2 : 1));
 			HashMix(Hash, static_cast<uint64>(Record.SharedBoundaryShapeClass) + 1ull);
@@ -6564,6 +6607,7 @@ bool ACarrierLabVisualizationActor::QueryPhaseIIIE3FilteredRemeshSelectionForTes
 		bEnablePhaseIIIE3DuplicateHitCoalescing,
 		bEnablePhaseIIIE3SharedBoundaryTieBreak,
 		bEnablePhaseIIIE3NearestHitTieBreak,
+		bExtendPhaseIIIE3NearestHitToMixedMaterial,
 		bEnablePhaseIIIE3DistanceTieFallback,
 		nullptr,
 		OutRecord);
@@ -7349,6 +7393,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE3FilteredRemeshSelectionAuditFor
 			bEnablePhaseIIIE3DuplicateHitCoalescing,
 			bEnablePhaseIIIE3SharedBoundaryTieBreak,
 			bEnablePhaseIIIE3NearestHitTieBreak,
+			bExtendPhaseIIIE3NearestHitToMixedMaterial,
 			bEnablePhaseIIIE3DistanceTieFallback,
 			&State,
 			Record);
@@ -7356,6 +7401,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE3FilteredRemeshSelectionAuditFor
 	}
 
 	OutAudit.bNearestHitTieBreakDisabled = !bEnablePhaseIIIE3NearestHitTieBreak;
+	OutAudit.bMixedMaterialNearestHitDisabled = !bExtendPhaseIIIE3NearestHitToMixedMaterial;
 	OutAudit.bDistanceTieFallbackDisabled = !bEnablePhaseIIIE3DistanceTieFallback;
 	OutAudit.SelectionHash = ComputePhaseIIIE3SelectionHash(OutAudit.Records);
 	OutAudit.bRan = true;
@@ -7452,6 +7498,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE62CrossPlateMultiHitDiagnosisAud
 			Sample.UnitPosition,
 			SelectionCandidates,
 			bEnablePhaseIIIE3DuplicateHitCoalescing,
+			false,
 			false,
 			false,
 			false,
@@ -7615,6 +7662,7 @@ bool ACarrierLabVisualizationActor::RunPhaseIIIE64PostMotionMultiHitDiagnosisAud
 			bEnablePhaseIIIE3DuplicateHitCoalescing,
 			bEnablePhaseIIIE3SharedBoundaryTieBreak,
 			bEnablePhaseIIIE3NearestHitTieBreak,
+			bExtendPhaseIIIE3NearestHitToMixedMaterial,
 			bEnablePhaseIIIE3DistanceTieFallback,
 			&State,
 			Record);
@@ -12539,6 +12587,7 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.PhaseIIIELastCoalescedMultiHitCount = 0;
 	CurrentMetrics.PhaseIIIELastSharedBoundaryTieBreakCount = 0;
 	CurrentMetrics.PhaseIIIELastNearestHitTieBreakCount = 0;
+	CurrentMetrics.PhaseIIIELastNearestHitMixedMaterialCount = 0;
 	CurrentMetrics.PhaseIIIELastDistanceTieFallbackCount = 0;
 	CurrentMetrics.PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
 	CurrentMetrics.PhaseIIIELastCrossPlateEqualHoldCount = 0;
@@ -12562,7 +12611,9 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.PhaseIIIELastSharedBoundaryTieBreakCount = SelectionAudit.SharedBoundaryTieBreakCount;
 	CurrentMetrics.PhaseIIIELastNearestHitTieBreakCount =
 		SelectionAudit.NearestHitCrossPlateDifferentResolvedCount +
-		SelectionAudit.NearestHitThirdPlateResolvedCount;
+		SelectionAudit.NearestHitThirdPlateResolvedCount +
+		SelectionAudit.NearestHitMixedMaterialResolvedCount;
+	CurrentMetrics.PhaseIIIELastNearestHitMixedMaterialCount = SelectionAudit.NearestHitMixedMaterialResolvedCount;
 	CurrentMetrics.PhaseIIIELastDistanceTieFallbackCount = SelectionAudit.DistanceTieFallbackCount;
 	CurrentMetrics.PhaseIIIELastWithinPlateCoincidentHoldCount = SelectionAudit.WithinPlateCoincidentMultiHitCount;
 	CurrentMetrics.PhaseIIIELastCrossPlateEqualHoldCount = SelectionAudit.CrossPlateEqualMultiHitCount;
@@ -12600,12 +12651,13 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 		UE_LOG(
 			LogTemp,
 			Warning,
-			TEXT("CarrierLab IIIE.6 live remesh held: %s (coalesced=%d shared_tiebreak=%d nearest_hit cross/third/tie/unsupported=%d/%d/%d/%d distance_tie_fallback=%d hold_buckets withinCoin/withinSep/crossEq/crossDiff/mixed/third=%d/%d/%d/%d/%d/%d)"),
+			TEXT("CarrierLab IIIE.6 live remesh held: %s (coalesced=%d shared_tiebreak=%d nearest_hit cross/third/mixed/tie/unsupported=%d/%d/%d/%d/%d distance_tie_fallback=%d hold_buckets withinCoin/withinSep/crossEq/crossDiff/mixed/third=%d/%d/%d/%d/%d/%d)"),
 			*CurrentMetrics.LastRemeshMode,
 			SelectionAudit.CoalescedMultiHitCount,
 			SelectionAudit.SharedBoundaryTieBreakCount,
 			SelectionAudit.NearestHitCrossPlateDifferentResolvedCount,
 			SelectionAudit.NearestHitThirdPlateResolvedCount,
+			SelectionAudit.NearestHitMixedMaterialResolvedCount,
 			SelectionAudit.NearestHitDistanceTieHeldCount,
 			SelectionAudit.NearestHitUnsupportedHeldCount,
 			SelectionAudit.DistanceTieFallbackCount,
@@ -12627,9 +12679,25 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	int32 AppliedGeneratedCount = 0;
 	int32 RiftingPendingCount = 0;
 	int32 GeneratedWithNonPositiveSeparationCount = 0;
+	int32 ProcessedSelectionRecordCount = 0;
 
 	for (const FCarrierLabPhaseIIIE3SelectionRecord& SelectionRecord : SelectionAudit.Records)
 	{
+		++ProcessedSelectionRecordCount;
+		if (ProcessedSelectionRecordCount == 1 || ProcessedSelectionRecordCount % 10000 == 0)
+		{
+			UE_LOG(
+				LogTemp,
+				Display,
+				TEXT("CarrierLab IIIE.6 live remesh progress: records %d/%d generated=%d applied=%d rift_pending=%d invalid=%d"),
+				ProcessedSelectionRecordCount,
+				SelectionAudit.Records.Num(),
+				GeneratedCandidateCount,
+				AppliedGeneratedCount,
+				RiftingPendingCount,
+				InvalidRecordCount);
+		}
+
 		if (!State.Samples.IsValidIndex(SelectionRecord.SampleId) || !VertexRecords.IsValidIndex(SelectionRecord.SampleId))
 		{
 			++InvalidRecordCount;
@@ -12764,6 +12832,15 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	RebuildInput.bUseExplicitVertexRecords = true;
 	RebuildInput.ExplicitVertexRecords = MoveTemp(VertexRecords);
 
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("CarrierLab IIIE.6 live remesh progress: topology rebuild start generated=%d applied=%d rift_pending=%d nonpos_sep=%d"),
+		GeneratedCandidateCount,
+		AppliedGeneratedCount,
+		RiftingPendingCount,
+		GeneratedWithNonPositiveSeparationCount);
+
 	FCarrierLabPhaseIIIE5TopologyRebuildAudit RebuildAudit;
 	if (!RunPhaseIIIE5TopologyRebuildFixtureForTest(RebuildInput, RebuildAudit) || !RebuildAudit.bApplied)
 	{
@@ -12794,7 +12871,9 @@ bool ACarrierLabVisualizationActor::ApplyPhaseIIIELiveRemeshEvent()
 	CurrentMetrics.PhaseIIIELastSharedBoundaryTieBreakCount = SelectionAudit.SharedBoundaryTieBreakCount;
 	CurrentMetrics.PhaseIIIELastNearestHitTieBreakCount =
 		SelectionAudit.NearestHitCrossPlateDifferentResolvedCount +
-		SelectionAudit.NearestHitThirdPlateResolvedCount;
+		SelectionAudit.NearestHitThirdPlateResolvedCount +
+		SelectionAudit.NearestHitMixedMaterialResolvedCount;
+	CurrentMetrics.PhaseIIIELastNearestHitMixedMaterialCount = SelectionAudit.NearestHitMixedMaterialResolvedCount;
 	CurrentMetrics.PhaseIIIELastDistanceTieFallbackCount = SelectionAudit.DistanceTieFallbackCount;
 	CurrentMetrics.PhaseIIIELastWithinPlateCoincidentHoldCount = 0;
 	CurrentMetrics.PhaseIIIELastCrossPlateEqualHoldCount = 0;

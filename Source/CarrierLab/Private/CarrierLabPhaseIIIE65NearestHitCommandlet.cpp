@@ -77,6 +77,8 @@ namespace
 			return TEXT("unique_nearest_cross_plate_different");
 		case ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestThirdPlate:
 			return TEXT("unique_nearest_third_plate");
+		case ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestMixedMaterial:
+			return TEXT("unique_nearest_mixed_material");
 		case ECarrierLabPhaseIIIE65NearestHitResult::DistanceTieHeld:
 			return TEXT("distance_tie_held");
 		case ECarrierLabPhaseIIIE65NearestHitResult::UnsupportedHeld:
@@ -158,6 +160,7 @@ namespace
 		ECarrierLabPhaseIIIE65NearestHitResult ExpectedNearestResult = ECarrierLabPhaseIIIE65NearestHitResult::NotApplied;
 		bool bExpectSharedBoundaryFires = false;
 		bool bExpectNearestHitFires = false;
+		bool bDisableMixedMaterialExtension = false;
 	};
 
 	struct FFixtureResult
@@ -176,6 +179,7 @@ namespace
 		int32 NearestProcessMarkedRefCount = 0;
 		bool bUsedSharedBoundaryTieBreak = false;
 		bool bUsedNearestHitTieBreak = false;
+		bool bUsedNearestHitOnMixedMaterial = false;
 		bool bUsedPolicyWinner = false;
 		bool bUsedPriorOwnerFallback = false;
 	};
@@ -192,6 +196,7 @@ namespace
 		Actor->bEnablePhaseIIIE3DuplicateHitCoalescing = true;
 		Actor->bEnablePhaseIIIE3SharedBoundaryTieBreak = true;
 		Actor->bEnablePhaseIIIE3NearestHitTieBreak = true;
+		Actor->bExtendPhaseIIIE3NearestHitToMixedMaterial = !Fixture.bDisableMixedMaterialExtension;
 		Actor->bEnablePhaseIIIE3DistanceTieFallback = false;
 
 		FCarrierLabPhaseIIIE3SelectionRecord Record;
@@ -212,6 +217,7 @@ namespace
 		Result.NearestProcessMarkedRefCount = Record.NearestHitProcessMarkedRefCount;
 		Result.bUsedSharedBoundaryTieBreak = Record.bUsedSharedBoundaryTieBreak;
 		Result.bUsedNearestHitTieBreak = Record.bUsedNearestHitTieBreak;
+		Result.bUsedNearestHitOnMixedMaterial = Record.bUsedNearestHitOnMixedMaterial;
 		Result.bUsedPolicyWinner = Record.bUsedPolicyWinner;
 		Result.bUsedPriorOwnerFallback = Record.bUsedPriorOwnerFallback;
 
@@ -229,6 +235,10 @@ namespace
 			Record.bUsedSharedBoundaryTieBreak == Fixture.bExpectSharedBoundaryFires;
 		const bool bNearestFlagMatches =
 			Record.bUsedNearestHitTieBreak == Fixture.bExpectNearestHitFires;
+		const bool bMixedMaterialFlagMatches =
+			Record.bUsedNearestHitOnMixedMaterial ==
+			(Fixture.ExpectedNearestResult == ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestMixedMaterial &&
+				Fixture.bExpectNearestHitFires);
 
 		Result.bPass =
 			bForbiddenZero &&
@@ -237,7 +247,8 @@ namespace
 			bBucketMatches &&
 			bNearestMatches &&
 			bSharedFlagMatches &&
-			bNearestFlagMatches;
+			bNearestFlagMatches &&
+			bMixedMaterialFlagMatches;
 
 		Actor->Destroy();
 		CollectGarbage(RF_NoFlags);
@@ -322,7 +333,21 @@ namespace
 		}
 		{
 			FFixture F;
-			F.Name = TEXT("mixed material - IIIE.6.5 declines, held");
+			F.Name = TEXT("mixed material - strict unique nearest resolves");
+			F.Probes = {
+				MakeProbe(12, 1, 600, 70, 71, 72, EdgeBary, 1.0,           0.8, 10.0, 0.8, 10.0, 1.5),
+				MakeProbe(13, 2, 601, 73, 74, 75, EdgeBary, 1.0 + 1.0e-4,  0.0, 90.0, 0.0, 90.0, -3.0)
+			};
+			F.bExpectResolved = true;
+			F.ExpectedPlateId = 12;
+			F.ExpectedBucket = ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial;
+			F.ExpectedNearestResult = ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestMixedMaterial;
+			F.bExpectNearestHitFires = true;
+			Fixtures.Add(F);
+		}
+		{
+			FFixture F;
+			F.Name = TEXT("mixed material - extension disabled preserves IIIE.6.10 held baseline");
 			F.Probes = {
 				MakeProbe(12, 1, 600, 70, 71, 72, EdgeBary, 1.0,           0.8, 10.0, 0.8, 10.0, 1.5),
 				MakeProbe(13, 2, 601, 73, 74, 75, EdgeBary, 1.0 + 1.0e-4,  0.0, 90.0, 0.0, 90.0, -3.0)
@@ -330,6 +355,7 @@ namespace
 			F.bExpectResolved = false;
 			F.ExpectedBucket = ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial;
 			F.ExpectedNearestResult = ECarrierLabPhaseIIIE65NearestHitResult::UnsupportedHeld;
+			F.bDisableMixedMaterialExtension = true;
 			Fixtures.Add(F);
 		}
 		return Fixtures;

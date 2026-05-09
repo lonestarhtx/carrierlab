@@ -93,6 +93,8 @@ namespace
 			return TEXT("unique_nearest_cross_plate_different");
 		case ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestThirdPlate:
 			return TEXT("unique_nearest_third_plate");
+		case ECarrierLabPhaseIIIE65NearestHitResult::UniqueNearestMixedMaterial:
+			return TEXT("unique_nearest_mixed_material");
 		case ECarrierLabPhaseIIIE65NearestHitResult::DistanceTieHeld:
 			return TEXT("distance_tie_held");
 		case ECarrierLabPhaseIIIE65NearestHitResult::UnsupportedHeld:
@@ -131,7 +133,8 @@ namespace
 		const FVector3d& Bary,
 		const double Distance,
 		const double PlateContinentalFraction,
-		const double PlateOceanicAge)
+		const double PlateOceanicAge,
+		const double CandidateContinentalFraction = 0.0)
 	{
 		FCarrierLabPhaseIIIE3CandidateProbe Probe;
 		Probe.PlateId = PlateId;
@@ -142,7 +145,7 @@ namespace
 		Probe.GlobalVertexIds[2] = GlobalC;
 		Probe.Bary = Bary;
 		Probe.Distance = Distance;
-		Probe.ContinentalFraction = 0.0;
+		Probe.ContinentalFraction = CandidateContinentalFraction;
 		Probe.Elevation = -2.0;
 		Probe.HistoricalElevation = -2.0;
 		Probe.OceanicAge = 24.0;
@@ -293,6 +296,18 @@ namespace
 			};
 			F.ExpectedPlateId = 4;
 			F.ExpectedBucket = ECarrierLabPhaseIIIE3MultiHitBucket::ThirdPlate;
+			F.ExpectedLayer = ECarrierLabPhaseIIIE66DistanceTieFallbackLayer::ContinentalPriority;
+			Fixtures.Add(F);
+		}
+		{
+			FFixture F;
+			F.Name = TEXT("mixed-material distance tie fallback layer 1 - continental priority");
+			F.Probes = {
+				MakeProbe(6, 1, 450, 93, 94, 95, EdgeBary, 1.0,          0.85, 20.0, 0.85),
+				MakeProbe(7, 2, 451, 96, 97, 98, EdgeBary, 1.0 + 5e-10, 0.10, 90.0, 0.10)
+			};
+			F.ExpectedPlateId = 6;
+			F.ExpectedBucket = ECarrierLabPhaseIIIE3MultiHitBucket::MixedMaterial;
 			F.ExpectedLayer = ECarrierLabPhaseIIIE66DistanceTieFallbackLayer::ContinentalPriority;
 			Fixtures.Add(F);
 		}

@@ -115,6 +115,9 @@ struct FCarrierLabVisualizationMetrics
 	int32 PhaseIIIELastNearestHitTieBreakCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastNearestHitMixedMaterialCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastDistanceTieFallbackCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
@@ -763,6 +766,7 @@ enum class ECarrierLabPhaseIIIE65NearestHitResult : uint8
 	NotApplied,
 	UniqueNearestCrossPlateDifferent,
 	UniqueNearestThirdPlate,
+	UniqueNearestMixedMaterial,
 	DistanceTieHeld,
 	UnsupportedHeld
 };
@@ -842,7 +846,9 @@ struct FCarrierLabPhaseIIIE3SelectionRecord
 	bool bCoalescingRejectedByFieldMismatch = false;
 	bool bUsedSharedBoundaryTieBreak = false;
 	bool bUsedNearestHitTieBreak = false;
+	bool bUsedNearestHitOnMixedMaterial = false;
 	bool bUsedDistanceTieFallback = false;
+	bool bUsedDistanceTieFallbackOnMixedMaterial = false;
 	bool bUsedPolicyWinner = false;
 	bool bUsedPriorOwnerFallback = false;
 	ECarrierLabPhaseIIIE62HoldShape SharedBoundaryShapeClass = ECarrierLabPhaseIIIE62HoldShape::InvalidOrUnclassified;
@@ -918,12 +924,15 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 SharedBoundaryLowerPlateIdCount = 0;
 	int32 NearestHitCrossPlateDifferentResolvedCount = 0;
 	int32 NearestHitThirdPlateResolvedCount = 0;
+	int32 NearestHitMixedMaterialResolvedCount = 0;
 	int32 NearestHitDistanceTieHeldCount = 0;
 	int32 NearestHitUnsupportedHeldCount = 0;
 	bool bNearestHitTieBreakDisabled = false;
+	bool bMixedMaterialNearestHitDisabled = false;
 	int32 DistanceTieFallbackCount = 0;
 	int32 DistanceTieFallbackCrossPlateDifferentCount = 0;
 	int32 DistanceTieFallbackThirdPlateCount = 0;
+	int32 DistanceTieFallbackMixedMaterialCount = 0;
 	int32 DistanceTieFallbackLayer1WinsCount = 0;
 	int32 DistanceTieFallbackLayer2WinsCount = 0;
 	int32 DistanceTieFallbackLayer3WinsCount = 0;
@@ -933,6 +942,9 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	int32 DistanceTieFallbackThirdPlateLayer1Count = 0;
 	int32 DistanceTieFallbackThirdPlateLayer2Count = 0;
 	int32 DistanceTieFallbackThirdPlateLayer3Count = 0;
+	int32 DistanceTieFallbackMixedMaterialLayer1Count = 0;
+	int32 DistanceTieFallbackMixedMaterialLayer2Count = 0;
+	int32 DistanceTieFallbackMixedMaterialLayer3Count = 0;
 	bool bDistanceTieFallbackDisabled = false;
 	double MaxMultiHitRayDistanceResidualKm = 0.0;
 	double MaxMultiHitScalarResidual = 0.0;
@@ -2356,6 +2368,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bEnablePhaseIIIE3NearestHitTieBreak = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bExtendPhaseIIIE3NearestHitToMixedMaterial = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bEnablePhaseIIIE3DistanceTieFallback = true;
