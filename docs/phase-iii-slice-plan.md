@@ -1,6 +1,14 @@
 # Phase III Slice Plan
 
-Status: draft for user review. Each slice ends with a checkpoint note and requires explicit go/no-go before the next slice begins. Sub-phase boundaries (IIIA, IIIB, IIIC, IIID, IIIE, IIIF, IIIG, IIIH) require their own consolidated sub-phase checkpoint in addition to per-slice checkpoints.
+Status: draft for user review. Each slice ends with a checkpoint note and requires explicit go/no-go before the next slice begins. Sub-phase boundaries (IIIA, IIIB, IIIC, IIID, IIIE, IIIF, IIIG, IIIH, IIII, IIIJ) require their own consolidated sub-phase checkpoint in addition to per-slice checkpoints.
+
+## 2026-05-17 Direction Update
+
+IIIF is **Crust Field Substrate**, not plate rifting.
+
+IIIE.6.12 is closed as a remesh coherence diagnostic. It showed that plate/material/projection coherence can be diagnosed separately from terrain plausibility, but it also exposed unstable crust fields: oceanic elevation above sea level, runaway uplift magnitude, and missing or unproven oceanic-age lifecycle.
+
+IIIF is documented at `docs/checkpoints/phase-iii-slice-iiif-crust-field-substrate.md`. It must make elevation, historical elevation, oceanic age, ridge direction, and fold direction coherent across plate-local vertices, global samples, remesh records, and visualization. It must not implement IIIG rifting or IIII surface processes. Surface processes are not allowed to mask impossible uplift.
 
 ## Phase III Observability Patch: Read-Only Heatmaps
 
@@ -662,44 +670,105 @@ finding. It may say whether the integrated paper-remesh path addresses the
 remesh/material-preservation side; it must not claim Stage 1.5 itself was
 retroactively validated or that pre-remesh rigid-window evidence disappeared.
 
-## Sub-Phase IIIF: Plate Rifting
+## Sub-Phase IIIF: Crust Field Substrate
 
-Goal: implement paper-faithful plate fragmentation as a discrete event.
-
-### IIIF.1: Plate-Internal Voronoi Split (Dry Run)
+Goal: turn crust fields into the shared stability layer that later tectonic processes can trust.
 
 Work:
 
-- For a given plate, generate `n` random centroids inside the plate's continental coverage (`n ∈ [2, 4]`).
+- Audit whether `State.Samples` or plate-local `Vertices` are the active authority for elevation, historical elevation, oceanic age, ridge direction, and fold direction at each remesh boundary.
+- Attribute impossible elevation by source path: resolved hit, generated oceanic record, material-preserved record, topology rebuild, uplift path, or visualization.
+- Add explicit invariants for crust fields before remesh is allowed to apply.
+- Verify oceanic age lifecycle: oceanic crust ages each timestep, generated oceanic crust starts at age `0`, and age survives remesh.
+- Bound oceanic bathymetry below sea level except for any explicitly approved ridge tolerance.
+- Bound continental uplift before IIII surface processes exist.
+- Produce a small curated diagnostic map set: pre/post bathymetry, pre/post oceanic age, crust-field mismatch/provenance, crust substrate classification, and contact sheet.
+- The classification map must distinguish continental land, continental shelf/submerged crust, oceanic bathymetry, sea-level oceanic clamp, generated oceanic crust, rifting-pending continental preservation, and any invalid oceanic above-sea samples.
+
+Exit gate:
+
+- Consolidated verdict is `PASS_IIIF_CRUST_FIELD_SUBSTRATE`.
+- Sample and plate-vertex field authority is explicit.
+- Pre-remesh unstable crust fields cause the remesh gate to hold or fail diagnostically.
+- Post-remesh unstable crust fields fail diagnostically.
+- Oceanic age lifecycle passes a deterministic fixture and the editor-default diagnosis.
+- The classification map and counts show zero invalid oceanic above-sea samples and no hidden visualization-only land/ocean ambiguity.
+- No IIIG rifting, IIIH uplift cleanup, or IIII surface-process work begins until this gate passes.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiif-crust-field-substrate.md`.
+
+## Sub-Phase IIIG: Rifting / Divergence
+
+Goal: promote rifting out of "remesh side effect" into its own tectonic process: continental thinning, rift-pending state, breakup threshold, new oceanic crust generation, ridge age reset, passive margin creation, and divergent bathymetry.
+
+### IIIG.1: Rift Candidate And Thinning Dry Run
+
+Work:
+
+- Select a forced test plate and compute rift candidacy from continental coverage, plate area, and configured rift probability inputs.
+- Produce audit-only thinning and rift-pending records without topology mutation.
+- Report pre/post IIIF invariants to show the dry run does not mutate crust fields.
+
+Exit gate:
+
+- Candidate selection and thinning records are deterministic for fixed seed.
+- No topology mutation occurs.
+- IIIF substrate invariants remain unchanged.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig1-rift-candidate-report.md`.
+
+### IIIG.2: Plate-Internal Voronoi Split Plan
+
+Work:
+
+- For a given rift candidate plate, generate `n` random centroids inside the plate's continental coverage (`n ∈ [2, 4]`).
 - Compute Voronoi partition of the plate's triangles using geodesic distance.
-- Output: a partition plan describing which sub-plates each triangle belongs to.
+- Output a partition plan describing which sub-plate each triangle would belong to.
 
 Exit gate:
 
 - Plan is deterministic for fixed seed.
-- Each sub-plate has at least one triangle.
+- Each planned sub-plate has at least one triangle.
+- The dry-run partition preserves source-plate coverage.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiif1-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig2-voronoi-split-report.md`.
 
-### IIIF.2: Warped Fracture Boundaries
+### IIIG.3: Warped Fracture Boundaries
 
 Work:
 
-- Apply coherent noise (perlin/simplex) to the geodesic distance metric used in IIIF.1, producing irregular fracture boundaries.
-- Same warp function as initial-state Voronoi plate generation per thesis §3.2.4.
+- Apply coherent noise to the geodesic distance metric used in IIIG.2, producing irregular fracture boundaries.
+- Use the same warp-family contract as initial-state Voronoi plate generation per thesis §3.2.4.
 
 Exit gate:
 
 - Fracture boundaries are not straight geodesic arcs.
 - Plan is deterministic for fixed seed.
+- Boundary complexity is reported without changing topology.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiif2-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig3-fracture-boundary-report.md`.
 
-### IIIF.3: Topology Partition / Duplication
+### IIIG.4: Breakup Threshold And Rift-Pending State
 
 Work:
 
-- Apply the IIIF.2 plan: destroy the source plate; create `n` sub-plates by the duplicate / re-index / re-compact operation per §3.2.4.
+- Add the rift-pending lifecycle: candidate, thinning, threshold-crossed, topology-ready.
+- Define the breakup threshold and the required audit evidence before topology mutation is allowed.
+- Preserve IIIE `rift_pending` records as provenance, not as complete rifting behavior.
+
+Exit gate:
+
+- State transitions are deterministic.
+- A candidate below threshold cannot mutate topology.
+- A threshold-crossed candidate emits enough evidence for the topology slice to consume.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig4-breakup-state-report.md`.
+
+### IIIG.5: Topology Partition / Duplication
+
+Work:
+
+- Apply the IIIG.3/IIIG.4 plan: destroy the source plate; create `n` sub-plates by the duplicate / re-index / re-compact operation per §3.2.4.
 - Each sub-plate inherits the parent's geodetic motion as a starting value.
 - Boundary tracking lists are initialized from each sub-plate's boundary triangles.
 
@@ -707,60 +776,134 @@ Exit gate:
 
 - Topology mutation is deterministic.
 - Source plate no longer exists; sub-plates partition its former coverage.
-- Total continental coverage post-rifting equals pre-rifting (mass conservation).
+- Total continental coverage post-rifting equals pre-rifting within the configured conservation tolerance.
+- Sample/plate vertex sync still satisfies IIIF invariants after topology rebuild.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiif3-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig5-topology-partition-report.md`.
 
-### IIIF.4: Divergent Motion Assignment
+### IIIG.6: Divergent Motion, Passive Margins, And New Oceanic Crust
 
 Work:
 
 - For each sub-plate, set rotation axis `w_ij = q_j × c_j` where `q_j` is the centroid-of-other-centroids per thesis §3.3.2.2.
-- Initial angular speed is small (a few mm/yr equivalent).
+- Assign small initial divergent angular speed.
+- Create passive-margin records along preserved continental edges.
+- Generate new oceanic crust in divergent gaps with `OceanicAge = 0`, coherent ridge direction, and bounded bathymetry.
 
 Exit gate:
 
-- Sub-plates receive divergent motions; pairwise relative motion is positive (separating) at sub-plate centroids.
+- Sub-plates receive divergent motions; pairwise relative motion is positive at sub-plate centroids.
+- Passive-margin records preserve continental crust instead of converting it to generated oceanic crust.
+- Generated oceanic crust starts at age `0` and remains at or below the IIIF bathymetry bound.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiif4-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig6-divergent-oceanic-crust-report.md`.
 
-### IIIF.5: User-Triggered Deterministic Rift
-
-Work:
-
-- Add a deterministic-trigger path that allows tests/fixtures to rift a specific plate at a specific timestep.
-
-Exit gate:
-
-- Triggered rifts produce reproducible topology mutations.
-- Test fixtures can verify the full rift→divergent-motion→subsequent-gap-generation path.
-
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiif5-report.md`.
-
-### IIIF.6: Stochastic Probability Gate
+### IIIG.7: Stochastic Probability Gate
 
 Work:
 
-- Implement the per-timestep Bernoulli probability `p_i = min(1, p · x̄_C · 𝒜 / 𝒜_0)` per thesis §3.3.2.2 with constant `p` from a config.
-- Apply only after global remesh (per thesis §3.3.2.3).
+- Implement the per-timestep Bernoulli probability `p_i = min(1, p · x̄_C · 𝒜 / 𝒜_0)` per thesis §3.3.2.2 with constant `p` from config.
+- Apply only after global remesh per thesis §3.3.2.3.
+- Keep a deterministic forced-trigger path for fixtures.
 
 Exit gate:
 
 - Probability is deterministic for fixed seed.
-- Long-horizon runs show rifting frequency matching the analytical expectation within statistical bounds.
-- `p = 0` config disables rifting entirely.
+- Long-horizon runs show rifting frequency matching analytical expectation within statistical bounds.
+- `p = 0` config disables stochastic rifting entirely.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiif6-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig7-stochastic-rift-gate-report.md`.
 
-### IIIF Consolidation
+### IIIG Consolidation
 
-Work: `docs/checkpoints/phase-iii-iiif-consolidated.md`.
+Work: `docs/checkpoints/phase-iii-iiig-rifting-consolidated.md`.
 
-## Sub-Phase IIIG: Per-Step Elevation Evolution
+## Sub-Phase IIIH: Convergence / Uplift Cleanup
 
-Goal: implement per-step continental erosion, oceanic dampening, sediment accretion. Last sub-phase before validation because it is global and would mask earlier process bugs.
+Goal: bring subduction, obduction, collision, slab pull, and uplift back onto the stabilized IIIF substrate after IIIG rifting exists.
 
-### IIIG.1: Continental Erosion
+### IIIH.1: Subduction / Obduction Rebase Audit
+
+Work:
+
+- Re-run the existing IIIC subduction/obduction fixtures with IIIF substrate checks enabled.
+- Confirm subducting and overriding targets remain material-compatible after remesh and rifting.
+
+Exit gate:
+
+- No oceanic sample inherits continental uplift through subduction/obduction state.
+- Subduction and obduction outputs remain deterministic and bounded.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiih1-subduction-obduction-rebase-report.md`.
+
+### IIIH.2: Collision / Suture Conservation Audit
+
+Work:
+
+- Re-run IIID collision/suture fixtures against the IIIF substrate and IIIG passive-margin records.
+- Reconcile continental material, generated oceanic material, and transferred terranes.
+
+Exit gate:
+
+- Collision events conserve source continental material within tolerance.
+- Suture topology deltas do not create invalid oceanic-above-sea samples.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiih2-collision-suture-conservation-report.md`.
+
+### IIIH.3: Uplift Targeting Bounds
+
+Work:
+
+- Audit every uplift write path: subduction, obduction, collision, and any slab-pull side effect.
+- Enforce target compatibility and maximum per-step / per-event uplift bounds.
+
+Exit gate:
+
+- Uplift applies only to valid overriding or continental targets.
+- Oceanic crust cannot inherit continental mountain elevation.
+- Bounds fail diagnostically before IIII surface processes run.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiih3-uplift-bounds-report.md`.
+
+### IIIH.4: Slab Pull Differential Revalidation
+
+Work:
+
+- Re-run slab-pull off/on differential tests with IIIF substrate and IIIG rifting state present.
+- Capture motion hashes, crust hashes, and convergence-state hashes.
+
+Exit gate:
+
+- Slab-pull off remains equivalent to the no-feedback baseline.
+- Slab-pull on is deterministic, bounded, and does not violate substrate fields.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiih4-slab-pull-revalidation-report.md`.
+
+### IIIH.5: Integrated Tectonic Cleanup Gate
+
+Work:
+
+- Run a short integrated tectonic scenario with remesh, rifting, subduction, collision, slab pull, and uplift enabled, but with IIII surface processes disabled.
+- Report substrate classification counts, uplift bounds, conservation, and event timelines.
+
+Exit gate:
+
+- Zero invalid oceanic-above-sea samples.
+- No runaway uplift.
+- No material conservation violation.
+- Same-seed replay is deterministic.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiih5-integrated-cleanup-report.md`.
+
+### IIIH Consolidation
+
+Work: `docs/checkpoints/phase-iii-iiih-convergence-uplift-cleanup.md`.
+
+## Sub-Phase IIII: Surface Processes
+
+Goal: implement continental erosion, oceanic dampening, sediment accretion, isostatic relaxation, and smoothing after tectonic uplift is bounded. Surface processes are realism/stability layers, not patches over invalid tectonic fields.
+
+### IIII.1: Continental Erosion
 
 Work:
 
@@ -771,9 +914,9 @@ Exit gate:
 - Magnitude matches analytical formula.
 - Continental-only fixture: elevation decays exponentially toward zero (sea level).
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig1-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiii1-continental-erosion-report.md`.
 
-### IIIG.2: Oceanic Dampening
+### IIII.2: Oceanic Dampening
 
 Work:
 
@@ -784,9 +927,9 @@ Exit gate:
 - Magnitude matches analytical formula.
 - Oceanic-only fixture: elevation drifts toward `z_t` from initial values.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig2-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiii2-oceanic-dampening-report.md`.
 
-### IIIG.3: Sediment Accretion In Trenches
+### IIII.3: Sediment Accretion In Trenches
 
 Work:
 
@@ -798,48 +941,66 @@ Exit gate:
 - Magnitude matches analytical formula.
 - Forced-subduction fixture produces measurable trench infill.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig3-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiii3-sediment-accretion-report.md`.
 
-### IIIG.4: On/Off Differential Validation
+### IIII.4: Isostatic Relaxation And Bounded Smoothing
 
 Work:
 
-- Run a fixture with IIIG enabled vs disabled. Assert the per-step elevation differential matches the analytical sum of the three IIIG contributions.
+- Add bounded isostatic relaxation and smoothing controls that run after the paper's named erosion/dampening/sediment passes.
+- Keep each contribution separately measurable in the audit output.
+- Require an off-state comparison where tectonic invariants still pass without relaxation/smoothing.
+
+Exit gate:
+
+- Relaxation and smoothing are deterministic and bounded.
+- They do not change material, plate ownership, or oceanic age.
+- Turning them off does not reveal invalid IIIF/IIIG/IIIH tectonic state.
+
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiii4-isostatic-smoothing-report.md`.
+
+### IIII.5: On/Off Differential Validation
+
+Work:
+
+- Run a fixture with IIII enabled vs disabled. Assert the per-step elevation differential matches the analytical sum of enabled surface-process contributions.
 
 Exit gate:
 
 - Differential matches expectation within numerical tolerance.
+- Tectonic invariants still pass with IIII disabled.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiig4-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiii5-differential-report.md`.
 
-### IIIG Consolidation
+### IIII Consolidation
 
-Work: `docs/checkpoints/phase-iii-iiig-consolidated.md`.
+Work: `docs/checkpoints/phase-iii-iiii-surface-processes-consolidated.md`.
 
-## Sub-Phase IIIH: Tectonic-Only Long-Horizon Validation
+## Sub-Phase IIIJ: Long-Run World Validation
 
-Goal: demonstrate that the Phase III stack is stable over multi-hundred-event horizons before Phase IV.
+Goal: demonstrate that the whole Phase III stack is stable over multi-hundred-event horizons before Phase IV.
 
-### IIIH.1: 60k Multi-Hundred-Event Run
+### IIIJ.1: 60k Multi-Hundred-Event Run
 
 Work:
 
 - Run 100–250 events at 60k samples (≈ 200–500 My).
-- Capture per-event Auth CAF, Slice 5.5 source-triangle-uniformity breakdown, collision event count, rifting event count, kernel timing.
+- Capture per-event Auth CAF, Slice 5.5 source-triangle-uniformity breakdown, rift/convergence event balance, oceanic age distribution, crust bounds, terrain plausibility metrics, and kernel timing.
 
 Exit gate:
 
 - Auth CAF stabilizes (max-min over second half of run within ±2% of mean).
 - Same-seed replay produces byte-identical hashes for all artifacts.
 - Slice 5.5 continental-loss-from-uniform-oceanic-source bucket is reduced by ≥ 80% relative to Phase II baseline, or the run pauses for an investigation checkpoint before Phase III closeout can proceed.
+- Oceanic age distribution, rift/convergence event balance, and crust bounds are plausible enough to proceed to Phase IV planning.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiih1-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiij1-long-run-report.md`.
 
-### IIIH.2: Resolution Scaling Spot Check
+### IIIJ.2: Resolution Scaling Spot Check
 
 Work:
 
-- Repeat IIIH.1 at 100k and 250k for shorter horizons (50 events each).
+- Repeat IIIJ.1 at 100k and 250k for shorter horizons (50 events each).
 - Confirm equilibrium behavior holds; confirm runtime within paper Table 2 budget plus Phase III event overhead.
 
 Exit gate:
@@ -847,9 +1008,9 @@ Exit gate:
 - Auth CAF equilibrium qualitatively matches 60k.
 - Kernel timing within paper Table 2 envelope; Phase III event timing reported separately.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiih2-report.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-slice-iiij2-resolution-scaling-report.md`.
 
-### IIIH.3: Phase III Closeout
+### IIIJ.3: Phase III Closeout
 
 Work:
 
@@ -861,7 +1022,7 @@ Exit gate:
 - Closeout doc accepted by user.
 - Phase III declared complete; Phase IV can begin planning.
 
-Checkpoint artifact: `docs/checkpoints/phase-iii-iiih-consolidated.md` plus `docs/phase-iii-closeout.md`.
+Checkpoint artifact: `docs/checkpoints/phase-iii-iiij-consolidated.md` plus `docs/phase-iii-closeout.md`.
 
 ## Stop Conditions
 
@@ -876,4 +1037,7 @@ Pause Phase III and write an investigation checkpoint if any of these appear (th
 - third-plate contact emits a `Subducting`, `Overriding`, or collision label
 - vertex position is mutated radially anywhere in Phase III code
 - ridge generation count exceeds subduction consumption count by more than 2× over a window
-- IIIH long-horizon run shows Auth CAF monotonic drift over 50+ consecutive events
+- oceanic crust carries above-sea-level or continental-uplift elevation outside explicitly approved ridge tolerance
+- plate-local vertex crust fields and global sample crust fields diverge without an explicit authority/sync rule
+- oceanic age fails to advance, reset at new crust, or survive remesh
+- IIIJ long-horizon run shows Auth CAF monotonic drift over 50+ consecutive events

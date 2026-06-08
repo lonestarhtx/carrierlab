@@ -109,6 +109,8 @@ namespace
 			return TEXT("CrustType");
 		case ECarrierLabVisualizationLayer::ElevationHeatmap:
 			return TEXT("Elevation");
+		case ECarrierLabVisualizationLayer::BathymetricElevation:
+			return TEXT("BathymetricElevation");
 		case ECarrierLabVisualizationLayer::OceanicAgeHeatmap:
 			return TEXT("OceanicAge");
 		case ECarrierLabVisualizationLayer::RidgeDirection:
@@ -130,6 +132,8 @@ namespace
 			return TEXT("CRUST TYPE");
 		case ECarrierLabVisualizationLayer::ElevationHeatmap:
 			return TEXT("ELEVATION");
+		case ECarrierLabVisualizationLayer::BathymetricElevation:
+			return TEXT("BATHYMETRIC ELEVATION");
 		case ECarrierLabVisualizationLayer::OceanicAgeHeatmap:
 			return TEXT("OCEANIC AGE");
 		case ECarrierLabVisualizationLayer::RidgeDirection:
@@ -640,7 +644,8 @@ namespace
 		IFileManager::Get().MakeDirectory(*ReplayDir, true);
 		if (!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::PlateId, TEXT("Pre"), OutReplay.Images) ||
 			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("Pre"), OutReplay.Images) ||
-			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Pre"), OutReplay.Images))
+			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Pre"), OutReplay.Images) ||
+			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::BathymetricElevation, TEXT("Pre"), OutReplay.Images))
 		{
 			Actor->Destroy();
 			return false;
@@ -697,6 +702,7 @@ namespace
 		if (!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::PlateId, TEXT("Post"), OutReplay.Images) ||
 			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("Post"), OutReplay.Images) ||
 			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Post"), OutReplay.Images) ||
+			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::BathymetricElevation, TEXT("Post"), OutReplay.Images) ||
 			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::OceanicAgeHeatmap, TEXT("Post"), OutReplay.Images) ||
 			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::RidgeDirection, TEXT("Post"), OutReplay.Images) ||
 			!CaptureActorLayer(ReplayDir, *Actor, ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary, TEXT("Post"), OutReplay.Images))
@@ -915,9 +921,9 @@ namespace
 		Report += TEXT("\n");
 
 		Report += TEXT("## Interpretation\n\n");
-		Report += TEXT("- `PrePlateId`, `PreCrustType`, and `PreElevation` show the bounded fixture before any IIIE mutation.\n");
+		Report += TEXT("- `PrePlateId`, `PreCrustType`, `PreElevation`, and `PreBathymetricElevation` show the bounded fixture before any IIIE mutation.\n");
 		Report += TEXT("- `SelectionAndGeneration` is a card, not a map. It records the IIIE.3 route, raw/post-filter candidate counts, q1/q2 provenance, and zGamma authority flags.\n");
-		Report += TEXT("- `PostPlateId`, `PostCrustType`, `PostElevation`, `PostOceanicAge`, `PostRidgeDirection`, and `PostPhaseIIIERemesh` show the state after the accepted IIIE.5 duplicate/re-index/re-compact helper.\n");
+		Report += TEXT("- `PostPlateId`, `PostCrustType`, `PostElevation`, `PostBathymetricElevation`, `PostOceanicAge`, `PostRidgeDirection`, and `PostPhaseIIIERemesh` show the state after the accepted IIIE.5 duplicate/re-index/re-compact helper.\n");
 		Report += TEXT("- `LedgerAndHolds` is the audit card for the IIIE.6 ledger line. The continental case should show `RIFT PENDING 1` and `OVERWRITTEN 0`.\n");
 		Report += TEXT("- The maps are human-spatial diagnostics only. The commandlet gates determinism, read-only export, no forbidden fallback counters, and expected ledger classification; it does not replace the numeric IIIE.2-6 commandlets.\n\n");
 

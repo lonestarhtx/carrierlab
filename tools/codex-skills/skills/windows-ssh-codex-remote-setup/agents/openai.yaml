@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows SSH Codex Remote Setup"
+  short_description: "Set up Windows SSH for Codex remote access"
+  default_prompt: "Use $windows-ssh-codex-remote-setup to diagnose or set up SSH from a MacBook into this Windows Codex machine."

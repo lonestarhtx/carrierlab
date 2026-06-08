@@ -99,6 +99,8 @@ namespace
 			return TEXT("PhaseIIISummary");
 		case ECarrierLabVisualizationLayer::ElevationHeatmap:
 			return TEXT("ElevationHeatmap");
+		case ECarrierLabVisualizationLayer::BathymetricElevation:
+			return TEXT("BathymetricElevation");
 		case ECarrierLabVisualizationLayer::SubductionMask:
 			return TEXT("SubductionMask");
 		case ECarrierLabVisualizationLayer::DistanceToFrontHeatmap:
@@ -1578,12 +1580,14 @@ namespace
 		FLayerPixels PlateIdImage;
 		FLayerPixels CrustType;
 		FLayerPixels ElevationImage;
+		FLayerPixels BathymetricElevationImage;
 		FLayerPixels OceanicAgeImage;
 		FLayerPixels RidgeDirectionImage;
 		FLayerPixels RemeshSummaryImage;
 		if (!CaptureLayer(ECarrierLabVisualizationLayer::PlateId, TEXT("PlateId"), TEXT("PLATE ID"), PlateIdImage) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::ContinentalFraction, TEXT("CrustType"), TEXT("CRUST TYPE"), CrustType) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::ElevationHeatmap, TEXT("Elevation"), TEXT("ELEVATION"), ElevationImage) ||
+			!CaptureLayer(ECarrierLabVisualizationLayer::BathymetricElevation, TEXT("BathymetricElevation"), TEXT("BATHYMETRIC ELEVATION"), BathymetricElevationImage) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::OceanicAgeHeatmap, TEXT("OceanicAge"), TEXT("OCEANIC AGE"), OceanicAgeImage) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::RidgeDirection, TEXT("RidgeDirection"), TEXT("RIDGE DIRECTION"), RidgeDirectionImage) ||
 			!CaptureLayer(ECarrierLabVisualizationLayer::PhaseIIIERemeshSummary, TEXT("PhaseIIIERemesh"), TEXT("IIIE REMESH"), RemeshSummaryImage))
@@ -1652,6 +1656,12 @@ namespace
 			return false;
 		}
 		Images.Add(ElevationImage);
+
+		if (!SaveImage(BathymetricElevationImage))
+		{
+			return false;
+		}
+		Images.Add(BathymetricElevationImage);
 
 		if (!SaveImage(OceanicAgeImage))
 		{
@@ -2271,13 +2281,14 @@ namespace
 		}
 
 		Report += TEXT("\n## Interpretation\n\n");
-		Report += TEXT("- The export names now follow the Aurous-style diagnostic grammar: `PlateId`, `CrustType`, `PlateBoundaries`, `VelocityField`, `SubductionRoles`, `Elevation`, `CombinedTectonicSummary`, `DistanceToFront`, and `ElevationProfile`.\n");
+		Report += TEXT("- The export names now follow the Aurous-style diagnostic grammar: `PlateId`, `CrustType`, `PlateBoundaries`, `VelocityField`, `SubductionRoles`, `Elevation`, `BathymetricElevation`, `CombinedTectonicSummary`, `DistanceToFront`, and `ElevationProfile`.\n");
 		Report += TEXT("- `PlateId` is the projected plate-id map with distinct colors per resolved plate. Use it to check whether all plates are represented before reading process overlays.\n");
 		Report += TEXT("- `CrustType` is the calm base map: blue ocean, green land, no process overlay.\n");
 		Report += TEXT("- `PlateBoundaries` adds thin light edges rasterized from current moved plate-local boundary triangles, drawing only edges whose source endpoints belong to different plates. It no longer uses the global sample boundary mask or draws every boundary-triangle outline. This is the first map to check when the summary feels noisy.\n");
 		Report += TEXT("- `VelocityField` adds sparse red plate-motion arrows over the base map.\n");
 		Report += TEXT("- `SubductionRoles` is now rasterized directly from current plate-local triangle geometry. It no longer round-trips through `GlobalSampleId`, so the moving role marks should line up with the current moving plate geometry.\n");
 		Report += TEXT("- `Elevation` shows the IIIC.2 trench split and IIIC.3 overriding uplift as scalar-field color on the filled continental/oceanic base map.\n");
+		Report += TEXT("- `BathymetricElevation` shows the same visible elevation field as a sea-level-branched bathymetric/topographic ramp; it is independent of crust-type coloring.\n");
 		Report += TEXT("- `CombinedTectonicSummary` is deliberately restrained: crust + current plate-local boundaries + velocity + subduction roles. Elevation remains separate so uplift heat does not swamp the overview.\n");
 		Report += TEXT("- `DistanceToFront` is also rasterized from current plate-local active-boundary triangles. It is diagnostic context, not a source of authority.\n");
 		if (bIIIDCollisionMode)

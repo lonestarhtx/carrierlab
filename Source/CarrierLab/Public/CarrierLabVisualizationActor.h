@@ -26,7 +26,12 @@ enum class ECarrierLabVisualizationLayer : uint8
 	DistanceToFrontHeatmap UMETA(DisplayName = "Distance To Front Heatmap"),
 	OceanicAgeHeatmap UMETA(DisplayName = "Oceanic Age Heatmap"),
 	RidgeDirection UMETA(DisplayName = "Ridge Direction"),
-	PhaseIIIERemeshSummary UMETA(DisplayName = "Phase IIIE Remesh Summary")
+	PhaseIIIERemeshSummary UMETA(DisplayName = "Phase IIIE Remesh Summary"),
+	BathymetricElevation UMETA(DisplayName = "Bathymetric Elevation"),
+	StatePlateId UMETA(DisplayName = "State Plate Id"),
+	PlateProjectionMismatch UMETA(DisplayName = "Plate Projection Mismatch"),
+	ProjectionDiagnostics UMETA(DisplayName = "Projection Diagnostics"),
+	CrustSubstrateClass UMETA(DisplayName = "Crust Substrate Class")
 };
 
 UENUM(BlueprintType)
@@ -98,6 +103,15 @@ struct FCarrierLabVisualizationMetrics
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastRiftingPendingCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastMaterialPreservedRecordCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastMixedMaterialNearestMaterialPreservedCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
+	int32 PhaseIIIELastPlateComponentRegularizedSampleCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CarrierLab|Metrics|Phase IIIE")
 	int32 PhaseIIIELastInvalidRecordCount = 0;
@@ -956,6 +970,201 @@ struct FCarrierLabPhaseIIIE3RemeshSelectionAudit
 	TArray<FCarrierLabPhaseIIIE3SelectionRecord> Records;
 };
 
+struct FCarrierLabPhaseIIIE612SnapshotMetrics
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 ContinentalSampleCount = 0;
+	int32 OceanicSampleCount = 0;
+	int32 ContinentalComponentCount = 0;
+	int32 LargestContinentalComponentSize = 0;
+	double LargestContinentalComponentArea = 0.0;
+	int32 StatePlateComponentCount = 0;
+	int32 ProjectedPlateComponentCount = 0;
+	int32 StatePlateSaltPepperSampleCount = 0;
+	int32 ProjectedPlateSaltPepperSampleCount = 0;
+	int32 ContinentalStatePlateSaltPepperSampleCount = 0;
+	int32 ContinentalProjectedPlateSaltPepperSampleCount = 0;
+	int32 ContinentalMaterialSaltPepperSampleCount = 0;
+	double AuthoritativeCAF = 0.0;
+	double ProjectedCAF = 0.0;
+	int32 AboveSeaLevelSampleCount = 0;
+	int32 ContinentalAboveSeaLevelSampleCount = 0;
+	int32 OceanicAboveSeaLevelSampleCount = 0;
+	double AboveSeaLevelFraction = 0.0;
+	double ContinentalAboveSeaLevelFraction = 0.0;
+	double OceanicAboveSeaLevelFraction = 0.0;
+	double MinElevationKm = 0.0;
+	double MaxElevationKm = 0.0;
+	double MeanElevationKm = 0.0;
+	double ContinentalMinElevationKm = 0.0;
+	double ContinentalMaxElevationKm = 0.0;
+	double ContinentalMeanElevationKm = 0.0;
+	double OceanicMinElevationKm = 0.0;
+	double OceanicMaxElevationKm = 0.0;
+	double OceanicMeanElevationKm = 0.0;
+	FString ProjectionHash;
+	FString StateHash;
+	FString CrustStateHash;
+	TArray<int32> ContinentalComponentSizes;
+	TArray<int32> StatePlateComponentCounts;
+	TArray<int32> ProjectedPlateComponentCounts;
+	TArray<double> PerPlateAuthoritativeCAF;
+};
+
+struct FCarrierLabPhaseIIIE612AttributionCounts
+{
+	int32 MixedMaterialNearest = 0;
+	int32 CrossOrThirdNearest = 0;
+	int32 DistanceTieFallback = 0;
+	int32 GeneratedOcean = 0;
+	int32 RiftingPending = 0;
+	int32 MajorityRebuildContext = 0;
+	int32 TripleJunctionContext = 0;
+	int32 SharedBoundary = 0;
+	int32 CoalescedDuplicate = 0;
+	int32 Other = 0;
+};
+
+struct FCarrierLabPhaseIIIE612CoherenceDiagnosisAudit
+{
+	bool bRan = false;
+	bool bSelectionAuditRan = false;
+	bool bRemeshApplied = false;
+	int32 StepBefore = 0;
+	int32 StepAfter = 0;
+	int32 EventCountBefore = 0;
+	int32 EventCountAfter = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 TotalStatePlateChangedSampleCount = 0;
+	int32 ContinentalStatePlateChangedSampleCount = 0;
+	int32 TotalProjectedPlateChangedSampleCount = 0;
+	int32 ContinentalProjectedPlateChangedSampleCount = 0;
+	int32 MaterialClassChangedSampleCount = 0;
+	double StatePlateChangedFraction = 0.0;
+	double ContinentalStatePlateChangedFraction = 0.0;
+	double ProjectedPlateChangedFraction = 0.0;
+	double ContinentalProjectedPlateChangedFraction = 0.0;
+	double MaterialClassChangedFraction = 0.0;
+	double MaterialClassChangedFractionOfContinental = 0.0;
+	double GlobalAuthoritativeCAFDelta = 0.0;
+	double GlobalProjectedCAFDelta = 0.0;
+	double MaxPerPlateCAFDelta = 0.0;
+	int32 MaxPerPlateCAFDeltaPlateId = INDEX_NONE;
+	double ContinentalLargestComponentLossFraction = 0.0;
+	double StatePlateComponentGrowthFraction = 0.0;
+	double ProjectedPlateComponentGrowthFraction = 0.0;
+	double StatePlateSaltPepperGrowthFraction = 0.0;
+	double ProjectedPlateSaltPepperGrowthFraction = 0.0;
+	double AboveSeaLevelGrowthFraction = 0.0;
+	double ContinentalAboveSeaLevelGrowthFraction = 0.0;
+	double OceanicAboveSeaLevelGrowthFraction = 0.0;
+	int32 PhaseIIIELastGeneratedCandidateCount = 0;
+	int32 PhaseIIIELastAppliedGeneratedCount = 0;
+	int32 PhaseIIIELastRiftingPendingCount = 0;
+	int32 PhaseIIIELastMaterialPreservedRecordCount = 0;
+	int32 PhaseIIIELastMixedMaterialNearestMaterialPreservedCount = 0;
+	int32 PhaseIIIELastPlateComponentRegularizedSampleCount = 0;
+	int32 PhaseIIIELastNearestHitTieBreakCount = 0;
+	int32 PhaseIIIELastNearestHitMixedMaterialCount = 0;
+	int32 PhaseIIIELastDistanceTieFallbackCount = 0;
+	int32 PhaseIIIELastTripleJunctionSplitCount = 0;
+	FString LastRemeshMode;
+	FString Verdict;
+	FString VerdictReason;
+	FCarrierLabPhaseIIIE612SnapshotMetrics Pre;
+	FCarrierLabPhaseIIIE612SnapshotMetrics Post;
+	FCarrierLabPhaseIIIE612AttributionCounts Attribution;
+	FCarrierLabPhaseIIIE3RemeshSelectionAudit SelectionAudit;
+};
+
+struct FCarrierLabIIIFCrustFieldSnapshot
+{
+	int32 Step = 0;
+	int32 EventCount = 0;
+	int32 SampleCount = 0;
+	int32 PlateCount = 0;
+	int32 PlateVertexCount = 0;
+	int32 InvalidSampleFieldCount = 0;
+	int32 InvalidPlateVertexFieldCount = 0;
+	int32 SampleOceanicCount = 0;
+	int32 PlateOceanicVertexCount = 0;
+	int32 SampleOceanicStrictAboveSeaLevelCount = 0;
+	int32 PlateOceanicStrictAboveSeaLevelCount = 0;
+	int32 SampleOceanicPositiveAgeCount = 0;
+	int32 PlateOceanicPositiveAgeCount = 0;
+	int32 SampleOceanicZeroAgeCount = 0;
+	int32 PlateOceanicZeroAgeCount = 0;
+	int32 PlateVertexWithSampleIdCount = 0;
+	int32 PlateVertexSampleMaterialMismatchCount = 0;
+	int32 PlateVertexSampleFieldMismatchCount = 0;
+	double SampleMinElevationKm = 0.0;
+	double SampleMaxElevationKm = 0.0;
+	double SampleMeanElevationKm = 0.0;
+	double SampleContinentalMaxElevationKm = 0.0;
+	double SampleOceanicMinElevationKm = 0.0;
+	double SampleOceanicMaxElevationKm = 0.0;
+	double SampleOceanicMeanElevationKm = 0.0;
+	double SampleOceanicMaxAgeMa = 0.0;
+	double SampleOceanicMeanAgeMa = 0.0;
+	double PlateVertexMinElevationKm = 0.0;
+	double PlateVertexMaxElevationKm = 0.0;
+	double PlateVertexMeanElevationKm = 0.0;
+	double PlateVertexContinentalMaxElevationKm = 0.0;
+	double PlateOceanicMinElevationKm = 0.0;
+	double PlateOceanicMaxElevationKm = 0.0;
+	double PlateOceanicMeanElevationKm = 0.0;
+	double PlateOceanicMaxAgeMa = 0.0;
+	double PlateOceanicMeanAgeMa = 0.0;
+	double MaxVertexSampleElevationDeltaKm = 0.0;
+	double MeanVertexSampleElevationDeltaKm = 0.0;
+	double MaxVertexSampleHistoricalElevationDeltaKm = 0.0;
+	double MeanVertexSampleHistoricalElevationDeltaKm = 0.0;
+	double MaxVertexSampleOceanicAgeDeltaMa = 0.0;
+	double MeanVertexSampleOceanicAgeDeltaMa = 0.0;
+	double MaxVertexSampleRidgeDirectionDelta = 0.0;
+	double MaxVertexSampleFoldDirectionDelta = 0.0;
+	FString CrustStateHash;
+};
+
+struct FCarrierLabIIIFCrustSubstrateClassCounts
+{
+	int32 Invalid = 0;
+	int32 ContinentalLand = 0;
+	int32 ContinentalSubmerged = 0;
+	int32 OceanicBathymetry = 0;
+	int32 OceanicSeaLevelClamp = 0;
+	int32 GeneratedOceanicCrust = 0;
+	int32 RiftingPendingContinentalPreservation = 0;
+	int32 OceanicAboveSeaLevel = 0;
+};
+
+struct FCarrierLabIIIFCrustFieldSubstrateAudit
+{
+	bool bRan = false;
+	bool bRemeshAuditRan = false;
+	bool bRemeshApplied = false;
+	bool bOceanicAgeLifecycleEnabled = false;
+	int32 StepBefore = 0;
+	int32 StepAfter = 0;
+	int32 EventCountBefore = 0;
+	int32 EventCountAfter = 0;
+	double MaxAllowedOceanicElevationKm = 0.0;
+	double MaxAllowedContinentalElevationKm = 10.0;
+	double MinAllowedElevationKm = -20.0;
+	double PostOceanicStrictAboveSeaLevelGrowthFraction = 0.0;
+	FString Verdict;
+	FString VerdictReason;
+	FCarrierLabIIIFCrustFieldSnapshot Pre;
+	FCarrierLabIIIFCrustFieldSnapshot Post;
+	FCarrierLabIIIFCrustSubstrateClassCounts PreClassCounts;
+	FCarrierLabIIIFCrustSubstrateClassCounts PostClassCounts;
+	FCarrierLabPhaseIIIE612CoherenceDiagnosisAudit RemeshAudit;
+};
+
 struct FCarrierLabPhaseIIIE62CandidateSnapshot
 {
 	int32 CandidateIndex = INDEX_NONE;
@@ -1252,6 +1461,7 @@ struct FCarrierLabPhaseIIIE5RemeshVertexRecord
 	bool bDivergentGapRoute = false;
 	bool bGeneratedOceanicCrust = false;
 	bool bUnresolvedMultiHit = false;
+	bool bPreservedPreRemeshMaterial = false;
 	bool bUsedPolicyWinner = false;
 	bool bUsedPriorOwnerFallback = false;
 	bool bUsedProjectionOwnerFallback = false;
@@ -1353,6 +1563,7 @@ struct FCarrierLabPhaseIIIE5TopologyRebuildAudit
 	int32 InvalidAssignedPlateCount = 0;
 	int32 GeneratedOceanicVertexCount = 0;
 	int32 PreservedGeneratedOceanicVertexCount = 0;
+	int32 PreservedPreRemeshMaterialCount = 0;
 	int32 PriorOwnerFallbackCount = 0;
 	int32 ProjectionOwnerFallbackCount = 0;
 	int32 PolicyWinnerCount = 0;
@@ -1687,6 +1898,7 @@ struct FCarrierLabPhaseIIIC3UpliftAudit
 	int32 MarkCount = 0;
 	int32 UpliftRecordCount = 0;
 	int32 UniqueUpliftedVertexCount = 0;
+	int32 DuplicateUpliftSuppressedCount = 0;
 	int32 SkippedNonContinentalVertexCount = 0;
 	int32 SkippedOutsideRadiusCount = 0;
 	int32 InvalidInputCount = 0;
@@ -1719,6 +1931,7 @@ struct FCarrierLabPhaseIIICObductionUpliftAudit
 	int32 InvalidMarkCount = 0;
 	int32 UpliftRecordCount = 0;
 	int32 UniqueUpliftedVertexCount = 0;
+	int32 DuplicateUpliftSuppressedCount = 0;
 	int32 SkippedNonContinentalVertexCount = 0;
 	int32 SkippedOutsideRadiusCount = 0;
 	int32 InvalidInputCount = 0;
@@ -2360,6 +2573,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	bool bEnablePhaseIIICVisibleHistoricalElevation = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
+	bool bEnablePhaseIIIOceanicAgeLifecycle = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bEnablePhaseIIIE3DuplicateHitCoalescing = true;
 
@@ -2377,6 +2593,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
 	bool bRestoreNonSeparatingAnomalyVeto = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bEnablePhaseIIIE6MaterialCoherenceGuard = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase IIIE")
+	bool bEnablePhaseIIIE6ResolvedHitMaterialPreservation = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CarrierLab|Phase III")
 	double PhaseIIICTrenchDepthKm = -10.0;
@@ -2496,6 +2718,9 @@ public:
 	void ShowElevationHeatmapLayer();
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
+	void ShowBathymetricElevationLayer();
+
+	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
 	void ShowSubductionMaskLayer();
 
 	UFUNCTION(BlueprintCallable, Category = "CarrierLab|Controls")
@@ -2609,6 +2834,8 @@ public:
 	bool RunPhaseIIIE3FilteredRemeshSelectionAuditForSamples(
 		const TArray<int32>& SampleIds,
 		FCarrierLabPhaseIIIE3RemeshSelectionAudit& OutAudit);
+	bool RunPhaseIIIE612CoherenceDiagnosisAudit(FCarrierLabPhaseIIIE612CoherenceDiagnosisAudit& OutAudit);
+	bool RunPhaseIIIFCrustFieldSubstrateAudit(FCarrierLabIIIFCrustFieldSubstrateAudit& OutAudit);
 	bool DiagnosePhaseIIIE62HoldSnapshotsForTest(
 		int32 SampleId,
 		ECarrierLabPhaseIIIE3SelectionClass SelectionClass,
