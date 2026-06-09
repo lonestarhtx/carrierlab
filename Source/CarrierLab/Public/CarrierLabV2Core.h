@@ -984,6 +984,202 @@ namespace CarrierLab::V2
 		FString ReportPath;
 	};
 
+	struct FCarrierV2Milestone2SampleRecord
+	{
+		int32 SampleId = INDEX_NONE;
+		int32 RawHitCount = 0;
+		int32 ValidSingleHitCount = 0;
+		int32 SelectedPlateId = INDEX_NONE;
+		int32 SelectedLocalTriangleId = INDEX_NONE;
+		int32 SelectedSourceTriangleId = INDEX_NONE;
+		int32 AssignedPlateId = INDEX_NONE;
+		double SelectedContinentalFraction = 0.0;
+		bool bSingleHitWritten = false;
+		bool bDivergentZeroHit = false;
+		bool bGeneratedOceanic = false;
+		bool bNondegenerateOverlapBlocked = false;
+		bool bBoundaryOnlyOverlap = false;
+		bool bBoundaryPairFound = false;
+		bool bQ1Q2DifferentPlates = false;
+		int32 Q1PlateId = INDEX_NONE;
+		int32 Q2PlateId = INDEX_NONE;
+		double Q1DistanceRad = 0.0;
+		double Q2DistanceRad = 0.0;
+		double QGammaDistanceRad = 0.0;
+		double QGammaAlpha = 0.0;
+		double Q1BoundaryContinentalFraction = 0.0;
+		double Q2BoundaryContinentalFraction = 0.0;
+		FName SelectionProvenance = TEXT("unset");
+	};
+
+	struct FCarrierV2Milestone2Config
+	{
+		FCarrierV2Stage1Config MotionConfig;
+		FString FixtureId = TEXT("M2-FX-001");
+		FString FixtureName = TEXT("NoMotionResampleNoop");
+		FString CarrierCycleClass = TEXT("scheduled_motion_resample_writeback");
+		FString ResamplePolicyId = TEXT("single_hit_or_continuous_q1q2_overlap_blocked");
+		FString TrianglePartitionPolicyId = TEXT("global_triangle_vertex_assignment_majority_area_count_tiebreak");
+		FString ResampleTriggerReason = TEXT("scheduled_fixture_window");
+		int32 ResampleCadenceSteps = 1;
+		int32 LifecycleWindowCount = 1;
+		bool bRequireSingleHitWrites = false;
+		bool bRequireDivergentGapFill = false;
+		bool bRequireOverlapBlocked = false;
+		bool bRequireFullTopologyRebuild = true;
+		bool bRequireMaterialConservation = false;
+		bool bRequireSharpnessPreservation = false;
+		bool bInjectPriorOwnerLabelsForNegativeControl = false;
+		bool bScaleCharacterization = false;
+		int32 ExpectedMinimumSingleHitWrites = 0;
+		int32 ExpectedMinimumGapFill = 0;
+		int32 ExpectedMinimumOverlapBlocked = 0;
+		double MaterialConservationTolerance = 1.0e-9;
+		double TotalVariationTolerance = 1.0e-9;
+		double ExpectedMaxStepKernelMs = 0.0;
+	};
+
+	struct FCarrierV2Milestone2Metrics
+	{
+		FString RunId;
+		FString StageId = TEXT("M2");
+		FString FixtureId;
+		FString FixtureName;
+		FString FixtureKind;
+		FString CarrierCycleClass;
+		FString SourceStatus;
+		FString ResamplePolicyId;
+		FString TrianglePartitionPolicyId;
+		FString ResampleTriggerReason;
+		int32 SampleCount = 0;
+		int32 TriangleCount = 0;
+		int32 PlateCount = 0;
+		int32 ResampleCadenceSteps = 0;
+		int32 LifecycleWindowCount = 0;
+		double DtMa = 0.0;
+		double TotalMotionMa = 0.0;
+		double PlanetRadiusKm = 0.0;
+		double RayEpsilon = 0.0;
+		double BroadphaseAngularMarginRad = 0.0;
+		double MaxPlateMotionAngleRad = 0.0;
+		bool bUsedAngularCapBroadphase = false;
+		bool bBroadphaseMarginGatePass = false;
+		FString ConfigHash;
+		FString PreCycleAuthorityHash;
+		FString PostCycleAuthorityHash;
+		FString ResampleOutputHash;
+		FString RebuiltTopologyHash;
+		FString MetricsHash;
+		int32 GlobalSampleCount = 0;
+		int32 GlobalTriangleCount = 0;
+		int32 LocalPlateVertexCountSum = 0;
+		int32 LocalPlateTriangleCountSum = 0;
+		int32 RebuiltPlateCount = 0;
+		int32 RebuiltLocalVertexCountSum = 0;
+		int32 RebuiltLocalTriangleCountSum = 0;
+		int32 RebuiltTriangleAssignmentCount = 0;
+		int32 MixedVertexTriangleCount = 0;
+		int32 MajorityTriangleAssignmentCount = 0;
+		int32 ThreeWayTriangleAssignmentCount = 0;
+		int32 UnassignedTriangleCount = 0;
+		int32 BoundaryEdgeCount = 0;
+		int64 AabbRayQueryCount = 0;
+		int64 RawHitCountTotal = 0;
+		int32 BroadphaseEquivalenceMismatchCount = 0;
+		int32 ValidSingleHitWriteCount = 0;
+		int32 MaterialInterpolationCount = 0;
+		int32 DivergentZeroHitCount = 0;
+		int32 Q1Q2GapFillCount = 0;
+		int32 Q1Q2BoundaryQueryCount = 0;
+		int32 Q1Q2BoundaryPairCount = 0;
+		int32 Q1Q2DifferentPlatePairCount = 0;
+		int32 QGammaComputedCount = 0;
+		int32 GeneratedOceanicCount = 0;
+		int32 GapFillNoBoundaryPairCount = 0;
+		int32 NondegenerateOverlapBlockedCount = 0;
+		int32 BoundaryOnlyOverlapCount = 0;
+		int32 UnsupportedOverlapWriteAttemptCount = 0;
+		int32 PriorOwnerReadCount = 0;
+		int32 PriorOwnerFallbackCount = 0;
+		int32 GlobalOwnerReadCount = 0;
+		int32 CentroidPrimaryResolutionCount = 0;
+		int32 RandomPrimaryResolutionCount = 0;
+		int32 NearestPrimaryResolutionCount = 0;
+		int32 OwnershipRepairDuringResampleCount = 0;
+		int32 RetentionHysteresisAnchorCount = 0;
+		int32 Q1Q2DiscreteApproxCount = 0;
+		int32 Q1Q2PriorOwnerLookupCount = 0;
+		int32 TerrainBeautyMutationCount = 0;
+		int32 SubductionMutationCount = 0;
+		int32 CollisionMutationCount = 0;
+		int32 RiftingMutationCount = 0;
+		int32 TopologyRebuildCount = 0;
+		int32 ProcessStateResetCount = 0;
+		int32 RemeshWindowCount = 0;
+		double MaterialMassBefore = 0.0;
+		double MaterialMassAfter = 0.0;
+		double MaterialConservationDelta = 0.0;
+		double TotalVariationBefore = 0.0;
+		double TotalVariationAfter = 0.0;
+		double TotalVariationDelta = 0.0;
+		FString TopMissPlatePairs;
+		FString TopOverlapPlatePairs;
+		bool bSingleHitTransferPass = false;
+		bool bDivergentGapFillPass = false;
+		bool bOverlapPolicyPass = false;
+		bool bTopologyRebuildPass = false;
+		bool bLifecycleConservationPass = false;
+		bool bNoForbiddenFallbackPass = false;
+		bool bPerformanceBudgetPass = true;
+		bool bReplayDeterministic = false;
+		bool bFixturePass = false;
+		bool bStageGatePass = false;
+		FString Verdict = TEXT("FAIL_IMPLEMENTATION");
+		FString ReplayPreCycleAuthorityHash;
+		FString ReplayPostCycleAuthorityHash;
+		FString ReplayResampleOutputHash;
+		FString ReplayRebuiltTopologyHash;
+		FString ReplayMetricsHash;
+		double BuildSubstrateMs = 0.0;
+		double BuildPlateLocalMs = 0.0;
+		double MotionApplyMs = 0.0;
+		double AabbBuildMs = 0.0;
+		double ResampleMs = 0.0;
+		double TopologyRebuildMs = 0.0;
+		double MetricsMs = 0.0;
+		double StepKernelMs = 0.0;
+		double TotalMs = 0.0;
+		double PeakMemoryMb = 0.0;
+	};
+
+	struct FCarrierV2Milestone2FixtureResult
+	{
+		FCarrierV2Milestone2Config Config;
+		FCarrierV2Milestone2Metrics Metrics;
+		TArray<FCarrierV2Milestone2SampleRecord> SampleRecords;
+		TArray<FCarrierV2Plate> RebuiltPlates;
+		bool bCompleted = false;
+		FString Error;
+	};
+
+	struct FCarrierV2Milestone2SuiteResult
+	{
+		TArray<FCarrierV2Milestone2FixtureResult> Results;
+		bool bMicroGatePass = false;
+		bool bScale50kPass = false;
+		bool bScale100kReported = false;
+		bool bAttempted250k = false;
+		bool bScale250kPass = false;
+		bool bAttempted500k = false;
+		bool bScale500kPass = false;
+		bool bStageGatePass = false;
+		FString Verdict = TEXT("REVISE_MILESTONE_2");
+		FString OutputRoot;
+		FString MetricsPath;
+		FString ReportPath;
+		FString NotAttempted500kReason;
+	};
+
 	struct FCarrierV2FoundationStepperSampleVisual
 	{
 		int32 SampleId = INDEX_NONE;
@@ -1108,6 +1304,19 @@ namespace CarrierLab::V2
 		static FString MetricsToJson(const FCarrierV2Stage5FixtureResult& Result);
 		static FString BuildCheckpointReport(
 			const FCarrierV2Stage5SuiteResult& Suite,
+			const FString& CommandLine,
+			const FString& CommitSha);
+	};
+
+	class CARRIERLAB_API FCarrierV2Milestone2
+	{
+	public:
+		static TArray<FCarrierV2Milestone2Config> MakeMicroFixtureConfigs();
+		static FCarrierV2Milestone2Config MakeScaleConfig(int32 SampleCount, bool bComparisonScale);
+		static bool RunFixtureWithReplay(const FCarrierV2Milestone2Config& Config, FCarrierV2Milestone2FixtureResult& OutResult);
+		static FString MetricsToJson(const FCarrierV2Milestone2FixtureResult& Result);
+		static FString BuildCheckpointReport(
+			const FCarrierV2Milestone2SuiteResult& Suite,
 			const FString& CommandLine,
 			const FString& CommitSha);
 	};
