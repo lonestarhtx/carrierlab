@@ -27,22 +27,23 @@ milestone's entry packet, it waits.
 
 ## Current Position
 
-The current working bundle, historically labeled V2 Stage 0 through V2 Stage 5
-plus the foundation stepper actor, is treated as Milestone 0 closeout evidence.
-It is not a precedent for future naming.
+The working bundle historically labeled V2 Stage 0 through V2 Stage 5 plus the
+foundation stepper actor is treated as Milestone 0 closeout evidence. It is not
+a precedent for future naming.
 
-The current Milestone 0 decision is not based on viewport appearance. The actor
-is available as a diagnostic surface, but visual inspection is deferred unless
-it reveals a usability problem or a mismatch with numeric evidence.
+The Milestone 0 decision was not based on viewport appearance. The actor is
+available as a diagnostic surface, but visual inspection is deferred unless it
+reveals a usability problem or a mismatch with numeric evidence.
 
 Old generated verdict names such as `GO_V2_6` are historical artifact labels.
-The next active decision is:
+The current active decision is:
 
 ```text
-Milestone 0 closeout -> user go/no-go -> Milestone 1 entry packet
+Milestone 1 entry packet -> user go/no-go -> Milestone 1 implementation
 ```
 
-No new simulation behavior should be added before Milestone 0 is closed.
+No new simulation behavior should be added before the Milestone 1 entry packet
+is approved.
 
 ## Milestone 0: Foundation
 
@@ -74,9 +75,7 @@ Closeout evidence:
 - checkpoint report states whether visual inspection is performed or deferred;
 - explicit user go/no-go.
 
-Current status: closeout report verified in
-`docs/checkpoints/milestone-0-closeout-report.md`; explicit user go/no-go is
-still required before preparing the Milestone 1 entry packet.
+Current status: closed by user go/no-go on 2026-06-09.
 
 ## Milestone 1: Motion
 
@@ -98,6 +97,10 @@ Forbidden scope:
 
 Entry requirement: a Milestone 1 entry packet that defines fixtures, scale
 ladder, timing budget, drift gates, and stop conditions.
+
+Current status: entry packet prepared in
+`docs/checkpoints/milestone-1-entry-packet.md`; explicit user go/no-go is still
+required before implementation.
 
 ## Milestone 2: Carrier Cycle
 

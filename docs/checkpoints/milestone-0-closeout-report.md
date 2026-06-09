@@ -6,7 +6,7 @@ Branch: `codex/v2-0-carrier`
 
 Base commit: `98d8e1b84d2cf4334b67b265ea4b0ff1a01ffe07`
 
-Status: verified; awaiting explicit user go/no-go.
+Status: verified and accepted by user go/no-go on 2026-06-09.
 
 ## Decision
 
@@ -151,8 +151,8 @@ Automation tests passed:
 
 ## Closeout Verdict
 
-Milestone 0 is ready for the user's explicit closeout go/no-go.
+Milestone 0 is closed by user go/no-go.
 
-Closeout does not authorize implementation of Milestone 1. The only next work
-after user go/no-go is the Milestone 1 entry packet: fixtures, evidence gates,
-performance budgets, stop conditions, and report shape for motion.
+Closeout does not authorize implementation of Milestone 1. The authorized next
+work is the Milestone 1 entry packet: fixtures, evidence gates, performance
+budgets, stop conditions, and report shape for motion.

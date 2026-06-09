@@ -5,6 +5,8 @@ Start here:
 - `docs/carrierlab-milestone-roadmap.md` - active go-forward structure.
 - `docs/checkpoints/milestone-0-closeout-report.md` - current Milestone 0
   closeout decision packet.
+- `docs/checkpoints/milestone-1-entry-packet.md` - current Milestone 1 entry
+  packet.
 - `docs/carrier-design.md` - technical carrier contract and authority rules.
 - `docs/pre-mortem.md` - binding stop conditions.
 - `docs/paper-carrier-extraction.md` and `docs/paper-resampling-extraction.md` - source-grounded paper/thesis notes.
