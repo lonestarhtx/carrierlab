@@ -37,7 +37,8 @@ Milestone 3 may add:
 - local material/polarity rules needed to decide which side is subducting or
   otherwise invalid as a write-back source;
 - triangle or hit filters consumed by resample write-back;
-- a default-off process-filter path so M2 filters-off hashes remain comparable;
+- literal M2 fixture reruns against pinned baselines, plus a default-off M3
+  process-filter characterization path;
 - reset and provenance counters for process marks at rebuild boundaries;
 - multi-window convergent fixtures after the tripwire below exists.
 
@@ -50,8 +51,8 @@ Milestone 3 must not add:
 - persistent global sample ownership as authority;
 - prior-owner, retention, repair, backfill, centroid, random, or nearest-hit
   overlap winners;
-- q1/q2 gap fill for a sample known to have been blocked by unresolved
-  convergent overlap in the previous window.
+- q1/q2 gap fill for non-divergent holes; previously blocked sample ids may be
+  measured in fixtures, but they must not be consulted as write-back authority.
 
 ## Mandatory Tripwire
 
@@ -61,11 +62,12 @@ and pass only after process filters are active:
 1. Create a convergent overlap sample in window 1.
 2. Record that the sample was blocked because process state was unavailable.
 3. Run a second resample window with motion.
-4. Fail if the previously blocked sample is classified as a zero-hit divergent
-   gap and written as fresh q1/q2 oceanic material.
+4. Fail if the measured previously blocked sample is classified as a zero-hit
+   divergent gap and written as fresh q1/q2 oceanic material.
 5. Pass only when process filtering removes the subducting/invalid hit and
-   produces a single source-grounded write, or when the sample remains explicitly
-   unresolved without oceanic gap conversion.
+   produces a single source-grounded write, or when the current q1/q2 boundary
+   pair fails a stateless divergence predicate and the sample remains deferred
+   without oceanic gap conversion.
 
 This tripwire protects against the M2 hole-to-oceanic conversion pump.
 
@@ -73,13 +75,14 @@ This tripwire protects against the M2 hole-to-oceanic conversion pump.
 
 M3 must report:
 
-- M2 filters-off baseline hash comparison;
+- literal M2 pinned-baseline hash comparison;
 - process-filter enabled/disabled state;
 - contact/convergence candidate counts;
 - local material evidence used for polarity;
 - subducting or invalid hit count;
 - filtered overlap-to-single-source write count;
 - still-unresolved overlap count;
+- q1/q2 divergence-rejected count;
 - previously blocked samples that became q1/q2 oceanic, required to be zero;
 - deferred overlap mass before and after filtering;
 - unassigned triangle count and budget;
@@ -105,12 +108,12 @@ performance evidence is that the 250k full resample cycle is below the paper's
 
 Milestone 3 passes only if:
 
-- M2 filters-off hashes remain stable when process filters are disabled;
+- literal M2 fixture reruns match the pinned M2 baseline hashes;
 - the hole-to-oceanic tripwire passes;
 - process-enabled overlap write-back has source-grounded filtered evidence;
 - forbidden resolver/fallback counters remain zero and are source-audited;
-- a multi-window convergent fixture with motion does not grow hole count across
-  windows;
+- a multi-window resolvable-polarity convergent fixture with motion does not
+  grow hole count across windows;
 - scale rows label conservation and topology honestly as gated or
   characterization;
 - a checkpoint report is written and the user gives explicit go/no-go before the
