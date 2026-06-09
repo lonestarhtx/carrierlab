@@ -1082,6 +1082,7 @@ namespace CarrierLab::V2
 		int32 MajorityTriangleAssignmentCount = 0;
 		int32 ThreeWayTriangleAssignmentCount = 0;
 		int32 UnassignedTriangleCount = 0;
+		int32 UnassignedTriangleBudget = 0;
 		int32 BoundaryEdgeCount = 0;
 		int64 AabbRayQueryCount = 0;
 		int64 RawHitCountTotal = 0;
@@ -1098,6 +1099,11 @@ namespace CarrierLab::V2
 		int32 GapFillNoBoundaryPairCount = 0;
 		int32 NondegenerateOverlapBlockedCount = 0;
 		int32 BoundaryOnlyOverlapCount = 0;
+		int32 CrossPlateBoundaryOnlyOverlapCount = 0;
+		int32 SamePlateBoundaryOnlyMultihitCount = 0;
+		int32 DeferredOverlapSampleCount = 0;
+		double DeferredOverlapAreaWeight = 0.0;
+		double DeferredOverlapContinentalMassEstimate = 0.0;
 		int32 UnsupportedOverlapWriteAttemptCount = 0;
 		int32 PriorOwnerReadCount = 0;
 		int32 PriorOwnerFallbackCount = 0;
@@ -1128,9 +1134,11 @@ namespace CarrierLab::V2
 		bool bDivergentGapFillPass = false;
 		bool bOverlapPolicyPass = false;
 		bool bTopologyRebuildPass = false;
+		bool bUnassignedTriangleBudgetPass = true;
 		bool bLifecycleConservationPass = false;
 		bool bNoForbiddenFallbackPass = false;
 		bool bPerformanceBudgetPass = true;
+		bool bPaperResampleCycleBudgetPass = true;
 		bool bReplayDeterministic = false;
 		bool bFixturePass = false;
 		bool bStageGatePass = false;
@@ -1148,6 +1156,8 @@ namespace CarrierLab::V2
 		double TopologyRebuildMs = 0.0;
 		double MetricsMs = 0.0;
 		double StepKernelMs = 0.0;
+		double FullCarrierCycleMs = 0.0;
+		double PaperResampleCycleBudgetMs = 0.0;
 		double TotalMs = 0.0;
 		double PeakMemoryMb = 0.0;
 	};

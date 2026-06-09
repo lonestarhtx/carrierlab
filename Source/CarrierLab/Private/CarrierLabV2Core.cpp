@@ -4770,6 +4770,54 @@ namespace CarrierLab::V2
 			return MakeStage5Material(ContinentalFraction, Provenance);
 		}
 
+		double EstimateDeferredOverlapContinentalFraction(const TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
+		{
+			if (Hits.IsEmpty())
+			{
+				return 0.0;
+			}
+			double Sum = 0.0;
+			for (const FCarrierV2Stage1ProjectionHit& Hit : Hits)
+			{
+				Sum += Hit.ContinentalFraction;
+			}
+			return Sum / static_cast<double>(Hits.Num());
+		}
+
+		void AccumulateDeferredOverlapAccounting(
+			const FCarrierV2SubstrateSample& Sample,
+			const TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits,
+			FCarrierV2Milestone2Metrics& Metrics)
+		{
+			++Metrics.DeferredOverlapSampleCount;
+			Metrics.DeferredOverlapAreaWeight += Sample.AreaWeight;
+			Metrics.DeferredOverlapContinentalMassEstimate +=
+				Sample.AreaWeight * EstimateDeferredOverlapContinentalFraction(Hits);
+		}
+
+		const TCHAR* Milestone2RequirementStatus(const bool bRequired, const bool bPass)
+		{
+			if (!bRequired)
+			{
+				return TEXT("characterization");
+			}
+			return bPass ? TEXT("pass") : TEXT("fail");
+		}
+
+		const TCHAR* Milestone2TopologyStatus(const FCarrierV2Milestone2Config& Config, const FCarrierV2Milestone2Metrics& Metrics)
+		{
+			if (Config.bRequireFullTopologyRebuild)
+			{
+				return Metrics.bTopologyRebuildPass ? TEXT("full pass") : TEXT("fail");
+			}
+			return Metrics.bUnassignedTriangleBudgetPass ? TEXT("bounded deferred") : TEXT("fail");
+		}
+
+		double Milestone2PaperResampleBudgetMs(const FCarrierV2Milestone2Metrics& Metrics)
+		{
+			return Metrics.GlobalSampleCount == 250000 ? 3580.0 : 0.0;
+		}
+
 		void CopyMilestone2TopologyMetrics(const FCarrierV2BuildState& State, FCarrierV2Milestone2Metrics& Metrics)
 		{
 			Metrics.GlobalSampleCount = State.Samples.Num();
@@ -4893,7 +4941,11 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Metrics.GlobalSampleCount);
 			HashMixInt(Hash, Metrics.GlobalTriangleCount);
 			HashMixInt(Hash, Metrics.RebuiltTriangleAssignmentCount);
+			HashMixInt(Hash, Metrics.MixedVertexTriangleCount);
+			HashMixInt(Hash, Metrics.MajorityTriangleAssignmentCount);
+			HashMixInt(Hash, Metrics.ThreeWayTriangleAssignmentCount);
 			HashMixInt(Hash, Metrics.UnassignedTriangleCount);
+			HashMixInt(Hash, Metrics.UnassignedTriangleBudget);
 			HashMixInt(Hash, Metrics.BoundaryEdgeCount);
 			HashMixInt(Hash, Metrics.AabbRayQueryCount);
 			HashMixInt(Hash, Metrics.RawHitCountTotal);
@@ -4910,6 +4962,11 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Metrics.GapFillNoBoundaryPairCount);
 			HashMixInt(Hash, Metrics.NondegenerateOverlapBlockedCount);
 			HashMixInt(Hash, Metrics.BoundaryOnlyOverlapCount);
+			HashMixInt(Hash, Metrics.CrossPlateBoundaryOnlyOverlapCount);
+			HashMixInt(Hash, Metrics.SamePlateBoundaryOnlyMultihitCount);
+			HashMixInt(Hash, Metrics.DeferredOverlapSampleCount);
+			HashMixDouble(Hash, Metrics.DeferredOverlapAreaWeight);
+			HashMixDouble(Hash, Metrics.DeferredOverlapContinentalMassEstimate);
 			HashMixInt(Hash, Metrics.UnsupportedOverlapWriteAttemptCount);
 			HashMixInt(Hash, Metrics.PriorOwnerReadCount);
 			HashMixInt(Hash, Metrics.PriorOwnerFallbackCount);
@@ -4937,9 +4994,11 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Metrics.bDivergentGapFillPass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bOverlapPolicyPass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bTopologyRebuildPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bUnassignedTriangleBudgetPass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bLifecycleConservationPass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bNoForbiddenFallbackPass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bPerformanceBudgetPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bPaperResampleCycleBudgetPass ? 1 : 0);
 			if (bIncludeReplayFields)
 			{
 				HashMixString(Hash, Metrics.ReplayPreCycleAuthorityHash);
@@ -5428,11 +5487,13 @@ namespace CarrierLab::V2
 				if (UniquePlateIds.Num() > 1)
 				{
 					AccumulateStage1OverlapAttribution(Hits, OverlapPairCounts);
+					AccumulateDeferredOverlapAccounting(Sample, Hits, Result.Metrics);
 					if (bAllBoundary)
 					{
 						Record.bBoundaryOnlyOverlap = true;
 						Record.SelectionProvenance = TEXT("cross_plate_boundary_overlap_blocked");
 						++Result.Metrics.BoundaryOnlyOverlapCount;
+						++Result.Metrics.CrossPlateBoundaryOnlyOverlapCount;
 					}
 					else
 					{
@@ -5463,6 +5524,7 @@ namespace CarrierLab::V2
 				if (Hits.Num() > 1)
 				{
 					++Result.Metrics.BoundaryOnlyOverlapCount;
+					++Result.Metrics.SamePlateBoundaryOnlyMultihitCount;
 				}
 				Result.SampleRecords.Add(Record);
 			}
@@ -5497,6 +5559,17 @@ namespace CarrierLab::V2
 				(!Config.bRequireFullTopologyRebuild ||
 					(Metrics.RebuiltLocalTriangleCountSum == Metrics.GlobalTriangleCount &&
 						Metrics.UnassignedTriangleCount == 0));
+			const int32 DeferredTopologySampleCount =
+				Metrics.NondegenerateOverlapBlockedCount +
+				Metrics.CrossPlateBoundaryOnlyOverlapCount +
+				Metrics.GapFillNoBoundaryPairCount;
+			Metrics.UnassignedTriangleBudget = Config.bRequireFullTopologyRebuild
+				? 0
+				: 6 * DeferredTopologySampleCount;
+			Metrics.bUnassignedTriangleBudgetPass = Config.bRequireFullTopologyRebuild
+				? Metrics.UnassignedTriangleCount == 0
+				: (Metrics.UnassignedTriangleBudget == 0 ||
+					Metrics.UnassignedTriangleCount <= Metrics.UnassignedTriangleBudget);
 			Metrics.bLifecycleConservationPass =
 				(!Config.bRequireMaterialConservation ||
 					Metrics.MaterialConservationDelta <= Config.MaterialConservationTolerance) &&
@@ -5520,6 +5593,10 @@ namespace CarrierLab::V2
 			Metrics.bPerformanceBudgetPass =
 				Config.ExpectedMaxStepKernelMs <= 0.0 ||
 				Metrics.StepKernelMs <= Config.ExpectedMaxStepKernelMs;
+			Metrics.PaperResampleCycleBudgetMs = Milestone2PaperResampleBudgetMs(Metrics);
+			Metrics.bPaperResampleCycleBudgetPass =
+				Metrics.PaperResampleCycleBudgetMs <= 0.0 ||
+				Metrics.FullCarrierCycleMs <= Metrics.PaperResampleCycleBudgetMs;
 
 			Metrics.bFixturePass =
 				Metrics.bBroadphaseMarginGatePass &&
@@ -5528,9 +5605,11 @@ namespace CarrierLab::V2
 				Metrics.bDivergentGapFillPass &&
 				Metrics.bOverlapPolicyPass &&
 				Metrics.bTopologyRebuildPass &&
+				Metrics.bUnassignedTriangleBudgetPass &&
 				Metrics.bLifecycleConservationPass &&
 				Metrics.bNoForbiddenFallbackPass &&
-				Metrics.bPerformanceBudgetPass;
+				Metrics.bPerformanceBudgetPass &&
+				Metrics.bPaperResampleCycleBudgetPass;
 			Metrics.bStageGatePass = Metrics.bFixturePass;
 
 			if (!Metrics.bBroadphaseMarginGatePass)
@@ -5557,6 +5636,10 @@ namespace CarrierLab::V2
 			{
 				Metrics.Verdict = TEXT("FAIL_TOPOLOGY_REBUILD");
 			}
+			else if (!Metrics.bUnassignedTriangleBudgetPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_UNASSIGNED_TRIANGLE_BUDGET");
+			}
 			else if (!Metrics.bLifecycleConservationPass)
 			{
 				Metrics.Verdict = TEXT("FAIL_LIFECYCLE_CONSERVATION");
@@ -5564,6 +5647,10 @@ namespace CarrierLab::V2
 			else if (!Metrics.bPerformanceBudgetPass)
 			{
 				Metrics.Verdict = TEXT("FAIL_PERFORMANCE_BUDGET");
+			}
+			else if (!Metrics.bPaperResampleCycleBudgetPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_PAPER_RESAMPLE_CYCLE_BUDGET");
 			}
 			else if (!Metrics.bSingleHitTransferPass)
 			{
@@ -5685,6 +5772,9 @@ namespace CarrierLab::V2
 				OutResult.Metrics.MotionApplyMs +
 				OutResult.Metrics.ResampleMs +
 				OutResult.Metrics.TopologyRebuildMs;
+			OutResult.Metrics.FullCarrierCycleMs =
+				OutResult.Metrics.AabbBuildMs +
+				OutResult.Metrics.StepKernelMs;
 			FinalizeMilestone2Verdict(Config, OutResult.Metrics);
 			OutResult.Metrics.MetricsHash = HashToString(HashMilestone2Metrics(OutResult.Metrics, true));
 			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
@@ -9053,6 +9143,11 @@ namespace CarrierLab::V2
 		Json += FString::Printf(TEXT("\"gap_fill_no_boundary_pair_count\":%d,"), M.GapFillNoBoundaryPairCount);
 		Json += FString::Printf(TEXT("\"nondegenerate_overlap_blocked_count\":%d,"), M.NondegenerateOverlapBlockedCount);
 		Json += FString::Printf(TEXT("\"boundary_only_overlap_count\":%d,"), M.BoundaryOnlyOverlapCount);
+		Json += FString::Printf(TEXT("\"cross_plate_boundary_only_overlap_count\":%d,"), M.CrossPlateBoundaryOnlyOverlapCount);
+		Json += FString::Printf(TEXT("\"same_plate_boundary_only_multihit_count\":%d,"), M.SamePlateBoundaryOnlyMultihitCount);
+		Json += FString::Printf(TEXT("\"deferred_overlap_sample_count\":%d,"), M.DeferredOverlapSampleCount);
+		Json += FString::Printf(TEXT("\"deferred_overlap_area_weight\":%.12f,"), M.DeferredOverlapAreaWeight);
+		Json += FString::Printf(TEXT("\"deferred_overlap_continental_mass_estimate\":%.12f,"), M.DeferredOverlapContinentalMassEstimate);
 		Json += FString::Printf(TEXT("\"unsupported_overlap_write_attempt_count\":%d,"), M.UnsupportedOverlapWriteAttemptCount);
 		Json += FString::Printf(TEXT("\"prior_owner_read_count\":%d,"), M.PriorOwnerReadCount);
 		Json += FString::Printf(TEXT("\"global_owner_read_count\":%d,"), M.GlobalOwnerReadCount);
@@ -9060,8 +9155,13 @@ namespace CarrierLab::V2
 		Json += FString::Printf(TEXT("\"random_primary_resolution_count\":%d,"), M.RandomPrimaryResolutionCount);
 		Json += FString::Printf(TEXT("\"nearest_primary_resolution_count\":%d,"), M.NearestPrimaryResolutionCount);
 		Json += FString::Printf(TEXT("\"topology_rebuild_count\":%d,"), M.TopologyRebuildCount);
+		Json += FString::Printf(TEXT("\"mixed_vertex_triangle_count\":%d,"), M.MixedVertexTriangleCount);
+		Json += FString::Printf(TEXT("\"majority_triangle_assignment_count\":%d,"), M.MajorityTriangleAssignmentCount);
+		Json += FString::Printf(TEXT("\"three_way_triangle_assignment_count\":%d,"), M.ThreeWayTriangleAssignmentCount);
 		Json += FString::Printf(TEXT("\"rebuilt_triangle_assignment_count\":%d,"), M.RebuiltTriangleAssignmentCount);
 		Json += FString::Printf(TEXT("\"unassigned_triangle_count\":%d,"), M.UnassignedTriangleCount);
+		Json += FString::Printf(TEXT("\"unassigned_triangle_budget\":%d,"), M.UnassignedTriangleBudget);
+		Json += FString::Printf(TEXT("\"unassigned_triangle_budget_pass\":%s,"), M.bUnassignedTriangleBudgetPass ? TEXT("true") : TEXT("false"));
 		Json += FString::Printf(TEXT("\"material_conservation_delta\":%.12f,"), M.MaterialConservationDelta);
 		Json += FString::Printf(TEXT("\"total_variation_delta\":%.12f,"), M.TotalVariationDelta);
 		Json += FString::Printf(TEXT("\"top_miss_plate_pairs\":%s,"), *JsonString(M.TopMissPlatePairs));
@@ -9075,6 +9175,9 @@ namespace CarrierLab::V2
 		Json += FString::Printf(TEXT("\"replay_rebuilt_topology_hash\":%s,"), *JsonString(M.ReplayRebuiltTopologyHash));
 		Json += FString::Printf(TEXT("\"replay_deterministic\":%s,"), M.bReplayDeterministic ? TEXT("true") : TEXT("false"));
 		Json += FString::Printf(TEXT("\"step_kernel_ms\":%.3f,"), M.StepKernelMs);
+		Json += FString::Printf(TEXT("\"full_carrier_cycle_ms\":%.3f,"), M.FullCarrierCycleMs);
+		Json += FString::Printf(TEXT("\"paper_resample_cycle_budget_ms\":%.3f,"), M.PaperResampleCycleBudgetMs);
+		Json += FString::Printf(TEXT("\"paper_resample_cycle_budget_pass\":%s,"), M.bPaperResampleCycleBudgetPass ? TEXT("true") : TEXT("false"));
 		Json += FString::Printf(TEXT("\"total_ms\":%.3f,"), M.TotalMs);
 		Json += FString::Printf(TEXT("\"peak_memory_mb\":%.3f,"), M.PeakMemoryMb);
 		Json += FString::Printf(TEXT("\"fixture_pass\":%s,"), M.bFixturePass ? TEXT("true") : TEXT("false"));
@@ -9101,13 +9204,13 @@ namespace CarrierLab::V2
 		Report += TEXT("Milestone 2 implements the pre-process carrier cycle: scheduled rigid motion, projection only at the resample boundary, single-source barycentric write-back, divergent q1/q2/qGamma oceanic gap fill, and plate-local topology rebuild. Nondegenerate cross-plate overlaps are counted and blocked because subduction/collision process-state filters do not exist yet in the M2 contract. This milestone does not add contact physics, terrain, elevation, erosion, uplift, slab pull, rifting, or any overlap winner policy.\n\n");
 
 		Report += TEXT("## Fixture Gates\n\n");
-		Report += TEXT("| fixture | samples | plates | windows | single-source writes | gaps | q1/q2 pairs | overlap blocked | unassigned tris | pass | verdict |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
+		Report += TEXT("| fixture | samples | plates | windows | single-source writes | gaps | q1/q2 pairs | overlap blocked | deferred overlap mass | unassigned tris | pass | verdict |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
 		for (const FCarrierV2Milestone2FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Milestone2Metrics& M = Result.Metrics;
 			Report += FString::Printf(
-				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %s | `%s` |\n"),
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %.12f | %d | %s | `%s` |\n"),
 				*M.FixtureId,
 				M.GlobalSampleCount,
 				M.PlateCount,
@@ -9116,26 +9219,30 @@ namespace CarrierLab::V2
 				M.DivergentZeroHitCount,
 				M.Q1Q2BoundaryPairCount,
 				M.NondegenerateOverlapBlockedCount,
+				M.DeferredOverlapContinentalMassEstimate,
 				M.UnassignedTriangleCount,
 				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
 				*M.Verdict);
 		}
 
 		Report += TEXT("\n## Write-Back Policy\n\n");
-		Report += TEXT("| fixture | raw hits | material interpolation | generated oceanic | no q1/q2 pair | unsupported overlap writes | prior/global owner reads | centroid/random/nearest resolvers | policy pass |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += TEXT("| fixture | raw hits | material interpolation | generated oceanic | no q1/q2 pair | nondegenerate blocked | cross-boundary blocked | same-plate boundary multi-hit | unsupported overlap writes | prior/global owner reads | centroid/random/nearest resolvers | policy pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		for (const FCarrierV2Milestone2FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Milestone2Metrics& M = Result.Metrics;
 			const int32 OwnerReads = M.PriorOwnerReadCount + M.GlobalOwnerReadCount;
 			const int32 Resolvers = M.CentroidPrimaryResolutionCount + M.RandomPrimaryResolutionCount + M.NearestPrimaryResolutionCount;
 			Report += FString::Printf(
-				TEXT("| `%s` | %lld | %d | %d | %d | %d | %d | %d | %s |\n"),
+				TEXT("| `%s` | %lld | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
 				*M.FixtureId,
 				M.RawHitCountTotal,
 				M.MaterialInterpolationCount,
 				M.GeneratedOceanicCount,
 				M.GapFillNoBoundaryPairCount,
+				M.NondegenerateOverlapBlockedCount,
+				M.CrossPlateBoundaryOnlyOverlapCount,
+				M.SamePlateBoundaryOnlyMultihitCount,
 				M.UnsupportedOverlapWriteAttemptCount,
 				OwnerReads,
 				Resolvers,
@@ -9143,24 +9250,31 @@ namespace CarrierLab::V2
 		}
 
 		Report += TEXT("\n## Lifecycle And Topology\n\n");
-		Report += TEXT("| fixture | rebuilds | rebuilt plates | rebuilt vertices | rebuilt triangles | material delta | tv delta | conservation pass | topology pass |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---|---|\n");
+		Report += TEXT("| fixture | rebuilds | rebuilt plates | rebuilt vertices | rebuilt triangles | mixed tris | 3-way tris | unassigned/budget | material delta | tv delta | conservation status | topology status |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
 		for (const FCarrierV2Milestone2FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Milestone2Metrics& M = Result.Metrics;
+			const bool bConservationRequired =
+				Result.Config.bRequireMaterialConservation || Result.Config.bRequireSharpnessPreservation;
 			Report += FString::Printf(
-				TEXT("| `%s` | %d | %d | %d | %d/%d | %.12f | %.12f | %s | %s |\n"),
+				TEXT("| `%s` | %d | %d | %d | %d/%d | %d | %d | %d/%d | %.12f | %.12f | %s | %s |\n"),
 				*M.FixtureId,
 				M.TopologyRebuildCount,
 				M.RebuiltPlateCount,
 				M.RebuiltLocalVertexCountSum,
 				M.RebuiltTriangleAssignmentCount,
 				M.GlobalTriangleCount,
+				M.MixedVertexTriangleCount,
+				M.ThreeWayTriangleAssignmentCount,
+				M.UnassignedTriangleCount,
+				M.UnassignedTriangleBudget,
 				M.MaterialConservationDelta,
 				M.TotalVariationDelta,
-				M.bLifecycleConservationPass ? TEXT("pass") : TEXT("fail"),
-				M.bTopologyRebuildPass ? TEXT("pass") : TEXT("fail"));
+				Milestone2RequirementStatus(bConservationRequired, M.bLifecycleConservationPass),
+				Milestone2TopologyStatus(Result.Config, M));
 		}
+		Report += TEXT("\nLifecycle note: material and total-variation deltas are gate-enforced only where the fixture explicitly requires conservation/sharpness. Scale rows are characterization until M3 process filters make repeated convergent windows legal. The unassigned-triangle budget is `6 * (nondegenerate overlap blocked + cross-plate boundary blocked + no-q1q2-pair gaps)` for rows that intentionally defer full topology.\n");
 
 		Report += TEXT("\n## Attribution\n\n");
 		Report += TEXT("| fixture | top miss plate pairs | top overlap plate pairs |\n");
@@ -9190,14 +9304,29 @@ namespace CarrierLab::V2
 				M.bReplayDeterministic ? TEXT("pass") : TEXT("fail"));
 		}
 
-		Report += TEXT("\n## Performance Ladder\n\n");
-		Report += TEXT("| fixture | samples | build substrate ms | build plate ms | aabb build ms | motion ms | resample ms | rebuild ms | step kernel ms | budget pass | total ms | peak mb |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n");
+		Report += TEXT("\n## M2 Regression Baselines For M3\n\n");
+		Report += TEXT("These hashes are the filters-off M2 carrier-cycle signatures that M3 must treat as regression baselines when process filters are disabled. Replay A/B checks within-run determinism; this table is the cross-commit pin.\n\n");
+		Report += TEXT("| fixture | post-cycle authority | resample output | rebuilt topology |\n");
+		Report += TEXT("|---|---|---|---|\n");
 		for (const FCarrierV2Milestone2FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Milestone2Metrics& M = Result.Metrics;
 			Report += FString::Printf(
-				TEXT("| `%s` | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %s | %.3f | %.3f |\n"),
+				TEXT("| `%s` | `%s` | `%s` | `%s` |\n"),
+				*M.FixtureId,
+				*M.PostCycleAuthorityHash,
+				*M.ResampleOutputHash,
+				*M.RebuiltTopologyHash);
+		}
+
+		Report += TEXT("\n## Performance Ladder\n\n");
+		Report += TEXT("| fixture | samples | build substrate ms | build plate ms | aabb build ms | motion ms | resample ms | rebuild ms | step kernel ms | full cycle ms | paper resample budget ms | budget pass | total ms | peak mb |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n");
+		for (const FCarrierV2Milestone2FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Milestone2Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %s | %.3f | %.3f |\n"),
 				*M.FixtureId,
 				M.GlobalSampleCount,
 				M.BuildSubstrateMs,
@@ -9207,11 +9336,13 @@ namespace CarrierLab::V2
 				M.ResampleMs,
 				M.TopologyRebuildMs,
 				M.StepKernelMs,
-				M.bPerformanceBudgetPass ? TEXT("pass") : TEXT("fail"),
+				M.FullCarrierCycleMs,
+				M.PaperResampleCycleBudgetMs,
+				(M.bPerformanceBudgetPass && M.bPaperResampleCycleBudgetPass) ? TEXT("pass") : TEXT("fail"),
 				M.TotalMs,
 				M.PeakMemoryMb);
 		}
-		Report += TEXT("\nBudget note: `step kernel ms` is charged as motion + resample + topology rebuild. `aabb build ms` is still reported, but it is treated as plate-topology setup because Milestone 1 established static per-plate query trees and inverse-ray projection as the runtime query architecture.\n");
+		Report += TEXT("\nBudget note: `step kernel ms` remains the legacy M2 no-pathology gate charged as motion + resample + topology rebuild. `full cycle ms` adds AABB build because M2 rebuilds trees every resample window. The paper-anchored resample-cycle comparison is only applied where the paper row is named here: 250k full cycle versus the 3.58 s oceanic-crust/resampling row. M3 must split per-step process timing from per-window resampling timing instead of treating the 1.24 s total-row cap as spare headroom.\n");
 
 		Report += TEXT("\n## Gate Summary\n\n");
 		Report += FString::Printf(TEXT("- Micro gate: `%s`\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
@@ -9225,7 +9356,7 @@ namespace CarrierLab::V2
 		}
 		Report += FString::Printf(TEXT("- Final verdict: `%s`\n\n"), *Suite.Verdict);
 		Report += TEXT("## Next Gate\n\n");
-		Report += TEXT("Stop here for explicit user go/no-go before Milestone 3. M2 validates the carrier cycle only for single-source transfer and divergent gap fill. Convergent overlap material selection remains intentionally deferred until source-grounded process-state filters exist.\n");
+		Report += TEXT("Stop here for explicit user go/no-go before Milestone 3. M2 exercises the carrier cycle only for single-source transfer and divergent gap fill. Convergent overlap material selection remains intentionally deferred until source-grounded process-state filters exist.\n");
 
 		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
 		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);

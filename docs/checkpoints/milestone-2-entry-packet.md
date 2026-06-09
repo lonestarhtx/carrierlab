@@ -153,7 +153,7 @@ Forbidden overlap handling in M2:
 - claiming paper-faithful overlap resolution without subduction/collision
   process-state filters.
 
-This means M2 can validate the carrier cycle for single-hit and divergent
+This means M2 can exercise the carrier cycle for single-hit and divergent
 zero-hit cases. Full convergent overlap material selection moves to the contact
 and process milestone.
 
@@ -181,10 +181,12 @@ Micro fixtures:
   fallback ownership;
 - overlap-blocked sample: nondegenerate overlap is counted and not written by a
   resolver;
-- repeated lifecycle: several motion/resample windows preserve conservation and
-  field sharpness within thresholds;
-- negative prior-owner control: deliberately available previous owner must not
-  be read or consumed.
+- repeated lifecycle: several no-overlap windows preserve conservation and
+  field sharpness within thresholds; multi-window convergent motion is deferred
+  until process filters exist;
+- prior-owner contract tripwire: prior-owner/global-owner read counters must
+  remain zero and the source path must be inspected; this fixture is not a live
+  proof that a reachable prior-owner input was rejected.
 
 Scale fixtures:
 
@@ -210,7 +212,24 @@ M2 must report:
 - field sharpness or total-variation delta across repeated remesh;
 - per-plate and per-plate-pair miss/overlap attribution;
 - replay authority/projection hashes;
-- step kernel ms, total ms, and peak memory.
+- deferred overlap area/mass accounting;
+- unassigned-triangle budget for rows that intentionally defer full topology;
+- step kernel ms, full resample-cycle ms, total ms, and peak memory.
+
+## Post-Review Hardening Amendment
+
+External review of the Milestone 2 implementation found that the carrier cycle
+was architecturally valid, but several report surfaces were too generous:
+
+- scale material-conservation and total-variation deltas are characterization
+  unless the config explicitly gates them;
+- topology rows that block overlaps must use a bounded-unassigned budget rather
+  than printing a generic pass;
+- AABB build time must be visible in full-cycle timing because M2 rebuilds
+  query trees every resample window;
+- the prior-owner fixture is a contract/source-inspection tripwire, not a
+  complete live negative control;
+- M3 must add a hole-to-oceanic tripwire before any multi-window convergent run.
 
 ## Pass Gates
 

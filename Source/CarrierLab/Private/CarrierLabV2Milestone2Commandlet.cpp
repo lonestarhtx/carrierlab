@@ -158,7 +158,7 @@ int32 UCarrierLabV2Milestone2Commandlet::Main(const FString& Params)
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("CarrierLab M2: %s verdict=%s pass=%s replay=%s single=%d gaps=%d q1q2=%d overlap_blocked=%d unsupported_overlap_writes=%d owner_reads=%d resolvers(c/r/n)=%d/%d/%d rebuilt=%d/%d material_delta=%.12f tv_delta=%.12f broadphase_mismatch=%d step_ms=%.3f total_ms=%.3f."),
+			TEXT("CarrierLab M2: %s verdict=%s pass=%s replay=%s single=%d gaps=%d q1q2=%d overlap_blocked=%d deferred_overlap_mass=%.12f unsupported_overlap_writes=%d owner_reads=%d resolvers(c/r/n)=%d/%d/%d rebuilt=%d/%d unassigned=%d/%d material_delta=%.12f tv_delta=%.12f broadphase_mismatch=%d step_ms=%.3f full_cycle_ms=%.3f total_ms=%.3f."),
 			*Result.Metrics.FixtureId,
 			*Result.Metrics.Verdict,
 			Result.Metrics.bFixturePass ? TEXT("true") : TEXT("false"),
@@ -167,6 +167,7 @@ int32 UCarrierLabV2Milestone2Commandlet::Main(const FString& Params)
 			Result.Metrics.DivergentZeroHitCount,
 			Result.Metrics.Q1Q2BoundaryPairCount,
 			Result.Metrics.NondegenerateOverlapBlockedCount,
+			Result.Metrics.DeferredOverlapContinentalMassEstimate,
 			Result.Metrics.UnsupportedOverlapWriteAttemptCount,
 			Result.Metrics.PriorOwnerReadCount + Result.Metrics.GlobalOwnerReadCount,
 			Result.Metrics.CentroidPrimaryResolutionCount,
@@ -174,10 +175,13 @@ int32 UCarrierLabV2Milestone2Commandlet::Main(const FString& Params)
 			Result.Metrics.NearestPrimaryResolutionCount,
 			Result.Metrics.RebuiltTriangleAssignmentCount,
 			Result.Metrics.GlobalTriangleCount,
+			Result.Metrics.UnassignedTriangleCount,
+			Result.Metrics.UnassignedTriangleBudget,
 			Result.Metrics.MaterialConservationDelta,
 			Result.Metrics.TotalVariationDelta,
 			Result.Metrics.BroadphaseEquivalenceMismatchCount,
 			Result.Metrics.StepKernelMs,
+			Result.Metrics.FullCarrierCycleMs,
 			Result.Metrics.TotalMs);
 	}
 

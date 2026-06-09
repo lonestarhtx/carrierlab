@@ -21,14 +21,14 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 	bool bSawGapFill = false;
 	bool bSawOverlapBlocked = false;
 	bool bSawLifecycle = false;
-	bool bSawPriorOwnerControl = false;
+	bool bSawPriorOwnerContractTripwire = false;
 
 	for (const CarrierLab::V2::FCarrierV2Milestone2Config& Config : Configs)
 	{
 		CarrierLab::V2::FCarrierV2Milestone2FixtureResult Result;
 		CarrierLab::V2::FCarrierV2Milestone2::RunFixtureWithReplay(Config, Result);
 		AddInfo(FString::Printf(
-			TEXT("[CarrierLabM2 fixture=%s pass=%s replay=%s single=%d gaps=%d q1q2=%d qgamma=%d generated=%d no_pair=%d overlap_blocked=%d unsupported_overlap_writes=%d owner_reads=%d resolvers=%d/%d/%d rebuilds=%d rebuilt=%d/%d unassigned=%d material_delta=%.12f tv_delta=%.12f hashes=%s/%s/%s replay=%s/%s/%s step_ms=%.3f total_ms=%.3f]"),
+			TEXT("[CarrierLabM2 fixture=%s pass=%s replay=%s single=%d gaps=%d q1q2=%d qgamma=%d generated=%d no_pair=%d overlap_blocked=%d deferred_overlap_mass=%.12f unsupported_overlap_writes=%d owner_reads=%d resolvers=%d/%d/%d rebuilds=%d rebuilt=%d/%d unassigned=%d/%d material_delta=%.12f tv_delta=%.12f hashes=%s/%s/%s replay=%s/%s/%s step_ms=%.3f full_cycle_ms=%.3f total_ms=%.3f]"),
 			*Result.Metrics.FixtureId,
 			Result.Metrics.bFixturePass ? TEXT("true") : TEXT("false"),
 			Result.Metrics.bReplayDeterministic ? TEXT("true") : TEXT("false"),
@@ -39,6 +39,7 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 			Result.Metrics.GeneratedOceanicCount,
 			Result.Metrics.GapFillNoBoundaryPairCount,
 			Result.Metrics.NondegenerateOverlapBlockedCount,
+			Result.Metrics.DeferredOverlapContinentalMassEstimate,
 			Result.Metrics.UnsupportedOverlapWriteAttemptCount,
 			Result.Metrics.PriorOwnerReadCount + Result.Metrics.GlobalOwnerReadCount,
 			Result.Metrics.CentroidPrimaryResolutionCount,
@@ -48,6 +49,7 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 			Result.Metrics.RebuiltTriangleAssignmentCount,
 			Result.Metrics.GlobalTriangleCount,
 			Result.Metrics.UnassignedTriangleCount,
+			Result.Metrics.UnassignedTriangleBudget,
 			Result.Metrics.MaterialConservationDelta,
 			Result.Metrics.TotalVariationDelta,
 			*Result.Metrics.PostCycleAuthorityHash,
@@ -57,6 +59,7 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 			*Result.Metrics.ReplayResampleOutputHash,
 			*Result.Metrics.ReplayRebuiltTopologyHash,
 			Result.Metrics.StepKernelMs,
+			Result.Metrics.FullCarrierCycleMs,
 			Result.Metrics.TotalMs));
 
 		TestTrue(FString::Printf(TEXT("%s fixture pass"), *Config.FixtureId), Result.Metrics.bFixturePass);
@@ -65,6 +68,7 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 		TestTrue(FString::Printf(TEXT("%s q1/q2 pass"), *Config.FixtureId), Result.Metrics.bDivergentGapFillPass);
 		TestTrue(FString::Printf(TEXT("%s overlap policy pass"), *Config.FixtureId), Result.Metrics.bOverlapPolicyPass);
 		TestTrue(FString::Printf(TEXT("%s topology pass"), *Config.FixtureId), Result.Metrics.bTopologyRebuildPass);
+		TestTrue(FString::Printf(TEXT("%s unassigned triangle budget pass"), *Config.FixtureId), Result.Metrics.bUnassignedTriangleBudgetPass);
 		TestTrue(FString::Printf(TEXT("%s lifecycle pass"), *Config.FixtureId), Result.Metrics.bLifecycleConservationPass);
 		TestTrue(FString::Printf(TEXT("%s no forbidden fallback pass"), *Config.FixtureId), Result.Metrics.bNoForbiddenFallbackPass);
 		TestEqual(FString::Printf(TEXT("%s unsupported overlap write attempts"), *Config.FixtureId), Result.Metrics.UnsupportedOverlapWriteAttemptCount, 0);
@@ -101,6 +105,7 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 		{
 			bSawOverlapBlocked = true;
 			TestTrue(TEXT("M2-FX-004 blocks nondegenerate overlap"), Result.Metrics.NondegenerateOverlapBlockedCount > 0);
+			TestTrue(TEXT("M2-FX-004 reports deferred overlap area"), Result.Metrics.DeferredOverlapAreaWeight > 0.0);
 			TestEqual(TEXT("M2-FX-004 does not write unsupported overlap"), Result.Metrics.UnsupportedOverlapWriteAttemptCount, 0);
 		}
 		else if (Config.FixtureId == TEXT("M2-FX-005"))
@@ -110,9 +115,9 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 		}
 		else if (Config.FixtureId == TEXT("M2-FX-006"))
 		{
-			bSawPriorOwnerControl = true;
-			TestTrue(TEXT("M2-FX-006 injects prior-owner control"), Config.bInjectPriorOwnerLabelsForNegativeControl);
-			TestEqual(TEXT("M2-FX-006 does not read injected prior owner"), Result.Metrics.PriorOwnerReadCount, 0);
+			bSawPriorOwnerContractTripwire = true;
+			TestTrue(TEXT("M2-FX-006 declares prior-owner contract tripwire"), Config.bInjectPriorOwnerLabelsForNegativeControl);
+			TestEqual(TEXT("M2-FX-006 prior-owner read counter remains zero"), Result.Metrics.PriorOwnerReadCount, 0);
 		}
 
 		bAllPassed = bAllPassed && Result.Metrics.bFixturePass;
@@ -123,7 +128,7 @@ bool FCarrierLabV2Milestone2CarrierCycleFixturesTest::RunTest(const FString& Par
 	TestTrue(TEXT("Divergent q1/q2 fixture ran"), bSawGapFill);
 	TestTrue(TEXT("Overlap-blocked fixture ran"), bSawOverlapBlocked);
 	TestTrue(TEXT("Lifecycle fixture ran"), bSawLifecycle);
-	TestTrue(TEXT("Prior-owner negative control ran"), bSawPriorOwnerControl);
+	TestTrue(TEXT("Prior-owner contract tripwire ran"), bSawPriorOwnerContractTripwire);
 	TestTrue(TEXT("All M2 carrier cycle fixtures passed"), bAllPassed);
 	return true;
 }
