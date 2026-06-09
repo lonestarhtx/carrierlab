@@ -74,6 +74,7 @@ UCarrierLabV2Stage1Commandlet::UCarrierLabV2Stage1Commandlet()
 int32 UCarrierLabV2Stage1Commandlet::Main(const FString& Params)
 {
 	const bool bMicroOnly = Params.Contains(TEXT("-MicroOnly"), ESearchCase::IgnoreCase);
+	const bool bRun100k = !bMicroOnly && Params.Contains(TEXT("-Run100k"), ESearchCase::IgnoreCase);
 	const bool bRun250k = !bMicroOnly && !Params.Contains(TEXT("-Skip250k"), ESearchCase::IgnoreCase);
 	const bool bRun500k = !bMicroOnly && Params.Contains(TEXT("-Run500k"), ESearchCase::IgnoreCase);
 	int32 ScaleSamples = 50000;
@@ -99,6 +100,7 @@ int32 UCarrierLabV2Stage1Commandlet::Main(const FString& Params)
 	FString MetricsJsonl;
 	bool bAllMicroPassed = true;
 	bool bScale50kPassed = bMicroOnly;
+	bool bScale100kPassed = false;
 	bool bShouldAttempt250k = false;
 
 	for (const CarrierLab::V2::FCarrierV2Stage1Config& Config : Configs)
@@ -138,6 +140,39 @@ int32 UCarrierLabV2Stage1Commandlet::Main(const FString& Params)
 			Result.Metrics.MotionApplyMs,
 			Result.Metrics.ProjectionKernelMs,
 			Result.Metrics.TotalMs);
+	}
+
+	if (bRun100k && bScale50kPassed)
+	{
+		CarrierLab::V2::FCarrierV2Stage1Config Config100k = CarrierLab::V2::FCarrierV2Stage1::MakeScaleConfig(100000, true);
+		UE_LOG(LogTemp, Display, TEXT("CarrierLab V2-1: running %s (%d samples, %d plates, policy=%s)."),
+			*Config100k.FixtureId,
+			Config100k.BaseConfig.SampleCount,
+			Config100k.BaseConfig.PlateCount,
+			*Config100k.ProjectionCandidatePolicyId);
+
+		CarrierLab::V2::FCarrierV2Stage1FixtureResult Result100k;
+		CarrierLab::V2::FCarrierV2Stage1::RunFixtureWithReplay(Config100k, Result100k);
+		Suite.Results.Add(Result100k);
+		Suite.bAttempted100k = true;
+		Suite.bScale100kPass = Result100k.Metrics.bFixturePass;
+		bScale100kPassed = Result100k.Metrics.bFixturePass;
+		MetricsJsonl += CarrierLab::V2::FCarrierV2Stage1::MetricsToJson(Result100k);
+		MetricsJsonl += TEXT("\n");
+
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("CarrierLab V2-1: %s verdict=%s pass=%s max_error_km=%.12g raw_miss=%d raw_overlap=%d motion_ms=%.3f projection_ms=%.3f total_ms=%.3f."),
+			*Config100k.FixtureId,
+			*Result100k.Metrics.Verdict,
+			Result100k.Metrics.bFixturePass ? TEXT("true") : TEXT("false"),
+			Result100k.Metrics.AnalyticMotionMaxErrorKm,
+			Result100k.Metrics.RawMotionMissCount,
+			Result100k.Metrics.RawMotionOverlapCount,
+			Result100k.Metrics.MotionApplyMs,
+			Result100k.Metrics.ProjectionKernelMs,
+			Result100k.Metrics.TotalMs);
 	}
 
 	if (bShouldAttempt250k)
@@ -196,6 +231,7 @@ int32 UCarrierLabV2Stage1Commandlet::Main(const FString& Params)
 
 	Suite.bMicroGatePass = bAllMicroPassed;
 	Suite.bScale50kPass = bScale50kPassed;
+	Suite.bScale100kPass = Suite.bAttempted100k && bScale100kPassed;
 	Suite.bStageGatePass = Suite.bMicroGatePass && Suite.bScale50kPass && Suite.bAttempted250k && Suite.bScale250kPass;
 	Suite.Verdict = Suite.bStageGatePass ? TEXT("MILESTONE_1_PASS") : TEXT("MILESTONE_1_REVISE");
 

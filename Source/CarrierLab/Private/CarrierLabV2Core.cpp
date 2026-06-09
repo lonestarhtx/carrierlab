@@ -966,6 +966,7 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Config.bUseAngularCapPlateBroadphase ? 1 : 0);
 			HashMixInt(Hash, Config.bRunAllPlateBroadphaseEquivalence ? 1 : 0);
 			HashMixDouble(Hash, Config.BroadphaseAngularMarginRad);
+			HashMixInt(Hash, Config.bRequireOracleFrameSensitivity ? 1 : 0);
 			for (const FCarrierV2MotionSpec& Motion : Config.PlateMotions)
 			{
 				const FVector3d Axis = SafeMotionAxis(Motion.Axis);
@@ -1019,6 +1020,10 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Metrics.MaterialAttachmentErrorCount);
 			HashMixInt(Hash, Metrics.RawMotionMissCount);
 			HashMixInt(Hash, Metrics.RawMotionOverlapCount);
+			HashMixDouble(Hash, Metrics.RawMotionMissFraction);
+			HashMixDouble(Hash, Metrics.RawMotionOverlapFraction);
+			HashMixString(Hash, Metrics.TopMissPlatePairs);
+			HashMixString(Hash, Metrics.TopOverlapPlatePairs);
 			HashMixInt(Hash, Metrics.BoundaryDegenerateCount);
 			HashMixInt(Hash, Metrics.BoundaryPolicySelectedCount);
 			HashMixInt(Hash, Metrics.DivergentCandidateCount);
@@ -1034,6 +1039,7 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Metrics.AabbHitCountTotal);
 			HashMixInt(Hash, Metrics.BruteForceHitCountTotal);
 			HashMixInt(Hash, Metrics.AabbBruteforceClassificationMismatchCount);
+			HashMixInt(Hash, Metrics.LegacyMovedFrameBruteforceMismatchCount);
 			HashMixInt(Hash, Metrics.BroadphaseCandidateQueryCount);
 			HashMixInt(Hash, Metrics.BroadphaseSkippedPlateQueryCount);
 			HashMixInt(Hash, Metrics.AllPlateEquivalenceRayQueryCount);
@@ -1041,6 +1047,7 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Metrics.RawHitCountTotal);
 			HashMixInt(Hash, Metrics.RayTriangleTestCount);
 			HashMixInt(Hash, Metrics.bAabbBruteforceEquivalencePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bOracleFrameSensitivityPass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bBroadphaseEquivalencePass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bMotionOraclePass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bPerformanceBudgetPass ? 1 : 0);
@@ -1394,7 +1401,70 @@ namespace CarrierLab::V2
 			const FCarrierV2Stage1Config& Config,
 			const FCarrierV2BuildState& State,
 			const FCarrierV2SubstrateSample& Sample,
+			const TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>>& Runtimes,
 			FCarrierV2Stage1Metrics& Metrics,
+			TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
+		{
+			for (const TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>& Runtime : Runtimes)
+			{
+				if (!Runtime.IsValid() || !State.Plates.IsValidIndex(Runtime->PlateId))
+				{
+					continue;
+				}
+
+				const FCarrierV2MotionSpec Motion = MotionForPlate(Config, Runtime->PlateId);
+				const FVector3d LocalDirection = RotateActualByGeodeticMotion(
+					Sample.UnitPosition,
+					Motion.Axis,
+					-Stage1TotalMotionAngle(Config, Runtime->PlateId));
+
+				for (const TPair<int32, FCarrierV2Stage1TreeTriangleRef>& Pair : Runtime->TriangleRefs)
+				{
+					const FCarrierV2Stage1TreeTriangleRef& Ref = Pair.Value;
+					if (!State.Plates.IsValidIndex(Ref.PlateId))
+					{
+						continue;
+					}
+
+					const FCarrierV2Plate& Plate = State.Plates[Ref.PlateId];
+					if (!Plate.LocalTriangles.IsValidIndex(Ref.LocalTriangleId))
+					{
+						continue;
+					}
+
+					const auto MeshTriangle = Runtime->Mesh.GetTriangle(Pair.Key);
+					FVector3d Barycentric;
+					double HitT = 0.0;
+					bool bBoundaryDegenerate = false;
+					++Metrics.RayTriangleTestCount;
+					if (IntersectStage1RayTriangle(
+						LocalDirection,
+						Runtime->Mesh.GetVertex(MeshTriangle[0]),
+						Runtime->Mesh.GetVertex(MeshTriangle[1]),
+						Runtime->Mesh.GetVertex(MeshTriangle[2]),
+						Config,
+						Barycentric,
+						HitT,
+						bBoundaryDegenerate))
+					{
+						AddStage1ProjectionHit(
+							Sample.SampleId,
+							Plate,
+							Plate.LocalTriangles[Ref.LocalTriangleId],
+							Barycentric,
+							HitT,
+							bBoundaryDegenerate,
+							Metrics,
+							Hits);
+					}
+				}
+			}
+		}
+
+		void CollectStage1LegacyMovedFrameBruteforceHits(
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2BuildState& State,
+			const FCarrierV2SubstrateSample& Sample,
 			TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
 		{
 			for (const FCarrierV2Plate& Plate : State.Plates)
@@ -1406,7 +1476,36 @@ namespace CarrierLab::V2
 					-Stage1TotalMotionAngle(Config, Plate.PlateId));
 				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
 				{
-					TestStage1Triangle(Sample.SampleId, LocalDirection, Config, Plate, Triangle, Metrics, Hits);
+					if (!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[0]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[1]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[2]))
+					{
+						continue;
+					}
+
+					FVector3d Barycentric;
+					double HitT = 0.0;
+					bool bBoundaryDegenerate = false;
+					if (IntersectStage1RayTriangle(
+						LocalDirection,
+						Plate.LocalVertices[Triangle.LocalVertexIds[0]].UnitPosition,
+						Plate.LocalVertices[Triangle.LocalVertexIds[1]].UnitPosition,
+						Plate.LocalVertices[Triangle.LocalVertexIds[2]].UnitPosition,
+						Config,
+						Barycentric,
+						HitT,
+						bBoundaryDegenerate))
+					{
+						FCarrierV2Stage1ProjectionHit Hit;
+						Hit.SampleId = Sample.SampleId;
+						Hit.PlateId = Plate.PlateId;
+						Hit.LocalTriangleId = Triangle.LocalTriangleId;
+						Hit.SourceTriangleId = Triangle.SourceTriangleId;
+						Hit.Barycentric = Barycentric;
+						Hit.HitT = HitT;
+						Hit.bBoundaryDegenerate = bBoundaryDegenerate;
+						Hits.Add(Hit);
+					}
 				}
 			}
 		}
@@ -1440,6 +1539,115 @@ namespace CarrierLab::V2
 				return TEXT("boundary");
 			}
 			return TEXT("single");
+		}
+
+		uint64 Stage1PlatePairKey(const int32 PlateA, const int32 PlateB)
+		{
+			const uint32 A = static_cast<uint32>(FMath::Min(PlateA, PlateB));
+			const uint32 B = static_cast<uint32>(FMath::Max(PlateA, PlateB));
+			return (static_cast<uint64>(A) << 32) | static_cast<uint64>(B);
+		}
+
+		FString Stage1PlatePairLabel(const uint64 Key)
+		{
+			const int32 A = static_cast<int32>((Key >> 32) & 0xffffffffull);
+			const int32 B = static_cast<int32>(Key & 0xffffffffull);
+			return FString::Printf(TEXT("%d/%d"), A, B);
+		}
+
+		void AccumulateStage1PairCountsFromPlates(
+			const TArray<int32, TInlineAllocator<8>>& PlateIds,
+			TMap<uint64, int32>& PairCounts)
+		{
+			TArray<int32, TInlineAllocator<8>> UniquePlateIds;
+			for (const int32 PlateId : PlateIds)
+			{
+				if (PlateId != INDEX_NONE)
+				{
+					UniquePlateIds.AddUnique(PlateId);
+				}
+			}
+
+			if (UniquePlateIds.Num() == 1)
+			{
+				const uint64 Key = Stage1PlatePairKey(UniquePlateIds[0], UniquePlateIds[0]);
+				PairCounts.FindOrAdd(Key) += 1;
+				return;
+			}
+
+			for (int32 I = 0; I < UniquePlateIds.Num(); ++I)
+			{
+				for (int32 J = I + 1; J < UniquePlateIds.Num(); ++J)
+				{
+					const uint64 Key = Stage1PlatePairKey(UniquePlateIds[I], UniquePlateIds[J]);
+					PairCounts.FindOrAdd(Key) += 1;
+				}
+			}
+		}
+
+		void AccumulateStage1MissAttribution(
+			const FCarrierV2BuildState& State,
+			const FCarrierV2SubstrateSample& Sample,
+			TMap<uint64, int32>& PairCounts)
+		{
+			TArray<int32, TInlineAllocator<8>> CandidatePlateIds;
+			if (State.SampleRayCandidates.IsValidIndex(Sample.SampleId))
+			{
+				for (const FCarrierV2RayCandidateRef& Candidate : State.SampleRayCandidates[Sample.SampleId])
+				{
+					CandidatePlateIds.AddUnique(Candidate.PlateId);
+				}
+			}
+			AccumulateStage1PairCountsFromPlates(CandidatePlateIds, PairCounts);
+		}
+
+		void AccumulateStage1OverlapAttribution(
+			const TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits,
+			TMap<uint64, int32>& PairCounts)
+		{
+			TArray<int32, TInlineAllocator<8>> HitPlateIds;
+			for (const FCarrierV2Stage1ProjectionHit& Hit : Hits)
+			{
+				HitPlateIds.AddUnique(Hit.PlateId);
+			}
+			AccumulateStage1PairCountsFromPlates(HitPlateIds, PairCounts);
+		}
+
+		FString FormatStage1TopPlatePairs(const TMap<uint64, int32>& PairCounts)
+		{
+			TArray<TPair<uint64, int32>> Entries;
+			for (const TPair<uint64, int32>& Pair : PairCounts)
+			{
+				Entries.Add(Pair);
+			}
+			Entries.Sort([](const TPair<uint64, int32>& A, const TPair<uint64, int32>& B)
+			{
+				if (A.Value != B.Value)
+				{
+					return A.Value > B.Value;
+				}
+				return A.Key < B.Key;
+			});
+
+			const int32 Count = FMath::Min(Entries.Num(), 8);
+			if (Count == 0)
+			{
+				return TEXT("none");
+			}
+
+			FString Summary;
+			for (int32 Index = 0; Index < Count; ++Index)
+			{
+				if (!Summary.IsEmpty())
+				{
+					Summary += TEXT(", ");
+				}
+				Summary += FString::Printf(
+					TEXT("%s:%d"),
+					*Stage1PlatePairLabel(Entries[Index].Key),
+					Entries[Index].Value);
+			}
+			return Summary;
 		}
 
 		void AccumulateStage1ProjectionClassification(
@@ -1492,11 +1700,21 @@ namespace CarrierLab::V2
 			FCarrierV2Stage1Metrics& Metrics)
 		{
 			const double ProjectionStart = FPlatformTime::Seconds();
+			TMap<uint64, int32> MissPairCounts;
+			TMap<uint64, int32> OverlapPairCounts;
 			for (const FCarrierV2SubstrateSample& Sample : State.Samples)
 			{
 				TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> AabbHits;
 				CollectStage1AabbHits(Config, State, Sample, Runtimes, Metrics, AabbHits);
 				AccumulateStage1ProjectionClassification(AabbHits, Metrics);
+				if (AabbHits.IsEmpty())
+				{
+					AccumulateStage1MissAttribution(State, Sample, MissPairCounts);
+				}
+				else if (AabbHits.Num() > 1 && ClassifyStage1HitSet(AabbHits) == TEXT("overlap"))
+				{
+					AccumulateStage1OverlapAttribution(AabbHits, OverlapPairCounts);
+				}
 
 				if (Config.bRunAllPlateBroadphaseEquivalence)
 				{
@@ -1511,14 +1729,33 @@ namespace CarrierLab::V2
 				if (Config.bRunBruteforceProjectionOracle)
 				{
 					TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> BruteforceHits;
-					CollectStage1BruteforceHits(Config, State, Sample, Metrics, BruteforceHits);
+					CollectStage1BruteforceHits(Config, State, Sample, Runtimes, Metrics, BruteforceHits);
 					Metrics.BruteForceHitCountTotal += BruteforceHits.Num();
 					if (ClassifyStage1HitSet(AabbHits) != ClassifyStage1HitSet(BruteforceHits))
 					{
 						++Metrics.AabbBruteforceClassificationMismatchCount;
 					}
+
+					if (Config.bRequireOracleFrameSensitivity)
+					{
+						TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> LegacyMovedFrameHits;
+						CollectStage1LegacyMovedFrameBruteforceHits(Config, State, Sample, LegacyMovedFrameHits);
+						if (ClassifyStage1HitSet(BruteforceHits) != ClassifyStage1HitSet(LegacyMovedFrameHits))
+						{
+							++Metrics.LegacyMovedFrameBruteforceMismatchCount;
+						}
+					}
 				}
 			}
+			if (Metrics.GlobalSampleCount > 0)
+			{
+				Metrics.RawMotionMissFraction =
+					static_cast<double>(Metrics.RawMotionMissCount) / static_cast<double>(Metrics.GlobalSampleCount);
+				Metrics.RawMotionOverlapFraction =
+					static_cast<double>(Metrics.RawMotionOverlapCount) / static_cast<double>(Metrics.GlobalSampleCount);
+			}
+			Metrics.TopMissPlatePairs = FormatStage1TopPlatePairs(MissPairCounts);
+			Metrics.TopOverlapPlatePairs = FormatStage1TopPlatePairs(OverlapPairCounts);
 			Metrics.InverseRayProjectionKernelMs = (FPlatformTime::Seconds() - ProjectionStart) * 1000.0;
 			Metrics.ProjectionKernelMs = Metrics.InverseRayProjectionKernelMs;
 		}
@@ -1655,6 +1892,9 @@ namespace CarrierLab::V2
 			Metrics.bAabbBruteforceEquivalencePass =
 				!Config.bRunBruteforceProjectionOracle ||
 				Metrics.AabbBruteforceClassificationMismatchCount == 0;
+			Metrics.bOracleFrameSensitivityPass =
+				!Config.bRequireOracleFrameSensitivity ||
+				Metrics.LegacyMovedFrameBruteforceMismatchCount > 0;
 			Metrics.bBroadphaseEquivalencePass =
 				!Config.bRunAllPlateBroadphaseEquivalence ||
 				Metrics.BroadphaseEquivalenceMismatchCount == 0;
@@ -1696,6 +1936,7 @@ namespace CarrierLab::V2
 				Metrics.bMaterialAttachmentPass &&
 				Metrics.bPerformanceBudgetPass &&
 				Metrics.bAabbBruteforceEquivalencePass &&
+				Metrics.bOracleFrameSensitivityPass &&
 				Metrics.bBroadphaseEquivalencePass &&
 				Metrics.bProjectionExpectationPass &&
 				Metrics.bNoRepairOrRemeshPass &&
@@ -5239,6 +5480,36 @@ namespace CarrierLab::V2
 		}
 		Configs.Add(FX011);
 
+		FCarrierV2Stage1Config FX012;
+		FX012.BaseConfig.FixtureId = TEXT("FX-012");
+		FX012.BaseConfig.FixtureName = TEXT("AsymmetricOracleFrameSensitivityBase");
+		FX012.BaseConfig.SampleCount = 64;
+		FX012.BaseConfig.PlateCount = 3;
+		FX012.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX012.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX012.BaseConfig.FixtureSubstrateId = TEXT("fibonacci_spherical_delaunay_micro");
+		FX012.BaseConfig.bUseFibonacciSubstrate = true;
+		FX012.FixtureId = TEXT("FX-012");
+		FX012.FixtureName = TEXT("AsymmetricOracleFrameSensitivity");
+		FX012.ExpectedMotionClass = TEXT("oracle_frame_sensitivity");
+		FX012.SourceStatus = TEXT("diagnostic_negative_control");
+		FX012.MotionStepCount = 1;
+		FX012.DtMa = 1.0;
+		FX012.bRequireOracleFrameSensitivity = true;
+		FCarrierV2MotionSpec FrameA;
+		FrameA.Axis = FVector3d(1.0, 0.25, 0.15).GetSafeNormal();
+		FrameA.AngularSpeedRadPerMa = 0.36;
+		FCarrierV2MotionSpec FrameB;
+		FrameB.Axis = FVector3d(-0.2, 1.0, 0.35).GetSafeNormal();
+		FrameB.AngularSpeedRadPerMa = -0.28;
+		FCarrierV2MotionSpec FrameC;
+		FrameC.Axis = FVector3d(0.35, -0.45, 1.0).GetSafeNormal();
+		FrameC.AngularSpeedRadPerMa = 0.21;
+		FX012.PlateMotions.Add(FrameA);
+		FX012.PlateMotions.Add(FrameB);
+		FX012.PlateMotions.Add(FrameC);
+		Configs.Add(FX012);
+
 		return Configs;
 	}
 
@@ -5246,8 +5517,14 @@ namespace CarrierLab::V2
 	{
 		FCarrierV2Stage1Config Config;
 		Config.BaseConfig = FCarrierV2Stage0::MakeScaleConfig(SampleCount, bComparisonScale);
-		Config.BaseConfig.FixtureId = bComparisonScale ? TEXT("SCALE-250K-MOTION") : TEXT("SCALE-50K-MOTION");
-		Config.BaseConfig.FixtureName = bComparisonScale ? TEXT("Scale250kRigidMotionCharacterization") : TEXT("Scale50kRigidMotionGate");
+		const FString SampleLabel = (SampleCount % 1000 == 0)
+			? FString::Printf(TEXT("%dK"), SampleCount / 1000)
+			: FString::Printf(TEXT("%d"), SampleCount);
+		Config.BaseConfig.FixtureId = FString::Printf(TEXT("SCALE-%s-MOTION"), *SampleLabel);
+		Config.BaseConfig.FixtureName = FString::Printf(
+			TEXT("Scale%sRigidMotion%s"),
+			*SampleLabel,
+			bComparisonScale ? TEXT("Characterization") : TEXT("Gate"));
 		Config.FixtureId = Config.BaseConfig.FixtureId;
 		Config.FixtureName = Config.BaseConfig.FixtureName;
 		Config.ExpectedMotionClass = TEXT("scale_motion");
@@ -5364,6 +5641,10 @@ namespace CarrierLab::V2
 			TEXT("\"material_attachment_error_count\":%d,")
 			TEXT("\"raw_motion_miss_count\":%d,")
 			TEXT("\"raw_motion_overlap_count\":%d,")
+			TEXT("\"raw_motion_miss_fraction\":%.12g,")
+			TEXT("\"raw_motion_overlap_fraction\":%.12g,")
+			TEXT("\"top_miss_plate_pairs\":%s,")
+			TEXT("\"top_overlap_plate_pairs\":%s,")
 			TEXT("\"boundary_degenerate_count\":%d,")
 			TEXT("\"boundary_policy_selected_count\":%d,")
 			TEXT("\"divergent_candidate_count\":%d,")
@@ -5379,6 +5660,7 @@ namespace CarrierLab::V2
 			TEXT("\"aabb_hit_count_total\":%lld,")
 			TEXT("\"bruteforce_hit_count_total\":%lld,")
 			TEXT("\"aabb_bruteforce_classification_mismatch_count\":%d,")
+			TEXT("\"legacy_moved_frame_bruteforce_mismatch_count\":%d,")
 			TEXT("\"broadphase_candidate_query_count\":%lld,")
 			TEXT("\"broadphase_skipped_plate_query_count\":%lld,")
 			TEXT("\"all_plate_equivalence_ray_query_count\":%lld,")
@@ -5386,6 +5668,7 @@ namespace CarrierLab::V2
 			TEXT("\"raw_hit_count_total\":%lld,")
 			TEXT("\"ray_triangle_test_count\":%lld,")
 			TEXT("\"aabb_bruteforce_equivalence_pass\":%s,")
+			TEXT("\"oracle_frame_sensitivity_pass\":%s,")
 			TEXT("\"broadphase_equivalence_pass\":%s,")
 			TEXT("\"motion_oracle_pass\":%s,")
 			TEXT("\"unit_length_pass\":%s,")
@@ -5454,6 +5737,10 @@ namespace CarrierLab::V2
 			M.MaterialAttachmentErrorCount,
 			M.RawMotionMissCount,
 			M.RawMotionOverlapCount,
+			M.RawMotionMissFraction,
+			M.RawMotionOverlapFraction,
+			*JsonString(M.TopMissPlatePairs),
+			*JsonString(M.TopOverlapPlatePairs),
 			M.BoundaryDegenerateCount,
 			M.BoundaryPolicySelectedCount,
 			M.DivergentCandidateCount,
@@ -5469,6 +5756,7 @@ namespace CarrierLab::V2
 			M.AabbHitCountTotal,
 			M.BruteForceHitCountTotal,
 			M.AabbBruteforceClassificationMismatchCount,
+			M.LegacyMovedFrameBruteforceMismatchCount,
 			M.BroadphaseCandidateQueryCount,
 			M.BroadphaseSkippedPlateQueryCount,
 			M.AllPlateEquivalenceRayQueryCount,
@@ -5476,6 +5764,7 @@ namespace CarrierLab::V2
 			M.RawHitCountTotal,
 			M.RayTriangleTestCount,
 			M.bAabbBruteforceEquivalencePass ? TEXT("true") : TEXT("false"),
+			M.bOracleFrameSensitivityPass ? TEXT("true") : TEXT("false"),
 			M.bBroadphaseEquivalencePass ? TEXT("true") : TEXT("false"),
 			M.bMotionOraclePass ? TEXT("true") : TEXT("false"),
 			M.bUnitLengthPass ? TEXT("true") : TEXT("false"),
@@ -5521,7 +5810,7 @@ namespace CarrierLab::V2
 		Report += TEXT("Milestone 1 covers rigid plate-local authority motion, static per-plate AABB trees in plate-local coordinates, inverse-transformed center-ray projection, attached material record preservation, an independent analytic motion oracle, AABB-vs-brute-force micro equivalence, replay determinism, and raw post-motion projection classification. It does not cover remesh, gap filling, q1/q2, qGamma generation, contact resolution, subduction, collision, rifting, uplift, erosion, slab pull, editor UI, maps as gates, or ownership repair.\n\n");
 
 		Report += TEXT("## Query Architecture\n\n");
-		Report += TEXT("Each run builds one static `FDynamicMesh3` plus `FDynamicMeshAABBTree3` per plate from canonical plate-local triangles. For each fixed global substrate sample, the center ray direction is inverse-rotated into candidate plate-local frames and queried against static plate trees. Scale runs use a conservative moved angular-cap broadphase to skip impossible plate trees; the 50k scale gate compares broadphase classification against all-plate AABB classification before 250k relies on the optimized path. Raw hit sets are classified as miss, boundary-only, overlap, or third-plate intrusion without mutating authority or consuming an overlap resolver.\n\n");
+		Report += TEXT("Each run builds one static `FDynamicMesh3` plus `FDynamicMeshAABBTree3` per plate from canonical plate-local triangles before motion. For each fixed global substrate sample, the center ray direction is inverse-rotated into candidate plate-local frames and queried against static plate trees. The brute-force micro oracle scans those same canonical plate-local triangles without the AABB tree; it does not scan already-moved vertices. Scale runs use a conservative moved angular-cap broadphase to skip impossible plate trees; the 50k scale gate compares broadphase classification against all-plate AABB classification before 250k relies on the optimized path. Raw hit sets are classified as miss, boundary-only, overlap, or third-plate intrusion without mutating authority or consuming an overlap resolver.\n\n");
 
 		Report += TEXT("## Fixture Gates\n\n");
 		Report += TEXT("| fixture | class | samples | triangles | policy | pass | verdict |\n");
@@ -5576,38 +5865,66 @@ namespace CarrierLab::V2
 		}
 
 		Report += TEXT("\n## Inverse-Ray Projection Classification\n\n");
-		Report += TEXT("| fixture | ray queries | AABB hits | raw misses | raw overlaps | boundary hits | third-plate | divergent | convergent | expectation pass |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += TEXT("| fixture | ray queries | AABB hits | raw misses | miss % | raw overlaps | overlap % | boundary hits | third-plate | divergent | convergent | expectation |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			const bool bHasProjectionExpectation =
+				Result.Config.bRequireNoMotionGapOrOverlap ||
+				Result.Config.bRequireDivergentCandidate ||
+				Result.Config.bRequireConvergentCandidate ||
+				Result.Config.bRequireThirdPlateIntrusion;
+			const TCHAR* ExpectationText = bHasProjectionExpectation
+				? (M.bProjectionExpectationPass ? TEXT("pass") : TEXT("fail"))
+				: TEXT("n/a");
 			Report += FString::Printf(
-				TEXT("| `%s` | %lld | %lld | %d | %d | %d | %d | %d | %d | %s |\n"),
+				TEXT("| `%s` | %lld | %lld | %d | %.4f | %d | %.4f | %d | %d | %d | %d | %s |\n"),
 				*M.FixtureId,
 				M.RayQueryCount,
 				M.AabbHitCountTotal,
 				M.RawMotionMissCount,
+				M.RawMotionMissFraction * 100.0,
 				M.RawMotionOverlapCount,
+				M.RawMotionOverlapFraction * 100.0,
 				M.BoundaryDegenerateCount,
 				M.ThirdPlateIntrusionCount,
 				M.DivergentCandidateCount,
 				M.ConvergentCandidateCount,
-				M.bProjectionExpectationPass ? TEXT("pass") : TEXT("fail"));
+				ExpectationText);
 		}
 
 		Report += TEXT("\n## AABB Versus Brute Force\n\n");
-		Report += TEXT("| fixture | brute-force hits | brute-force triangle tests | classification mismatches | equivalence pass |\n");
-		Report += TEXT("|---|---:|---:|---:|---|\n");
+		Report += TEXT("| fixture | brute-force hits | brute-force triangle tests | classification mismatches | legacy moved-frame mismatches | equivalence pass | frame sensitivity |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---|---|\n");
 		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Stage1Metrics& M = Result.Metrics;
 			Report += FString::Printf(
-				TEXT("| `%s` | %lld | %lld | %d | %s |\n"),
+				TEXT("| `%s` | %lld | %lld | %d | %d | %s | %s |\n"),
 				*M.FixtureId,
 				M.BruteForceHitCountTotal,
 				M.RayTriangleTestCount,
 				M.AabbBruteforceClassificationMismatchCount,
-				M.bAabbBruteforceEquivalencePass ? TEXT("pass") : TEXT("not-run/fail"));
+				M.LegacyMovedFrameBruteforceMismatchCount,
+				M.bAabbBruteforceEquivalencePass ? TEXT("pass") : TEXT("not-run/fail"),
+				Result.Config.bRequireOracleFrameSensitivity
+					? (M.bOracleFrameSensitivityPass ? TEXT("pass") : TEXT("fail"))
+					: TEXT("n/a"));
+		}
+
+		Report += TEXT("\n## Miss/Overlap Attribution\n\n");
+		Report += TEXT("Plate-pair attribution is diagnostic. Misses are attributed to the cold-start source-adjacent plate pair(s) around the sample; overlaps are attributed to the plate pair(s) present in the moved hit set.\n\n");
+		Report += TEXT("| fixture | top miss plate pairs | top overlap plate pairs |\n");
+		Report += TEXT("|---|---|---|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | `%s` |\n"),
+				*M.FixtureId,
+				*M.TopMissPlatePairs,
+				*M.TopOverlapPlatePairs);
 		}
 
 		Report += TEXT("\n## Broadphase Equivalence\n\n");
@@ -5627,6 +5944,7 @@ namespace CarrierLab::V2
 		}
 
 		Report += TEXT("\n## Forbidden Fallback Counters\n\n");
+		Report += TEXT("These counters are contract tripwires in the Milestone 1 path, not proof that future code cannot introduce a fallback. The closeout combines zero-valued counters with source inspection that projection takes the build state as const and never reads persistent global sample ownership as authority.\n\n");
 		Report += TEXT("| fixture | global-owner reads | motion repair | remesh during motion | primary resolver consumed | material attachment errors | pass |\n");
 		Report += TEXT("|---|---:|---:|---:|---:|---:|---|\n");
 		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
@@ -5693,9 +6011,10 @@ namespace CarrierLab::V2
 		Report += TEXT("|---|---|---|---|\n");
 		Report += TEXT("| `M1-POL-ALL-PLATE-INVERSE-RAY` | source_explicit_query_architecture | every substrate ray is inverse-transformed into every plate-local static AABB tree for the first implementation | `projection_candidate_policy_id=all_plate_inverse_ray_static_aabb` |\n");
 		Report += TEXT("| `M1-POL-ANGULAR-CAP-BROADPHASE` | diagnostic_optimization | scale runs may skip plate trees outside a moved conservative angular cap after 50k all-plate equivalence passes | `broadphase_equivalence_mismatch_count=0` |\n");
-		Report += TEXT("| `M1-POL-BRUTE-FORCE-MICRO-ORACLE` | diagnostic_only | micro fixtures compare AABB classification against exhaustive plate-local triangle scans | `aabb_bruteforce_classification_mismatch_count=0` |\n");
+		Report += TEXT("| `M1-POL-BRUTE-FORCE-MICRO-ORACLE` | diagnostic_only | micro fixtures compare AABB classification against exhaustive canonical plate-local triangle scans in the same inverse-ray frame as the static trees | `aabb_bruteforce_classification_mismatch_count=0` |\n");
+		Report += TEXT("| `M1-POL-LEGACY-MOVED-FRAME-SENTINEL` | diagnostic_negative_control | FX-012 requires the deliberately legacy moved-vertex brute-force frame to disagree at least once, showing the oracle regression would be visible | `legacy_moved_frame_bruteforce_mismatch_count>0` |\n");
 		Report += TEXT("| `M1-POL-NO-REPAIR-NO-REMESH` | source_explicit_stop_condition | gaps and overlaps are counted but not repaired, resolved, or resampled | `motion_repair_count=0`, `remesh_during_motion_count=0`, `primary_resolver_consumed_count=0` |\n");
-		Report += TEXT("| `V2-1-POL-INDEPENDENT-ROTATION-ORACLE` | source_explicit_formula | implementation applies incremental Rodrigues rotation; oracle recomputes final position from pre-motion snapshots with axis-parallel/perpendicular decomposition | analytic error columns |\n\n");
+		Report += TEXT("| `V2-1-POL-INDEPENDENT-ROTATION-ORACLE` | source_explicit_formula | implementation applies incremental Rodrigues rotation plus unit normalization; oracle recomputes final position from pre-motion snapshots with axis-parallel/perpendicular decomposition | analytic error columns and unit-length column |\n\n");
 
 		Report += TEXT("## Independent Oracle\n\n");
 		Report += TEXT("Motion checks recompute expected final vertex positions from pre-motion snapshots and motion specs, not from mutated post-motion state. Material checks compare source sample ids and material records before and after motion. Projection classification reads static plate-local trees through inverse-transformed rays and never reads persistent global sample ownership as tectonic authority.\n\n");
@@ -5704,6 +6023,7 @@ namespace CarrierLab::V2
 		Report += TEXT("- Micro fixtures are correctness microscopes for motion and raw classification, not paper-scale terrain evidence.\n");
 		Report += TEXT("- 50k is the minimum paper-scale carrier gate; 250k is a required Milestone 1 performance/comparison gate.\n");
 		Report += TEXT("- 500k is a stretch gate and must be named as attempted or not attempted.\n");
+		Report += TEXT("- The 1240 ms scale budget is the binding implementation gate for the 250k M1 step kernel; older planning notes rounded this to 1200 ms.\n");
 		Report += TEXT("- Candidate plate selection starts from all plates; scale performance uses angular-cap broadphase only with an explicit 50k all-plate equivalence gate.\n");
 		Report += TEXT("- Milestone 1 intentionally stops before resampling, q1/q2 gap fill, remesh, and process physics.\n\n");
 
@@ -5711,15 +6031,29 @@ namespace CarrierLab::V2
 		Report += FString::Printf(TEXT("Verdict: `%s`\n\n"), *Suite.Verdict);
 		Report += FString::Printf(TEXT("- Micro gate: %s\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
 		Report += FString::Printf(TEXT("- 50k gate: %s\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 100k probe attempted: %s\n"), Suite.bAttempted100k ? TEXT("yes") : TEXT("no"));
+		if (Suite.bAttempted100k)
+		{
+			Report += FString::Printf(TEXT("- 100k probe: %s\n"), Suite.bScale100kPass ? TEXT("pass") : TEXT("fail"));
+		}
 		Report += FString::Printf(TEXT("- 250k hard gate attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
 		if (Suite.bAttempted250k)
 		{
 			Report += FString::Printf(TEXT("- 250k hard gate: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
 		}
-		Report += FString::Printf(TEXT("- 500k stretch attempted: %s\n"), Suite.bAttempted500k ? TEXT("yes") : TEXT("no"));
+		Report += FString::Printf(TEXT("- 500k stretch attempted: %s"), Suite.bAttempted500k ? TEXT("yes") : TEXT("no"));
+		if (!Suite.bAttempted500k)
+		{
+			Report += TEXT(" (`-Run500k` not requested)");
+		}
+		Report += TEXT("\n");
 		if (Suite.bAttempted500k)
 		{
 			Report += FString::Printf(TEXT("- 500k stretch: %s\n"), Suite.bScale500kPass ? TEXT("pass") : TEXT("fail"));
+			if (!Suite.bScale500kPass)
+			{
+				Report += TEXT("- 500k stretch note: non-blocking for the Milestone 1 verdict, but it is now a Milestone 2 performance watch because it exceeded the 1240 ms M1 250k-derived step-kernel cap.\n");
+			}
 		}
 		Report += TEXT("\nRecommendation: prepare the Milestone 2 entry packet only if the verdict is `MILESTONE_1_PASS`; otherwise revise Milestone 1.\n");
 		Report += TEXT("\nExplicit user go/no-go is required before Milestone 2 work.\n");

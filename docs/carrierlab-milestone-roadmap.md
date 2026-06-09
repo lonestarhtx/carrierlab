@@ -39,10 +39,10 @@ Old generated verdict names such as `GO_V2_6` are historical artifact labels.
 The current active decision is:
 
 ```text
-Milestone 1 entry packet -> user go/no-go -> Milestone 1 implementation
+Milestone 2 entry packet -> user go/no-go -> Milestone 2 implementation
 ```
 
-No new simulation behavior should be added before the Milestone 1 entry packet
+No new simulation behavior should be added before the Milestone 2 entry packet
 is approved.
 
 ## Milestone 0: Foundation
@@ -98,9 +98,10 @@ Forbidden scope:
 Entry requirement: a Milestone 1 entry packet that defines fixtures, scale
 ladder, timing budget, drift gates, and stop conditions.
 
-Current status: entry packet prepared in
-`docs/checkpoints/milestone-1-entry-packet.md`; explicit user go/no-go is still
-required before implementation.
+Current status: implemented and remediated after external review. The closeout
+report lives in `docs/checkpoints/milestone-1-closeout-report.md`. The 50k and
+250k gates pass, the 100k characterization probe passes, and the 500k stretch
+probe is a live performance watch rather than a closed requirement.
 
 ## Milestone 2: Carrier Cycle
 
@@ -125,6 +126,10 @@ Forbidden scope:
 - centroid, random, or nearest resolver in the paper-faithful path.
 
 Entry requirement: a Milestone 2 entry packet after Milestone 1 closeout.
+
+Current status: entry packet prepared in
+`docs/checkpoints/milestone-2-entry-packet.md`; explicit user go/no-go is still
+required before implementation.
 
 ## Milestone 3: Contact And Processes
 
@@ -186,7 +191,7 @@ Forbidden scope:
 
 Entry requirement: a Milestone 5 entry packet after Milestone 4 closeout.
 
-## Milestone 6: Editor Tool
+## Milestone 6: Editor Validation Tool
 
 Question: can a user run, inspect, and diagnose the system inside Unreal
 without the UI becoming simulation authority?
@@ -208,6 +213,26 @@ Entry requirement: a Milestone 6 entry packet after Milestone 5 closeout, unless
 a small diagnostic surface is explicitly needed earlier to inspect an already
 defined numeric gate.
 
+## Milestone 7: Amplification
+
+Question: can visual amplification make validated tectonic fields more legible
+without becoming simulation authority?
+
+Allowed scope:
+
+- detail amplification;
+- stylized or higher-frequency terrain shaping;
+- visualization layers driven by already validated carrier, process, material,
+  terrain, and editor-tool outputs.
+
+Forbidden scope:
+
+- feeding amplified fields back into carrier authority;
+- using prettiness to replace Milestone 0-6 numeric gates;
+- introducing new tectonic process rules outside a written entry packet.
+
+Entry requirement: a Milestone 7 entry packet after Milestone 6 closeout.
+
 ## Historical Mapping
 
 Historical labels are preserved for traceability only:
@@ -219,5 +244,6 @@ Historical labels are preserved for traceability only:
 | Stage 1 | Milestone 1 motion evidence |
 | Stage 1.5 | split across Milestone 2 carrier-cycle work and historical failure analysis |
 | Phase II/III/IIIE | old integrated-path history, not go-forward structure |
+| Amplification | Milestone 7 visual legibility work after editor validation |
 
 Do not create new goals using the historical labels.

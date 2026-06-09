@@ -211,6 +211,7 @@ namespace CarrierLab::V2
 		bool bRequireDivergentCandidate = false;
 		bool bRequireConvergentCandidate = false;
 		bool bRequireThirdPlateIntrusion = false;
+		bool bRequireOracleFrameSensitivity = false;
 	};
 
 	struct FCarrierV2Stage1Metrics
@@ -257,6 +258,10 @@ namespace CarrierLab::V2
 		int32 MaterialAttachmentErrorCount = 0;
 		int32 RawMotionMissCount = 0;
 		int32 RawMotionOverlapCount = 0;
+		double RawMotionMissFraction = 0.0;
+		double RawMotionOverlapFraction = 0.0;
+		FString TopMissPlatePairs;
+		FString TopOverlapPlatePairs;
 		int32 BoundaryDegenerateCount = 0;
 		int32 BoundaryPolicySelectedCount = 0;
 		int32 DivergentCandidateCount = 0;
@@ -272,6 +277,7 @@ namespace CarrierLab::V2
 		int64 AabbHitCountTotal = 0;
 		int64 BruteForceHitCountTotal = 0;
 		int32 AabbBruteforceClassificationMismatchCount = 0;
+		int32 LegacyMovedFrameBruteforceMismatchCount = 0;
 		int64 BroadphaseCandidateQueryCount = 0;
 		int64 BroadphaseSkippedPlateQueryCount = 0;
 		int64 AllPlateEquivalenceRayQueryCount = 0;
@@ -279,6 +285,7 @@ namespace CarrierLab::V2
 		int64 RawHitCountTotal = 0;
 		int64 RayTriangleTestCount = 0;
 		bool bAabbBruteforceEquivalencePass = false;
+		bool bOracleFrameSensitivityPass = false;
 		bool bBroadphaseEquivalencePass = false;
 		bool bMotionOraclePass = false;
 		bool bUnitLengthPass = false;
@@ -319,6 +326,8 @@ namespace CarrierLab::V2
 		TArray<FCarrierV2Stage1FixtureResult> Results;
 		bool bMicroGatePass = false;
 		bool bScale50kPass = false;
+		bool bAttempted100k = false;
+		bool bScale100kPass = false;
 		bool bAttempted250k = false;
 		bool bScale250kPass = false;
 		bool bAttempted500k = false;

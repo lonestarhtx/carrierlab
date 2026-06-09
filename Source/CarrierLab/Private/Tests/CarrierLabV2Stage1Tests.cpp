@@ -13,7 +13,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCarrierLabV2Stage1RigidMotionFixturesTest::RunTest(const FString& Parameters)
 {
 	const TArray<CarrierLab::V2::FCarrierV2Stage1Config> Configs = CarrierLab::V2::FCarrierV2Stage1::MakeMicroFixtureConfigs();
-	TestEqual(TEXT("Milestone 1 has seven rigid-motion/projection fixtures"), Configs.Num(), 7);
+	TestEqual(TEXT("Milestone 1 has eight rigid-motion/projection fixtures"), Configs.Num(), 8);
 
 	bool bAllPassed = true;
 	for (const CarrierLab::V2::FCarrierV2Stage1Config& Config : Configs)
@@ -21,7 +21,7 @@ bool FCarrierLabV2Stage1RigidMotionFixturesTest::RunTest(const FString& Paramete
 		CarrierLab::V2::FCarrierV2Stage1FixtureResult Result;
 		CarrierLab::V2::FCarrierV2Stage1::RunFixtureWithReplay(Config, Result);
 		AddInfo(FString::Printf(
-			TEXT("[CarrierLabV2Stage1 fixture=%s class=%s pass=%s replay=%s max_error_km=%.12g mean_error_km=%.12g unit_error=%.12g material_errors=%d raw_miss=%d raw_overlap=%d divergent=%d convergent=%d repair=%d remesh=%d policy=%s projection_ms=%.3f total_ms=%.3f post_hash=%s replay_post_hash=%s]"),
+			TEXT("[CarrierLabV2Stage1 fixture=%s class=%s pass=%s replay=%s max_error_km=%.12g mean_error_km=%.12g unit_error=%.12g material_errors=%d raw_miss=%d raw_overlap=%d divergent=%d convergent=%d legacy_frame_mismatches=%d repair=%d remesh=%d policy=%s projection_ms=%.3f total_ms=%.3f post_hash=%s replay_post_hash=%s]"),
 			*Result.Metrics.FixtureId,
 			*Result.Metrics.ExpectedMotionClass,
 			Result.Metrics.bFixturePass ? TEXT("true") : TEXT("false"),
@@ -34,6 +34,7 @@ bool FCarrierLabV2Stage1RigidMotionFixturesTest::RunTest(const FString& Paramete
 			Result.Metrics.RawMotionOverlapCount,
 			Result.Metrics.DivergentCandidateCount,
 			Result.Metrics.ConvergentCandidateCount,
+			Result.Metrics.LegacyMovedFrameBruteforceMismatchCount,
 			Result.Metrics.MotionRepairCount,
 			Result.Metrics.RemeshDuringMotionCount,
 			*Result.Metrics.ProjectionCandidatePolicyId,
@@ -54,6 +55,7 @@ bool FCarrierLabV2Stage1RigidMotionFixturesTest::RunTest(const FString& Paramete
 		TestEqual(FString::Printf(TEXT("%s global owner reads"), *Config.FixtureId), Result.Metrics.ProjectionReadsGlobalOwnerCount, 0);
 		TestEqual(FString::Printf(TEXT("%s AABB/brute-force mismatches"), *Config.FixtureId), Result.Metrics.AabbBruteforceClassificationMismatchCount, 0);
 		TestTrue(FString::Printf(TEXT("%s AABB/brute-force equivalence"), *Config.FixtureId), Result.Metrics.bAabbBruteforceEquivalencePass);
+		TestTrue(FString::Printf(TEXT("%s oracle frame sensitivity"), *Config.FixtureId), Result.Metrics.bOracleFrameSensitivityPass);
 		TestTrue(FString::Printf(TEXT("%s built static plate tree triangles"), *Config.FixtureId), Result.Metrics.TreeTriangleCountSum > 0);
 		TestTrue(FString::Printf(TEXT("%s issued inverse-ray queries"), *Config.FixtureId), Result.Metrics.RayQueryCount > 0);
 
@@ -74,6 +76,10 @@ bool FCarrierLabV2Stage1RigidMotionFixturesTest::RunTest(const FString& Paramete
 		else if (Config.FixtureId == TEXT("FX-011"))
 		{
 			TestTrue(TEXT("FX-011 exercises tolerance-stress projection"), Result.Metrics.RawMotionMissCount + Result.Metrics.RawMotionOverlapCount + Result.Metrics.BoundaryDegenerateCount > 0);
+		}
+		else if (Config.FixtureId == TEXT("FX-012"))
+		{
+			TestTrue(TEXT("FX-012 proves the legacy moved-frame brute-force oracle would disagree"), Result.Metrics.LegacyMovedFrameBruteforceMismatchCount > 0);
 		}
 		else
 		{
