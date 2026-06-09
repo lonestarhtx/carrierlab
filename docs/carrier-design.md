@@ -1,5 +1,9 @@
 # Carrier Design
 
+Active planning structure: use `docs/carrierlab-milestone-roadmap.md` for
+go-forward milestone names, entry packets, and go/no-go routing. This document
+remains the technical carrier contract and authority-rule reference.
+
 Status: revised pre-Stage-0 design note. The current Stage 0 code is
 provisional until the thesis-spec audit below is complete and the readback is
 approved.

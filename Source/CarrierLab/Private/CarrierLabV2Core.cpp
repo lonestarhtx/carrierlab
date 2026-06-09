@@ -3,8 +3,10 @@
 #include "CarrierLabV2Core.h"
 
 #include "CompGeom/ConvexHull3.h"
+#include "DynamicMesh/DynamicMeshAABBTree3.h"
 #include "HAL/PlatformMemory.h"
 #include "HAL/PlatformTime.h"
+#include "Math/Ray.h"
 
 namespace CarrierLab::V2
 {
@@ -71,6 +73,22 @@ namespace CarrierLab::V2
 			case ECarrierV2FixtureKind::Positive:
 			default:
 				return TEXT("positive");
+			}
+		}
+
+		FString MaterialClassName(const ECarrierV2MaterialClass MaterialClass)
+		{
+			switch (MaterialClass)
+			{
+			case ECarrierV2MaterialClass::Oceanic:
+				return TEXT("oceanic");
+			case ECarrierV2MaterialClass::Continental:
+				return TEXT("continental");
+			case ECarrierV2MaterialClass::Mixed:
+				return TEXT("mixed");
+			case ECarrierV2MaterialClass::Unknown:
+			default:
+				return TEXT("unknown");
 			}
 		}
 
@@ -173,14 +191,15 @@ namespace CarrierLab::V2
 			AddSample(State, FVector3d(0.0, 0.0, -1.0));
 
 			const bool bSinglePlate = State.Config.PlateCount <= 1;
+			const bool bThirdPlateAvailable = State.Config.PlateCount >= 3;
 			AddTriangle(State, 0, 2, 4, 0);
-			AddTriangle(State, 2, 1, 4, bSinglePlate ? 0 : 0);
+			AddTriangle(State, 2, 1, 4, bSinglePlate ? 0 : (bThirdPlateAvailable ? 2 : 0));
 			AddTriangle(State, 1, 3, 4, bSinglePlate ? 0 : 1);
-			AddTriangle(State, 3, 0, 4, bSinglePlate ? 0 : 1);
+			AddTriangle(State, 3, 0, 4, bSinglePlate ? 0 : (bThirdPlateAvailable ? 2 : 1));
 			AddTriangle(State, 2, 0, 5, 0);
-			AddTriangle(State, 1, 2, 5, bSinglePlate ? 0 : 0);
+			AddTriangle(State, 1, 2, 5, bSinglePlate ? 0 : (bThirdPlateAvailable ? 2 : 0));
 			AddTriangle(State, 3, 1, 5, bSinglePlate ? 0 : 1);
-			AddTriangle(State, 0, 3, 5, bSinglePlate ? 0 : 1);
+			AddTriangle(State, 0, 3, 5, bSinglePlate ? 0 : (bThirdPlateAvailable ? 2 : 1));
 
 			for (FCarrierV2SubstrateTriangle& Triangle : State.Triangles)
 			{
@@ -839,6 +858,3426 @@ namespace CarrierLab::V2
 			OutResult.bCompleted = true;
 			return true;
 		}
+
+		struct FCarrierV2Stage1VertexSnapshot
+		{
+			int32 PlateId = INDEX_NONE;
+			int32 LocalVertexId = INDEX_NONE;
+			int32 SourceSampleId = INDEX_NONE;
+			FVector3d UnitPosition = FVector3d::ZeroVector;
+			FCarrierV2MaterialRecord Material;
+		};
+
+		struct FCarrierV2Stage1ProjectionHit
+		{
+			bool bBoundaryDegenerate = false;
+		};
+
+		FVector3d SafeMotionAxis(const FVector3d& Axis)
+		{
+			const double Size = Axis.Size();
+			return Size > SMALL_NUMBER ? Axis / Size : FVector3d(0.0, 0.0, 1.0);
+		}
+
+		FCarrierV2MotionSpec MotionForPlate(const FCarrierV2Stage1Config& Config, const int32 PlateId)
+		{
+			if (Config.PlateMotions.IsValidIndex(PlateId))
+			{
+				FCarrierV2MotionSpec Spec = Config.PlateMotions[PlateId];
+				Spec.Axis = SafeMotionAxis(Spec.Axis);
+				return Spec;
+			}
+			return FCarrierV2MotionSpec();
+		}
+
+		FVector3d RotateActualByGeodeticMotion(const FVector3d& UnitPosition, const FVector3d& Axis, const double AngleRad)
+		{
+			const FVector3d SafeAxis = SafeMotionAxis(Axis);
+			const double C = FMath::Cos(AngleRad);
+			const double S = FMath::Sin(AngleRad);
+			return (
+				UnitPosition * C +
+				FVector3d::CrossProduct(SafeAxis, UnitPosition) * S +
+				SafeAxis * (FVector3d::DotProduct(SafeAxis, UnitPosition) * (1.0 - C))).GetSafeNormal();
+		}
+
+		FVector3d OracleRotateFromSnapshot(const FVector3d& UnitPosition, const FVector3d& Axis, const double AngleRad)
+		{
+			const FVector3d SafeAxis = SafeMotionAxis(Axis);
+			const double Parallel = FVector3d::DotProduct(UnitPosition, SafeAxis);
+			const FVector3d ParallelVector = SafeAxis * Parallel;
+			const FVector3d Perpendicular = UnitPosition - ParallelVector;
+			const FVector3d Side = FVector3d::CrossProduct(SafeAxis, Perpendicular);
+			const double C = FMath::Cos(AngleRad);
+			const double S = FMath::Sin(AngleRad);
+			return (ParallelVector + Perpendicular * C + Side * S).GetSafeNormal();
+		}
+
+		bool MaterialRecordsMatch(const FCarrierV2MaterialRecord& A, const FCarrierV2MaterialRecord& B)
+		{
+			return A.MaterialClass == B.MaterialClass &&
+				FMath::IsNearlyEqual(A.ContinentalFraction, B.ContinentalFraction, 1.0e-12) &&
+				A.Provenance == B.Provenance;
+		}
+
+		uint64 HashStage1Config(const FCarrierV2Stage1Config& Config)
+		{
+			uint64 Hash = HashInputConfig(Config.BaseConfig);
+			HashMixString(Hash, Config.FixtureId);
+			HashMixString(Hash, Config.FixtureName);
+			HashMixString(Hash, Config.ExpectedMotionClass);
+			HashMixInt(Hash, Config.MotionStepCount);
+			HashMixDouble(Hash, Config.DtMa);
+			HashMixDouble(Hash, Config.PlanetRadiusKm);
+			HashMixDouble(Hash, Config.MotionToleranceKm);
+			HashMixDouble(Hash, Config.UnitLengthTolerance);
+			HashMixInt(Hash, Config.bUseFullTriangleScanForProjection ? 1 : 0);
+			for (const FCarrierV2MotionSpec& Motion : Config.PlateMotions)
+			{
+				const FVector3d Axis = SafeMotionAxis(Motion.Axis);
+				HashMixDouble(Hash, Axis.X);
+				HashMixDouble(Hash, Axis.Y);
+				HashMixDouble(Hash, Axis.Z);
+				HashMixDouble(Hash, Motion.AngularSpeedRadPerMa);
+			}
+			return Hash;
+		}
+
+		uint64 HashStage1Authority(const FCarrierV2BuildState& State, const FCarrierV2Stage1Config& Config)
+		{
+			uint64 Hash = HashStage1Config(Config);
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				HashMixInt(Hash, Plate.PlateId);
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					HashMixInt(Hash, Vertex.LocalVertexId);
+					HashMixInt(Hash, Vertex.SourceSampleId);
+					HashMixDouble(Hash, Vertex.UnitPosition.X);
+					HashMixDouble(Hash, Vertex.UnitPosition.Y);
+					HashMixDouble(Hash, Vertex.UnitPosition.Z);
+					HashMixInt(Hash, static_cast<int32>(Vertex.Material.MaterialClass));
+					HashMixDouble(Hash, Vertex.Material.ContinentalFraction);
+					HashMixString(Hash, Vertex.Material.Provenance);
+				}
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					HashMixInt(Hash, Triangle.LocalTriangleId);
+					HashMixInt(Hash, Triangle.SourceTriangleId);
+					HashMixInt(Hash, Triangle.LocalVertexIds[0]);
+					HashMixInt(Hash, Triangle.LocalVertexIds[1]);
+					HashMixInt(Hash, Triangle.LocalVertexIds[2]);
+				}
+			}
+			return Hash;
+		}
+
+		uint64 HashStage1ProjectionMetrics(const FCarrierV2Stage1Metrics& Metrics, const bool bIncludeMetricHash)
+		{
+			uint64 Hash = FnvOffset;
+			HashMixString(Hash, Metrics.ConfigHash);
+			HashMixString(Hash, Metrics.PreMotionAuthorityHash);
+			HashMixString(Hash, Metrics.PostMotionAuthorityHash);
+			HashMixInt(Hash, Metrics.MotionVertexCount);
+			HashMixDouble(Hash, Metrics.AnalyticMotionMaxErrorKm);
+			HashMixDouble(Hash, Metrics.AnalyticMotionMeanErrorKm);
+			HashMixDouble(Hash, Metrics.UnitLengthMaxError);
+			HashMixInt(Hash, Metrics.MaterialAttachmentErrorCount);
+			HashMixInt(Hash, Metrics.RawMotionMissCount);
+			HashMixInt(Hash, Metrics.RawMotionOverlapCount);
+			HashMixInt(Hash, Metrics.BoundaryDegenerateCount);
+			HashMixInt(Hash, Metrics.BoundaryPolicySelectedCount);
+			HashMixInt(Hash, Metrics.DivergentCandidateCount);
+			HashMixInt(Hash, Metrics.ConvergentCandidateCount);
+			HashMixInt(Hash, Metrics.MotionRepairCount);
+			HashMixInt(Hash, Metrics.RemeshDuringMotionCount);
+			HashMixInt(Hash, Metrics.ProjectionReadsGlobalOwnerCount);
+			HashMixInt(Hash, Metrics.RawHitCountTotal);
+			HashMixInt(Hash, Metrics.RayTriangleTestCount);
+			HashMixInt(Hash, Metrics.bMotionOraclePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bProjectionExpectationPass ? 1 : 0);
+			if (bIncludeMetricHash)
+			{
+				HashMixString(Hash, Metrics.ProjectionOutputHash);
+				HashMixInt(Hash, Metrics.bReplayDeterministic ? 1 : 0);
+				HashMixString(Hash, Metrics.Verdict);
+			}
+			return Hash;
+		}
+
+		void CopyStage1TopologyMetrics(const FCarrierV2BuildState& State, FCarrierV2Stage1Metrics& Metrics)
+		{
+			Metrics.LocalPlateVertexCountSum = 0;
+			Metrics.LocalPlateTriangleCountSum = 0;
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				Metrics.LocalPlateVertexCountSum += Plate.LocalVertices.Num();
+				Metrics.LocalPlateTriangleCountSum += Plate.LocalTriangles.Num();
+			}
+		}
+
+		void TestStage1Triangle(
+			const FVector3d& Direction,
+			const FCarrierV2Plate& Plate,
+			const FCarrierV2PlateTriangle& Triangle,
+			const double RayEpsilon,
+			FCarrierV2Stage1Metrics& Metrics,
+			TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
+		{
+			if (!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[0]) ||
+				!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[1]) ||
+				!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[2]))
+			{
+				return;
+			}
+
+			FVector3d Barycentric;
+			double HitT = 0.0;
+			bool bBoundaryDegenerate = false;
+			++Metrics.RayTriangleTestCount;
+			if (IntersectRayTriangle(
+				Direction,
+				Plate.LocalVertices[Triangle.LocalVertexIds[0]].UnitPosition,
+				Plate.LocalVertices[Triangle.LocalVertexIds[1]].UnitPosition,
+				Plate.LocalVertices[Triangle.LocalVertexIds[2]].UnitPosition,
+				RayEpsilon,
+				Barycentric,
+				HitT,
+				bBoundaryDegenerate))
+			{
+				FCarrierV2Stage1ProjectionHit Hit;
+				Hit.bBoundaryDegenerate = bBoundaryDegenerate;
+				Hits.Add(Hit);
+			}
+		}
+
+		void ProjectStage1MovedGeometry(
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2BuildState& State,
+			FCarrierV2Stage1Metrics& Metrics)
+		{
+			const double ProjectionStart = FPlatformTime::Seconds();
+			for (const FCarrierV2SubstrateSample& Sample : State.Samples)
+			{
+				TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> Hits;
+				if (Config.bUseFullTriangleScanForProjection)
+				{
+					for (const FCarrierV2Plate& Plate : State.Plates)
+					{
+						for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+						{
+							TestStage1Triangle(Sample.UnitPosition, Plate, Triangle, Config.BaseConfig.RayEpsilon, Metrics, Hits);
+						}
+					}
+				}
+				else if (State.SampleRayCandidates.IsValidIndex(Sample.SampleId))
+				{
+					for (const FCarrierV2RayCandidateRef& CandidateRef : State.SampleRayCandidates[Sample.SampleId])
+					{
+						if (!State.Plates.IsValidIndex(CandidateRef.PlateId))
+						{
+							continue;
+						}
+						const FCarrierV2Plate& Plate = State.Plates[CandidateRef.PlateId];
+						if (!Plate.LocalTriangles.IsValidIndex(CandidateRef.LocalTriangleId))
+						{
+							continue;
+						}
+						TestStage1Triangle(
+							Sample.UnitPosition,
+							Plate,
+							Plate.LocalTriangles[CandidateRef.LocalTriangleId],
+							Config.BaseConfig.RayEpsilon,
+							Metrics,
+							Hits);
+					}
+				}
+
+				Metrics.RawHitCountTotal += Hits.Num();
+				if (Hits.IsEmpty())
+				{
+					++Metrics.RawMotionMissCount;
+					++Metrics.DivergentCandidateCount;
+					continue;
+				}
+
+				bool bAnyBoundary = false;
+				bool bAllBoundary = true;
+				for (const FCarrierV2Stage1ProjectionHit& Hit : Hits)
+				{
+					bAnyBoundary = bAnyBoundary || Hit.bBoundaryDegenerate;
+					bAllBoundary = bAllBoundary && Hit.bBoundaryDegenerate;
+				}
+				if (bAnyBoundary)
+				{
+					++Metrics.BoundaryDegenerateCount;
+				}
+				if (Hits.Num() > 1)
+				{
+					if (bAllBoundary)
+					{
+						++Metrics.BoundaryPolicySelectedCount;
+					}
+					else
+					{
+						++Metrics.RawMotionOverlapCount;
+						++Metrics.ConvergentCandidateCount;
+					}
+				}
+			}
+			Metrics.ProjectionKernelMs = (FPlatformTime::Seconds() - ProjectionStart) * 1000.0;
+		}
+
+		void ApplyStage1MotionAndMeasure(
+			const FCarrierV2Stage1Config& Config,
+			FCarrierV2BuildState& State,
+			FCarrierV2Stage1Metrics& Metrics)
+		{
+			TArray<FCarrierV2Stage1VertexSnapshot> Snapshots;
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					FCarrierV2Stage1VertexSnapshot Snapshot;
+					Snapshot.PlateId = Plate.PlateId;
+					Snapshot.LocalVertexId = Vertex.LocalVertexId;
+					Snapshot.SourceSampleId = Vertex.SourceSampleId;
+					Snapshot.UnitPosition = Vertex.UnitPosition;
+					Snapshot.Material = Vertex.Material;
+					Snapshots.Add(Snapshot);
+				}
+			}
+			Metrics.MotionVertexCount = Snapshots.Num();
+
+			const double MotionStart = FPlatformTime::Seconds();
+			for (int32 Step = 0; Step < Config.MotionStepCount; ++Step)
+			{
+				for (FCarrierV2Plate& Plate : State.Plates)
+				{
+					const FCarrierV2MotionSpec Motion = MotionForPlate(Config, Plate.PlateId);
+					const double Angle = Motion.AngularSpeedRadPerMa * Config.DtMa;
+					for (FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+					{
+						Vertex.UnitPosition = RotateActualByGeodeticMotion(Vertex.UnitPosition, Motion.Axis, Angle);
+					}
+				}
+			}
+			Metrics.MotionApplyMs = (FPlatformTime::Seconds() - MotionStart) * 1000.0;
+
+			double ErrorSumKm = 0.0;
+			for (const FCarrierV2Stage1VertexSnapshot& Snapshot : Snapshots)
+			{
+				if (!State.Plates.IsValidIndex(Snapshot.PlateId))
+				{
+					++Metrics.MaterialAttachmentErrorCount;
+					continue;
+				}
+				const FCarrierV2Plate& Plate = State.Plates[Snapshot.PlateId];
+				if (!Plate.LocalVertices.IsValidIndex(Snapshot.LocalVertexId))
+				{
+					++Metrics.MaterialAttachmentErrorCount;
+					continue;
+				}
+				const FCarrierV2PlateVertex& Vertex = Plate.LocalVertices[Snapshot.LocalVertexId];
+				const FCarrierV2MotionSpec Motion = MotionForPlate(Config, Plate.PlateId);
+				const double TotalAngle = Motion.AngularSpeedRadPerMa * Config.DtMa * static_cast<double>(Config.MotionStepCount);
+				const FVector3d Expected = OracleRotateFromSnapshot(Snapshot.UnitPosition, Motion.Axis, TotalAngle);
+				const double ErrorKm = (Vertex.UnitPosition - Expected).Size() * Config.PlanetRadiusKm;
+				Metrics.AnalyticMotionMaxErrorKm = FMath::Max(Metrics.AnalyticMotionMaxErrorKm, ErrorKm);
+				ErrorSumKm += ErrorKm;
+				Metrics.UnitLengthMaxError = FMath::Max(Metrics.UnitLengthMaxError, FMath::Abs(Vertex.UnitPosition.Size() - 1.0));
+				if (Vertex.SourceSampleId != Snapshot.SourceSampleId || !MaterialRecordsMatch(Vertex.Material, Snapshot.Material))
+				{
+					++Metrics.MaterialAttachmentErrorCount;
+				}
+			}
+
+			if (Metrics.MotionVertexCount > 0)
+			{
+				Metrics.AnalyticMotionMeanErrorKm = ErrorSumKm / static_cast<double>(Metrics.MotionVertexCount);
+			}
+		}
+
+		void FinalizeStage1Verdict(const FCarrierV2Stage1Config& Config, FCarrierV2Stage1Metrics& Metrics)
+		{
+			Metrics.bMotionOraclePass =
+				Metrics.AnalyticMotionMaxErrorKm <= Config.MotionToleranceKm &&
+				Metrics.AnalyticMotionMeanErrorKm <= Config.MotionToleranceKm;
+			Metrics.bUnitLengthPass = Metrics.UnitLengthMaxError <= Config.UnitLengthTolerance;
+			Metrics.bMaterialAttachmentPass = Metrics.MaterialAttachmentErrorCount == 0;
+			Metrics.bNoRepairOrRemeshPass = Metrics.MotionRepairCount == 0 && Metrics.RemeshDuringMotionCount == 0;
+			Metrics.bProjectionExpectationPass = true;
+			if (Config.bRequireNoMotionGapOrOverlap)
+			{
+				Metrics.bProjectionExpectationPass =
+					Metrics.RawMotionMissCount == 0 &&
+					Metrics.RawMotionOverlapCount == 0;
+			}
+			if (Config.bRequireDivergentCandidate)
+			{
+				Metrics.bProjectionExpectationPass =
+					Metrics.bProjectionExpectationPass &&
+					Metrics.RawMotionMissCount > 0 &&
+					Metrics.DivergentCandidateCount > 0;
+			}
+			if (Config.bRequireConvergentCandidate)
+			{
+				Metrics.bProjectionExpectationPass =
+					Metrics.bProjectionExpectationPass &&
+					Metrics.RawMotionOverlapCount > 0 &&
+					Metrics.ConvergentCandidateCount > 0;
+			}
+
+			Metrics.bFixturePass =
+				Metrics.bMotionOraclePass &&
+				Metrics.bUnitLengthPass &&
+				Metrics.bMaterialAttachmentPass &&
+				Metrics.bProjectionExpectationPass &&
+				Metrics.bNoRepairOrRemeshPass &&
+				Metrics.ProjectionReadsGlobalOwnerCount == 0;
+			Metrics.bStageGatePass = Metrics.bFixturePass;
+			Metrics.Verdict = Metrics.bFixturePass ? TEXT("PASS_RIGID_MOTION") : TEXT("FAIL_RIGID_MOTION");
+		}
+
+		bool RunStage1FixtureOnce(const FCarrierV2Stage1Config& Config, FCarrierV2Stage1FixtureResult& OutResult)
+		{
+			OutResult = FCarrierV2Stage1FixtureResult();
+			OutResult.Config = Config;
+			OutResult.Metrics.RunId = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+			OutResult.Metrics.FixtureId = Config.FixtureId;
+			OutResult.Metrics.FixtureName = Config.FixtureName;
+			OutResult.Metrics.FixtureKind = FixtureKindName(Config.BaseConfig.FixtureKind);
+			OutResult.Metrics.ExpectedMotionClass = Config.ExpectedMotionClass;
+			OutResult.Metrics.SourceStatus = Config.SourceStatus;
+			OutResult.Metrics.ProjectionCandidatePolicyId = Config.ProjectionCandidatePolicyId;
+			OutResult.Metrics.SampleCount = Config.BaseConfig.SampleCount;
+			OutResult.Metrics.PlateCount = Config.BaseConfig.PlateCount;
+			OutResult.Metrics.MotionStepCount = Config.MotionStepCount;
+			OutResult.Metrics.DtMa = Config.DtMa;
+			OutResult.Metrics.TotalMotionMa = Config.DtMa * static_cast<double>(Config.MotionStepCount);
+			OutResult.Metrics.PlanetRadiusKm = Config.PlanetRadiusKm;
+			OutResult.Metrics.MotionToleranceKm = Config.MotionToleranceKm;
+			OutResult.Metrics.UnitLengthTolerance = Config.UnitLengthTolerance;
+			OutResult.Metrics.RayEpsilon = Config.BaseConfig.RayEpsilon;
+			OutResult.Metrics.ConfigHash = HashToString(HashStage1Config(Config));
+
+			const double TotalStart = FPlatformTime::Seconds();
+			FCarrierV2BuildState State;
+			FCarrierV2Stage0Metrics BuildMetrics;
+			if (!BuildStateForConfig(Config.BaseConfig, State, BuildMetrics, OutResult.Error))
+			{
+				OutResult.Metrics.Verdict = TEXT("FAIL_BUILD");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+
+			OutResult.Metrics.BuildSubstrateMs = BuildMetrics.BuildSubstrateMs;
+			OutResult.Metrics.BuildPlateLocalMs = BuildMetrics.BuildPlateLocalMs;
+			OutResult.Metrics.GlobalSampleCount = State.Samples.Num();
+			OutResult.Metrics.GlobalTriangleCount = State.Triangles.Num();
+			OutResult.Metrics.TriangleCount = State.Triangles.Num();
+			CopyStage1TopologyMetrics(State, OutResult.Metrics);
+			OutResult.Metrics.PreMotionAuthorityHash = HashToString(HashStage1Authority(State, Config));
+
+			const double MetricsStart = FPlatformTime::Seconds();
+			ApplyStage1MotionAndMeasure(Config, State, OutResult.Metrics);
+			OutResult.Metrics.PostMotionAuthorityHash = HashToString(HashStage1Authority(State, Config));
+			ProjectStage1MovedGeometry(Config, State, OutResult.Metrics);
+			OutResult.Metrics.MetricsMs = (FPlatformTime::Seconds() - MetricsStart) * 1000.0 -
+				OutResult.Metrics.MotionApplyMs -
+				OutResult.Metrics.ProjectionKernelMs;
+			if (OutResult.Metrics.MetricsMs < 0.0)
+			{
+				OutResult.Metrics.MetricsMs = 0.0;
+			}
+
+			FinalizeStage1Verdict(Config, OutResult.Metrics);
+			OutResult.Metrics.ProjectionOutputHash = HashToString(HashStage1ProjectionMetrics(OutResult.Metrics, false));
+			OutResult.Metrics.MetricsHash = HashToString(HashStage1ProjectionMetrics(OutResult.Metrics, true));
+			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			OutResult.bCompleted = true;
+			return true;
+		}
+
+		struct FCarrierV2Stage2ContactHit
+		{
+			int32 PlateId = INDEX_NONE;
+			int32 LocalTriangleId = INDEX_NONE;
+			int32 SourceTriangleId = INDEX_NONE;
+			FVector3d Barycentric = FVector3d::ZeroVector;
+			double HitT = 0.0;
+			bool bBoundaryDegenerate = false;
+			double ContinentalFraction = 0.0;
+		};
+
+		FString JsonIntArray(const TArray<int32>& Values)
+		{
+			FString Out = TEXT("[");
+			for (int32 Index = 0; Index < Values.Num(); ++Index)
+			{
+				if (Index > 0)
+				{
+					Out += TEXT(",");
+				}
+				Out += FString::FromInt(Values[Index]);
+			}
+			Out += TEXT("]");
+			return Out;
+		}
+
+		void InsertUniqueContactPlate(
+			const FCarrierV2Stage2ContactHit& Hit,
+			TArray<int32>& UniquePlateIds,
+			TArray<int32>& UniqueLocalTriangleIds)
+		{
+			for (int32 Index = 0; Index < UniquePlateIds.Num(); ++Index)
+			{
+				if (UniquePlateIds[Index] == Hit.PlateId)
+				{
+					return;
+				}
+				if (UniquePlateIds[Index] > Hit.PlateId)
+				{
+					UniquePlateIds.Insert(Hit.PlateId, Index);
+					UniqueLocalTriangleIds.Insert(Hit.LocalTriangleId, Index);
+					return;
+				}
+			}
+			UniquePlateIds.Add(Hit.PlateId);
+			UniqueLocalTriangleIds.Add(Hit.LocalTriangleId);
+		}
+
+		void InsertUniqueContactHitTriangle(
+			const FCarrierV2Stage2ContactHit& Hit,
+			TArray<int32>& ContactHitPlateIds,
+			TArray<int32>& ContactHitLocalTriangleIds)
+		{
+			for (int32 Index = 0; Index < ContactHitPlateIds.Num(); ++Index)
+			{
+				const bool bSameRef =
+					ContactHitPlateIds[Index] == Hit.PlateId &&
+					ContactHitLocalTriangleIds.IsValidIndex(Index) &&
+					ContactHitLocalTriangleIds[Index] == Hit.LocalTriangleId;
+				if (bSameRef)
+				{
+					return;
+				}
+				const bool bSortBefore =
+					ContactHitPlateIds[Index] > Hit.PlateId ||
+					(ContactHitPlateIds[Index] == Hit.PlateId &&
+						ContactHitLocalTriangleIds.IsValidIndex(Index) &&
+						ContactHitLocalTriangleIds[Index] > Hit.LocalTriangleId);
+				if (bSortBefore)
+				{
+					ContactHitPlateIds.Insert(Hit.PlateId, Index);
+					ContactHitLocalTriangleIds.Insert(Hit.LocalTriangleId, Index);
+					return;
+				}
+			}
+			ContactHitPlateIds.Add(Hit.PlateId);
+			ContactHitLocalTriangleIds.Add(Hit.LocalTriangleId);
+		}
+
+		uint64 HashStage2Config(const FCarrierV2Stage2Config& Config)
+		{
+			uint64 Hash = HashStage1Config(Config.MotionConfig);
+			HashMixString(Hash, Config.FixtureId);
+			HashMixString(Hash, Config.FixtureName);
+			HashMixString(Hash, Config.ExpectedProcessClass);
+			HashMixString(Hash, Config.ContactPolicyId);
+			HashMixInt(Hash, Config.bUseFullTriangleScanForContact ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireNoContactCandidates ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireContactCandidate ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireThirdPlateIntrusion ? 1 : 0);
+			HashMixInt(Hash, Config.bRequirePolarityCandidate ? 1 : 0);
+			HashMixInt(Hash, Config.ExpectedMinimumContactCandidates);
+			HashMixInt(Hash, Config.ExpectedMinimumThirdPlateIntrusions);
+			HashMixInt(Hash, Config.ExpectedMinimumPolarityCandidates);
+			return Hash;
+		}
+
+		uint64 HashStage2ProcessCandidates(
+			const FCarrierV2Stage2Config& Config,
+			const TArray<FCarrierV2ProcessCandidateRecord>& Candidates)
+		{
+			uint64 Hash = HashStage2Config(Config);
+			for (const FCarrierV2ProcessCandidateRecord& Candidate : Candidates)
+			{
+				HashMixInt(Hash, Candidate.CandidateId);
+				HashMixInt(Hash, Candidate.SampleId);
+				HashMixString(Hash, Candidate.CandidateClass);
+				HashMixString(Hash, Candidate.EvidenceKind);
+				HashMixInt(Hash, Candidate.bThirdPlateVisible ? 1 : 0);
+				HashMixInt(Hash, Candidate.bPolarityCandidate ? 1 : 0);
+				HashMixInt(Hash, Candidate.bAccepted ? 1 : 0);
+				for (const int32 PlateId : Candidate.PlateIds)
+				{
+					HashMixInt(Hash, PlateId);
+				}
+				HashMixInt(Hash, -17);
+				for (const int32 LocalTriangleId : Candidate.LocalTriangleIds)
+				{
+					HashMixInt(Hash, LocalTriangleId);
+				}
+				HashMixInt(Hash, -18);
+				for (const int32 PlateId : Candidate.ContactHitPlateIds)
+				{
+					HashMixInt(Hash, PlateId);
+				}
+				HashMixInt(Hash, -19);
+				for (const int32 LocalTriangleId : Candidate.ContactHitLocalTriangleIds)
+				{
+					HashMixInt(Hash, LocalTriangleId);
+				}
+			}
+			return Hash;
+		}
+
+		uint64 HashStage2Metrics(const FCarrierV2Stage2Metrics& Metrics, const bool bIncludeReplayFields)
+		{
+			uint64 Hash = FnvOffset;
+			HashMixString(Hash, Metrics.ConfigHash);
+			HashMixString(Hash, Metrics.PreMotionAuthorityHash);
+			HashMixString(Hash, Metrics.PostMotionAuthorityHash);
+			HashMixString(Hash, Metrics.ProjectionOutputHash);
+			HashMixString(Hash, Metrics.ProcessStateHash);
+			HashMixInt(Hash, Metrics.MotionVertexCount);
+			HashMixDouble(Hash, Metrics.AnalyticMotionMaxErrorKm);
+			HashMixDouble(Hash, Metrics.AnalyticMotionMeanErrorKm);
+			HashMixDouble(Hash, Metrics.UnitLengthMaxError);
+			HashMixInt(Hash, Metrics.MaterialAttachmentErrorCount);
+			HashMixInt(Hash, Metrics.RawMotionMissCount);
+			HashMixInt(Hash, Metrics.RawMotionOverlapCount);
+			HashMixInt(Hash, Metrics.DivergentCandidateCount);
+			HashMixInt(Hash, Metrics.ConvergentCandidateCount);
+			HashMixInt(Hash, Metrics.MotionRepairCount);
+			HashMixInt(Hash, Metrics.RemeshDuringMotionCount);
+			HashMixInt(Hash, Metrics.ProjectionReadsGlobalOwnerCount);
+			HashMixInt(Hash, Metrics.ContactCandidateCount);
+			HashMixInt(Hash, Metrics.AcceptedConvergenceEvidenceCount);
+			HashMixInt(Hash, Metrics.RejectedContactCount);
+			HashMixInt(Hash, Metrics.ThirdPlateIntrusionCount);
+			HashMixInt(Hash, Metrics.PolarityCandidateCount);
+			HashMixInt(Hash, Metrics.ProcessMutationCount);
+			HashMixInt(Hash, Metrics.CentroidPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.RandomPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.NearestPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.ProjectionOwnerLabelEvidenceCount);
+			HashMixInt(Hash, Metrics.OverlapConsumedBeforeProcessStateCount);
+			HashMixInt(Hash, Metrics.MaterialMutationCount);
+			HashMixInt(Hash, Metrics.RemeshDuringProcessDryRunCount);
+			HashMixInt(Hash, Metrics.GapFillDuringProcessDryRunCount);
+			HashMixInt(Hash, Metrics.ContactRawHitCountTotal);
+			HashMixInt(Hash, Metrics.ContactRayTriangleTestCount);
+			HashMixInt(Hash, Metrics.bContactEvidencePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bDryRunNoMutationPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bNoPrimaryResolverPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bThirdPlatePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bPolarityPass ? 1 : 0);
+			if (bIncludeReplayFields)
+			{
+				HashMixInt(Hash, Metrics.bReplayDeterministic ? 1 : 0);
+				HashMixString(Hash, Metrics.Verdict);
+			}
+			return Hash;
+		}
+
+		void InitializeStage1MetricsForStage2(
+			const FCarrierV2Stage1Config& Config,
+			const FString& RunId,
+			FCarrierV2Stage1Metrics& Metrics)
+		{
+			Metrics.RunId = RunId;
+			Metrics.FixtureId = Config.FixtureId;
+			Metrics.FixtureName = Config.FixtureName;
+			Metrics.FixtureKind = FixtureKindName(Config.BaseConfig.FixtureKind);
+			Metrics.ExpectedMotionClass = Config.ExpectedMotionClass;
+			Metrics.SourceStatus = Config.SourceStatus;
+			Metrics.ProjectionCandidatePolicyId = Config.ProjectionCandidatePolicyId;
+			Metrics.SampleCount = Config.BaseConfig.SampleCount;
+			Metrics.PlateCount = Config.BaseConfig.PlateCount;
+			Metrics.MotionStepCount = Config.MotionStepCount;
+			Metrics.DtMa = Config.DtMa;
+			Metrics.TotalMotionMa = Config.DtMa * static_cast<double>(Config.MotionStepCount);
+			Metrics.PlanetRadiusKm = Config.PlanetRadiusKm;
+			Metrics.MotionToleranceKm = Config.MotionToleranceKm;
+			Metrics.UnitLengthTolerance = Config.UnitLengthTolerance;
+			Metrics.RayEpsilon = Config.BaseConfig.RayEpsilon;
+			Metrics.ConfigHash = HashToString(HashStage1Config(Config));
+		}
+
+		void CopyStage1MetricsToStage2(
+			const FCarrierV2Stage1Metrics& Source,
+			FCarrierV2Stage2Metrics& Target)
+		{
+			Target.SampleCount = Source.SampleCount;
+			Target.TriangleCount = Source.TriangleCount;
+			Target.PlateCount = Source.PlateCount;
+			Target.MotionStepCount = Source.MotionStepCount;
+			Target.DtMa = Source.DtMa;
+			Target.TotalMotionMa = Source.TotalMotionMa;
+			Target.PlanetRadiusKm = Source.PlanetRadiusKm;
+			Target.MotionToleranceKm = Source.MotionToleranceKm;
+			Target.UnitLengthTolerance = Source.UnitLengthTolerance;
+			Target.RayEpsilon = Source.RayEpsilon;
+			Target.PreMotionAuthorityHash = Source.PreMotionAuthorityHash;
+			Target.PostMotionAuthorityHash = Source.PostMotionAuthorityHash;
+			Target.ProjectionOutputHash = Source.ProjectionOutputHash;
+			Target.GlobalSampleCount = Source.GlobalSampleCount;
+			Target.GlobalTriangleCount = Source.GlobalTriangleCount;
+			Target.LocalPlateVertexCountSum = Source.LocalPlateVertexCountSum;
+			Target.LocalPlateTriangleCountSum = Source.LocalPlateTriangleCountSum;
+			Target.MotionVertexCount = Source.MotionVertexCount;
+			Target.AnalyticMotionMaxErrorKm = Source.AnalyticMotionMaxErrorKm;
+			Target.AnalyticMotionMeanErrorKm = Source.AnalyticMotionMeanErrorKm;
+			Target.UnitLengthMaxError = Source.UnitLengthMaxError;
+			Target.MaterialAttachmentErrorCount = Source.MaterialAttachmentErrorCount;
+			Target.RawMotionMissCount = Source.RawMotionMissCount;
+			Target.RawMotionOverlapCount = Source.RawMotionOverlapCount;
+			Target.BoundaryDegenerateCount = Source.BoundaryDegenerateCount;
+			Target.BoundaryPolicySelectedCount = Source.BoundaryPolicySelectedCount;
+			Target.DivergentCandidateCount = Source.DivergentCandidateCount;
+			Target.ConvergentCandidateCount = Source.ConvergentCandidateCount;
+			Target.MotionRepairCount = Source.MotionRepairCount;
+			Target.RemeshDuringMotionCount = Source.RemeshDuringMotionCount;
+			Target.ProjectionReadsGlobalOwnerCount = Source.ProjectionReadsGlobalOwnerCount;
+			Target.RawHitCountTotal = Source.RawHitCountTotal;
+			Target.RayTriangleTestCount = Source.RayTriangleTestCount;
+			Target.bMotionOraclePass = Source.bMotionOraclePass;
+			Target.bUnitLengthPass = Source.bUnitLengthPass;
+			Target.bMaterialAttachmentPass = Source.bMaterialAttachmentPass;
+			Target.bProjectionExpectationPass = Source.bProjectionExpectationPass;
+			Target.bNoRepairOrRemeshPass = Source.bNoRepairOrRemeshPass;
+			Target.BuildSubstrateMs = Source.BuildSubstrateMs;
+			Target.BuildPlateLocalMs = Source.BuildPlateLocalMs;
+			Target.MotionApplyMs = Source.MotionApplyMs;
+			Target.ProjectionKernelMs = Source.ProjectionKernelMs;
+		}
+
+		void TestStage2ContactTriangle(
+			const FVector3d& Direction,
+			const FCarrierV2Plate& Plate,
+			const FCarrierV2PlateTriangle& Triangle,
+			const double RayEpsilon,
+			FCarrierV2Stage2Metrics& Metrics,
+			TArray<FCarrierV2Stage2ContactHit, TInlineAllocator<16>>& Hits)
+		{
+			if (!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[0]) ||
+				!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[1]) ||
+				!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[2]))
+			{
+				return;
+			}
+
+			FVector3d Barycentric;
+			double HitT = 0.0;
+			bool bBoundaryDegenerate = false;
+			++Metrics.ContactRayTriangleTestCount;
+			if (IntersectRayTriangle(
+				Direction,
+				Plate.LocalVertices[Triangle.LocalVertexIds[0]].UnitPosition,
+				Plate.LocalVertices[Triangle.LocalVertexIds[1]].UnitPosition,
+				Plate.LocalVertices[Triangle.LocalVertexIds[2]].UnitPosition,
+				RayEpsilon,
+				Barycentric,
+				HitT,
+				bBoundaryDegenerate))
+			{
+				FCarrierV2Stage2ContactHit Hit;
+				Hit.PlateId = Plate.PlateId;
+				Hit.LocalTriangleId = Triangle.LocalTriangleId;
+				Hit.SourceTriangleId = Triangle.SourceTriangleId;
+				Hit.Barycentric = Barycentric;
+				Hit.HitT = HitT;
+				Hit.bBoundaryDegenerate = bBoundaryDegenerate;
+				Hit.ContinentalFraction = InterpolateContinentalFraction(Plate, Triangle, Barycentric);
+				Hits.Add(Hit);
+			}
+		}
+
+		void GatherStage2ContactHits(
+			const FCarrierV2Stage2Config& Config,
+			const FCarrierV2BuildState& State,
+			const FCarrierV2SubstrateSample& Sample,
+			FCarrierV2Stage2Metrics& Metrics,
+			TArray<FCarrierV2Stage2ContactHit, TInlineAllocator<16>>& Hits)
+		{
+			if (Config.bUseFullTriangleScanForContact)
+			{
+				for (const FCarrierV2Plate& Plate : State.Plates)
+				{
+					for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+					{
+						TestStage2ContactTriangle(Sample.UnitPosition, Plate, Triangle, Config.MotionConfig.BaseConfig.RayEpsilon, Metrics, Hits);
+					}
+				}
+				return;
+			}
+
+			if (!State.SampleRayCandidates.IsValidIndex(Sample.SampleId))
+			{
+				return;
+			}
+
+			for (const FCarrierV2RayCandidateRef& CandidateRef : State.SampleRayCandidates[Sample.SampleId])
+			{
+				if (!State.Plates.IsValidIndex(CandidateRef.PlateId))
+				{
+					continue;
+				}
+				const FCarrierV2Plate& Plate = State.Plates[CandidateRef.PlateId];
+				if (!Plate.LocalTriangles.IsValidIndex(CandidateRef.LocalTriangleId))
+				{
+					continue;
+				}
+				TestStage2ContactTriangle(
+					Sample.UnitPosition,
+					Plate,
+					Plate.LocalTriangles[CandidateRef.LocalTriangleId],
+					Config.MotionConfig.BaseConfig.RayEpsilon,
+					Metrics,
+					Hits);
+			}
+		}
+
+		void DetectStage2ProcessCandidates(
+			const FCarrierV2Stage2Config& Config,
+			const FCarrierV2BuildState& State,
+			FCarrierV2Stage2Metrics& Metrics,
+			TArray<FCarrierV2ProcessCandidateRecord>& OutCandidates)
+		{
+			const double ContactStart = FPlatformTime::Seconds();
+			OutCandidates.Reset();
+
+			for (const FCarrierV2SubstrateSample& Sample : State.Samples)
+			{
+				TArray<FCarrierV2Stage2ContactHit, TInlineAllocator<16>> Hits;
+				GatherStage2ContactHits(Config, State, Sample, Metrics, Hits);
+				Metrics.ContactRawHitCountTotal += Hits.Num();
+				if (Hits.Num() <= 1)
+				{
+					continue;
+				}
+
+				TArray<int32> UniquePlateIds;
+				TArray<int32> UniqueLocalTriangleIds;
+				TArray<int32> ContactHitPlateIds;
+				TArray<int32> ContactHitLocalTriangleIds;
+				bool bAllBoundary = true;
+				for (const FCarrierV2Stage2ContactHit& Hit : Hits)
+				{
+					bAllBoundary = bAllBoundary && Hit.bBoundaryDegenerate;
+					InsertUniqueContactPlate(Hit, UniquePlateIds, UniqueLocalTriangleIds);
+					InsertUniqueContactHitTriangle(Hit, ContactHitPlateIds, ContactHitLocalTriangleIds);
+				}
+
+				if (bAllBoundary || UniquePlateIds.Num() < 2)
+				{
+					++Metrics.RejectedContactCount;
+					continue;
+				}
+
+				FCarrierV2ProcessCandidateRecord Candidate;
+				Candidate.CandidateId = OutCandidates.Num();
+				Candidate.SampleId = Sample.SampleId;
+				Candidate.PlateIds = UniquePlateIds;
+				Candidate.LocalTriangleIds = UniqueLocalTriangleIds;
+				Candidate.ContactHitPlateIds = ContactHitPlateIds;
+				Candidate.ContactHitLocalTriangleIds = ContactHitLocalTriangleIds;
+				Candidate.bThirdPlateVisible = UniquePlateIds.Num() >= 3;
+				Candidate.bPolarityCandidate = true;
+				Candidate.bAccepted = true;
+				Candidate.CandidateClass = Candidate.bThirdPlateVisible
+					? TEXT("third_plate_intrusion")
+					: TEXT("convergent_contact");
+				Candidate.EvidenceKind = Config.bUseFullTriangleScanForContact
+					? TEXT("moved_geometry_full_scan_multihit")
+					: TEXT("moved_geometry_source_adjacent_multihit");
+				OutCandidates.Add(Candidate);
+
+				++Metrics.ContactCandidateCount;
+				++Metrics.AcceptedConvergenceEvidenceCount;
+				++Metrics.PolarityCandidateCount;
+				if (Candidate.bThirdPlateVisible)
+				{
+					++Metrics.ThirdPlateIntrusionCount;
+				}
+			}
+
+			Metrics.ContactDetectionMs = (FPlatformTime::Seconds() - ContactStart) * 1000.0;
+		}
+
+		void FinalizeStage2Verdict(const FCarrierV2Stage2Config& Config, FCarrierV2Stage2Metrics& Metrics)
+		{
+			Metrics.bContactEvidencePass = true;
+			if (Config.bRequireNoContactCandidates)
+			{
+				Metrics.bContactEvidencePass = Metrics.ContactCandidateCount == 0;
+			}
+			if (Config.bRequireContactCandidate)
+			{
+				Metrics.bContactEvidencePass = Metrics.bContactEvidencePass &&
+					Metrics.ContactCandidateCount >= FMath::Max(1, Config.ExpectedMinimumContactCandidates) &&
+					Metrics.AcceptedConvergenceEvidenceCount >= FMath::Max(1, Config.ExpectedMinimumContactCandidates);
+			}
+
+			Metrics.bThirdPlatePass = !Config.bRequireThirdPlateIntrusion ||
+				Metrics.ThirdPlateIntrusionCount >= FMath::Max(1, Config.ExpectedMinimumThirdPlateIntrusions);
+			Metrics.bPolarityPass = !Config.bRequirePolarityCandidate ||
+				Metrics.PolarityCandidateCount >= FMath::Max(1, Config.ExpectedMinimumPolarityCandidates);
+			Metrics.bDryRunNoMutationPass =
+				Metrics.ProcessMutationCount == 0 &&
+				Metrics.OverlapConsumedBeforeProcessStateCount == 0 &&
+				Metrics.MaterialMutationCount == 0 &&
+				Metrics.RemeshDuringProcessDryRunCount == 0 &&
+				Metrics.GapFillDuringProcessDryRunCount == 0;
+			Metrics.bNoPrimaryResolverPass =
+				Metrics.CentroidPrimaryResolutionCount == 0 &&
+				Metrics.RandomPrimaryResolutionCount == 0 &&
+				Metrics.NearestPrimaryResolutionCount == 0;
+
+			Metrics.bFixturePass =
+				Metrics.bMotionOraclePass &&
+				Metrics.bUnitLengthPass &&
+				Metrics.bMaterialAttachmentPass &&
+				Metrics.bProjectionExpectationPass &&
+				Metrics.bNoRepairOrRemeshPass &&
+				Metrics.MotionRepairCount == 0 &&
+				Metrics.RemeshDuringMotionCount == 0 &&
+				Metrics.ProjectionReadsGlobalOwnerCount == 0 &&
+				Metrics.ProjectionOwnerLabelEvidenceCount == 0 &&
+				Metrics.bContactEvidencePass &&
+				Metrics.bDryRunNoMutationPass &&
+				Metrics.bNoPrimaryResolverPass &&
+				Metrics.bThirdPlatePass &&
+				Metrics.bPolarityPass;
+			Metrics.bStageGatePass = Metrics.bFixturePass;
+
+			if (!Metrics.bMotionOraclePass || !Metrics.bProjectionExpectationPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_INHERITED_MOTION_GATE");
+			}
+			else if (!Metrics.bContactEvidencePass || !Metrics.bThirdPlatePass || !Metrics.bPolarityPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_CONTACT_EVIDENCE");
+			}
+			else if (!Metrics.bDryRunNoMutationPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_DRY_RUN_MUTATION");
+			}
+			else if (!Metrics.bNoPrimaryResolverPass || Metrics.ProjectionOwnerLabelEvidenceCount != 0)
+			{
+				Metrics.Verdict = TEXT("FAIL_PRIMARY_RESOLVER");
+			}
+			else
+			{
+				Metrics.Verdict = TEXT("PASS_CONTACT_DRY_RUN");
+			}
+		}
+
+		bool RunStage2FixtureOnce(const FCarrierV2Stage2Config& Config, FCarrierV2Stage2FixtureResult& OutResult)
+		{
+			OutResult = FCarrierV2Stage2FixtureResult();
+			OutResult.Config = Config;
+			OutResult.Metrics.RunId = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+			OutResult.Metrics.FixtureId = Config.FixtureId;
+			OutResult.Metrics.FixtureName = Config.FixtureName;
+			OutResult.Metrics.FixtureKind = FixtureKindName(Config.MotionConfig.BaseConfig.FixtureKind);
+			OutResult.Metrics.ExpectedMotionClass = Config.MotionConfig.ExpectedMotionClass;
+			OutResult.Metrics.ExpectedProcessClass = Config.ExpectedProcessClass;
+			OutResult.Metrics.SourceStatus = Config.MotionConfig.SourceStatus;
+			OutResult.Metrics.ProjectionCandidatePolicyId = Config.MotionConfig.ProjectionCandidatePolicyId;
+			OutResult.Metrics.ContactPolicyId = Config.ContactPolicyId;
+			OutResult.Metrics.ConfigHash = HashToString(HashStage2Config(Config));
+
+			const double TotalStart = FPlatformTime::Seconds();
+			FCarrierV2BuildState State;
+			FCarrierV2Stage0Metrics BuildMetrics;
+			if (!BuildStateForConfig(Config.MotionConfig.BaseConfig, State, BuildMetrics, OutResult.Error))
+			{
+				OutResult.Metrics.Verdict = TEXT("FAIL_BUILD");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+
+			FCarrierV2Stage1Metrics Stage1Metrics;
+			InitializeStage1MetricsForStage2(Config.MotionConfig, OutResult.Metrics.RunId, Stage1Metrics);
+			Stage1Metrics.BuildSubstrateMs = BuildMetrics.BuildSubstrateMs;
+			Stage1Metrics.BuildPlateLocalMs = BuildMetrics.BuildPlateLocalMs;
+			Stage1Metrics.GlobalSampleCount = State.Samples.Num();
+			Stage1Metrics.GlobalTriangleCount = State.Triangles.Num();
+			Stage1Metrics.TriangleCount = State.Triangles.Num();
+			CopyStage1TopologyMetrics(State, Stage1Metrics);
+			Stage1Metrics.PreMotionAuthorityHash = HashToString(HashStage1Authority(State, Config.MotionConfig));
+
+			const double MetricsStart = FPlatformTime::Seconds();
+			ApplyStage1MotionAndMeasure(Config.MotionConfig, State, Stage1Metrics);
+			Stage1Metrics.PostMotionAuthorityHash = HashToString(HashStage1Authority(State, Config.MotionConfig));
+			ProjectStage1MovedGeometry(Config.MotionConfig, State, Stage1Metrics);
+			FinalizeStage1Verdict(Config.MotionConfig, Stage1Metrics);
+			Stage1Metrics.ProjectionOutputHash = HashToString(HashStage1ProjectionMetrics(Stage1Metrics, false));
+			Stage1Metrics.MetricsHash = HashToString(HashStage1ProjectionMetrics(Stage1Metrics, true));
+
+			CopyStage1MetricsToStage2(Stage1Metrics, OutResult.Metrics);
+			DetectStage2ProcessCandidates(Config, State, OutResult.Metrics, OutResult.ProcessCandidates);
+			OutResult.Metrics.ProcessStateHash = HashToString(HashStage2ProcessCandidates(Config, OutResult.ProcessCandidates));
+			FinalizeStage2Verdict(Config, OutResult.Metrics);
+			OutResult.Metrics.MetricsMs = (FPlatformTime::Seconds() - MetricsStart) * 1000.0 -
+				OutResult.Metrics.MotionApplyMs -
+				OutResult.Metrics.ProjectionKernelMs -
+				OutResult.Metrics.ContactDetectionMs;
+			if (OutResult.Metrics.MetricsMs < 0.0)
+			{
+				OutResult.Metrics.MetricsMs = 0.0;
+			}
+			OutResult.Metrics.MetricsHash = HashToString(HashStage2Metrics(OutResult.Metrics, true));
+			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			OutResult.bCompleted = true;
+			return true;
+		}
+
+		void AddPlateMaterialProfile(
+			FCarrierV2Stage3Config& Config,
+			const int32 PlateId,
+			const ECarrierV2MaterialClass MaterialClass,
+			const double OceanicAgeMa,
+			const FString& Provenance)
+		{
+			FCarrierV2Stage3PlateMaterialProfile Profile;
+			Profile.PlateId = PlateId;
+			Profile.MaterialClass = MaterialClass;
+			Profile.OceanicAgeMa = OceanicAgeMa;
+			Profile.Provenance = Provenance;
+			Config.PlateMaterialProfiles.Add(Profile);
+		}
+
+		FCarrierV2Stage3PlateMaterialProfile MakeDefaultStage3PlateProfile(const int32 PlateId)
+		{
+			FCarrierV2Stage3PlateMaterialProfile Profile;
+			Profile.PlateId = PlateId;
+			const int32 Bucket = ((PlateId % 4) + 4) % 4;
+			if (Bucket == 0)
+			{
+				Profile.MaterialClass = ECarrierV2MaterialClass::Oceanic;
+				Profile.OceanicAgeMa = 120.0;
+			}
+			else if (Bucket == 1)
+			{
+				Profile.MaterialClass = ECarrierV2MaterialClass::Oceanic;
+				Profile.OceanicAgeMa = 20.0;
+			}
+			else
+			{
+				Profile.MaterialClass = ECarrierV2MaterialClass::Continental;
+				Profile.OceanicAgeMa = 0.0;
+			}
+			Profile.Provenance = TEXT("v2_3_deterministic_plate_profile_lab_policy");
+			return Profile;
+		}
+
+		FCarrierV2Stage3PlateMaterialProfile Stage3ProfileForPlate(
+			const FCarrierV2Stage3Config& Config,
+			const int32 PlateId)
+		{
+			for (const FCarrierV2Stage3PlateMaterialProfile& Profile : Config.PlateMaterialProfiles)
+			{
+				if (Profile.PlateId == PlateId)
+				{
+					return Profile;
+				}
+			}
+			return MakeDefaultStage3PlateProfile(PlateId);
+		}
+
+		uint64 HashStage3Config(const FCarrierV2Stage3Config& Config)
+		{
+			uint64 Hash = HashStage2Config(Config.ContactConfig);
+			HashMixString(Hash, Config.FixtureId);
+			HashMixString(Hash, Config.FixtureName);
+			HashMixString(Hash, Config.ExpectedProcessClass);
+			HashMixString(Hash, Config.ProcessMutationPolicyId);
+			HashMixInt(Hash, Config.bRequireSubductionMark ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireOceanicAgePolarity ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireCollisionCandidate ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireProcessEvents ? 1 : 0);
+			HashMixInt(Hash, Config.bEnableSlabPull ? 1 : 0);
+			HashMixInt(Hash, Config.ExpectedMinimumSubductionEvents);
+			HashMixInt(Hash, Config.ExpectedMinimumSubductingTriangleMarks);
+			HashMixInt(Hash, Config.ExpectedMinimumCollisionCandidates);
+			HashMixInt(Hash, Config.ExpectedMinimumCollisionEvents);
+			HashMixInt(Hash, Config.ExpectedMinimumProcessEvents);
+			for (const FCarrierV2Stage3PlateMaterialProfile& Profile : Config.PlateMaterialProfiles)
+			{
+				HashMixInt(Hash, Profile.PlateId);
+				HashMixInt(Hash, static_cast<int32>(Profile.MaterialClass));
+				HashMixDouble(Hash, Profile.OceanicAgeMa);
+				HashMixString(Hash, Profile.Provenance);
+			}
+			return Hash;
+		}
+
+		uint64 HashStage3ProcessState(
+			const FCarrierV2Stage3Config& Config,
+			const FCarrierV2Stage3Metrics& Metrics,
+			const TArray<FCarrierV2ProcessEventRecord>& ProcessEvents,
+			const TArray<FCarrierV2TriangleProcessMarkRecord>& TriangleMarks)
+		{
+			uint64 Hash = HashStage3Config(Config);
+			HashMixString(Hash, Metrics.Stage2ProcessStateHash);
+			for (const FCarrierV2ProcessEventRecord& Event : ProcessEvents)
+			{
+				HashMixInt(Hash, Event.EventId);
+				HashMixInt(Hash, Event.SourceCandidateId);
+				HashMixInt(Hash, Event.SampleId);
+				HashMixString(Hash, Event.EventClass);
+				HashMixString(Hash, Event.ProcessClass);
+				HashMixInt(Hash, Event.SourcePlateId);
+				HashMixInt(Hash, Event.DestinationPlateId);
+				HashMixInt(Hash, Event.SourceLocalTriangleId);
+				HashMixInt(Hash, Event.DestinationLocalTriangleId);
+				HashMixInt(Hash, Event.SubductingPlateId);
+				HashMixInt(Hash, Event.OverridingPlateId);
+				HashMixInt(Hash, Event.SubductingLocalTriangleId);
+				HashMixInt(Hash, static_cast<int32>(Event.SourceMaterialClass));
+				HashMixInt(Hash, static_cast<int32>(Event.DestinationMaterialClass));
+				HashMixDouble(Hash, Event.SourceOceanicAgeMa);
+				HashMixDouble(Hash, Event.DestinationOceanicAgeMa);
+				HashMixInt(Hash, Event.bOlderOceanicSubducts ? 1 : 0);
+				HashMixInt(Hash, Event.bHasProvenance ? 1 : 0);
+				HashMixString(Hash, Event.Provenance);
+			}
+			HashMixInt(Hash, -23);
+			for (const FCarrierV2TriangleProcessMarkRecord& Mark : TriangleMarks)
+			{
+				HashMixInt(Hash, Mark.MarkId);
+				HashMixInt(Hash, Mark.EventId);
+				HashMixInt(Hash, Mark.SourceCandidateId);
+				HashMixInt(Hash, Mark.SampleId);
+				HashMixInt(Hash, Mark.PlateId);
+				HashMixInt(Hash, Mark.LocalTriangleId);
+				HashMixString(Hash, Mark.MarkClass);
+				HashMixString(Hash, Mark.Provenance);
+			}
+			return Hash;
+		}
+
+		uint64 HashStage3Metrics(const FCarrierV2Stage3Metrics& Metrics, const bool bIncludeReplayFields)
+		{
+			uint64 Hash = FnvOffset;
+			HashMixString(Hash, Metrics.ConfigHash);
+			HashMixString(Hash, Metrics.Stage2ProcessStateHash);
+			HashMixString(Hash, Metrics.ProcessStateHash);
+			HashMixInt(Hash, Metrics.ContactCandidateCount);
+			HashMixInt(Hash, Metrics.AcceptedConvergenceEvidenceCount);
+			HashMixInt(Hash, Metrics.ThirdPlateIntrusionCount);
+			HashMixInt(Hash, Metrics.ThirdPlatePassthroughCount);
+			HashMixInt(Hash, Metrics.ProcessEventCount);
+			HashMixInt(Hash, Metrics.ProcessEventWithProvenanceCount);
+			HashMixInt(Hash, Metrics.ProcessEventWithoutProvenanceCount);
+			HashMixInt(Hash, Metrics.SubductionEventCount);
+			HashMixInt(Hash, Metrics.OceanicAgePolarityDecisionCount);
+			HashMixInt(Hash, Metrics.OlderOceanicSubductingPassCount);
+			HashMixInt(Hash, Metrics.SubductingTriangleMarkCount);
+			HashMixInt(Hash, Metrics.CollisionCandidateCount);
+			HashMixInt(Hash, Metrics.CollisionEventCount);
+			HashMixInt(Hash, Metrics.TerraneDetachTriangleCount);
+			HashMixInt(Hash, Metrics.TerraneSutureTriangleCount);
+			HashMixInt(Hash, Metrics.MaterialDestroyedWithoutProcessCount);
+			HashMixInt(Hash, Metrics.MaterialCreatedWithoutProcessCount);
+			HashMixInt(Hash, Metrics.TopologyMutationWithoutEventCount);
+			HashMixInt(Hash, Metrics.MaterialMutationCount);
+			HashMixInt(Hash, Metrics.RemeshDuringProcessMutationCount);
+			HashMixInt(Hash, Metrics.TopologyRebuildDuringProcessMutationCount);
+			HashMixInt(Hash, Metrics.GapFillDuringProcessMutationCount);
+			HashMixInt(Hash, Metrics.DivergentGenerationDuringProcessMutationCount);
+			HashMixInt(Hash, Metrics.TerrainBeautyMutationCount);
+			HashMixInt(Hash, Metrics.OwnershipRepairDuringProcessMutationCount);
+			HashMixInt(Hash, Metrics.CentroidPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.RandomPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.NearestPrimaryResolutionCount);
+			HashMixDouble(Hash, Metrics.SlabPullAxisDeltaDeg);
+			HashMixInt(Hash, Metrics.bInheritedStage2Pass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bProcessEventProvenancePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bSubductionPolarityPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bCollisionCandidatePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bProcessEventExpectationPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bNoForbiddenMutationPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bSlabPullPass ? 1 : 0);
+			if (bIncludeReplayFields)
+			{
+				HashMixInt(Hash, Metrics.bReplayDeterministic ? 1 : 0);
+				HashMixString(Hash, Metrics.Verdict);
+			}
+			return Hash;
+		}
+
+		void CopyStage2MetricsToStage3(
+			const FCarrierV2Stage2Metrics& Source,
+			FCarrierV2Stage3Metrics& Target)
+		{
+			Target.ExpectedMotionClass = Source.ExpectedMotionClass;
+			Target.SourceStatus = Source.SourceStatus;
+			Target.ProjectionCandidatePolicyId = Source.ProjectionCandidatePolicyId;
+			Target.ContactPolicyId = Source.ContactPolicyId;
+			Target.SampleCount = Source.SampleCount;
+			Target.TriangleCount = Source.TriangleCount;
+			Target.PlateCount = Source.PlateCount;
+			Target.MotionStepCount = Source.MotionStepCount;
+			Target.DtMa = Source.DtMa;
+			Target.TotalMotionMa = Source.TotalMotionMa;
+			Target.PlanetRadiusKm = Source.PlanetRadiusKm;
+			Target.MotionToleranceKm = Source.MotionToleranceKm;
+			Target.UnitLengthTolerance = Source.UnitLengthTolerance;
+			Target.RayEpsilon = Source.RayEpsilon;
+			Target.Stage2ProcessStateHash = Source.ProcessStateHash;
+			Target.GlobalSampleCount = Source.GlobalSampleCount;
+			Target.GlobalTriangleCount = Source.GlobalTriangleCount;
+			Target.LocalPlateVertexCountSum = Source.LocalPlateVertexCountSum;
+			Target.LocalPlateTriangleCountSum = Source.LocalPlateTriangleCountSum;
+			Target.MotionVertexCount = Source.MotionVertexCount;
+			Target.AnalyticMotionMaxErrorKm = Source.AnalyticMotionMaxErrorKm;
+			Target.AnalyticMotionMeanErrorKm = Source.AnalyticMotionMeanErrorKm;
+			Target.UnitLengthMaxError = Source.UnitLengthMaxError;
+			Target.MaterialAttachmentErrorCount = Source.MaterialAttachmentErrorCount;
+			Target.RawMotionMissCount = Source.RawMotionMissCount;
+			Target.RawMotionOverlapCount = Source.RawMotionOverlapCount;
+			Target.DivergentCandidateCount = Source.DivergentCandidateCount;
+			Target.ConvergentCandidateCount = Source.ConvergentCandidateCount;
+			Target.ContactCandidateCount = Source.ContactCandidateCount;
+			Target.AcceptedConvergenceEvidenceCount = Source.AcceptedConvergenceEvidenceCount;
+			Target.ThirdPlateIntrusionCount = Source.ThirdPlateIntrusionCount;
+			Target.PolarityCandidateCount = Source.PolarityCandidateCount;
+			Target.MaterialMutationCount = Source.MaterialMutationCount;
+			Target.CentroidPrimaryResolutionCount = Source.CentroidPrimaryResolutionCount;
+			Target.RandomPrimaryResolutionCount = Source.RandomPrimaryResolutionCount;
+			Target.NearestPrimaryResolutionCount = Source.NearestPrimaryResolutionCount;
+			Target.ProjectionOwnerLabelEvidenceCount = Source.ProjectionOwnerLabelEvidenceCount;
+			Target.OverlapConsumedBeforeProcessStateCount = Source.OverlapConsumedBeforeProcessStateCount;
+			Target.bMotionOraclePass = Source.bMotionOraclePass;
+			Target.bUnitLengthPass = Source.bUnitLengthPass;
+			Target.bMaterialAttachmentPass = Source.bMaterialAttachmentPass;
+			Target.bProjectionExpectationPass = Source.bProjectionExpectationPass;
+			Target.bContactEvidencePass = Source.bContactEvidencePass;
+			Target.bInheritedStage2Pass = Source.bFixturePass && Source.bReplayDeterministic;
+			Target.BuildSubstrateMs = Source.BuildSubstrateMs;
+			Target.BuildPlateLocalMs = Source.BuildPlateLocalMs;
+			Target.MotionApplyMs = Source.MotionApplyMs;
+			Target.ProjectionKernelMs = Source.ProjectionKernelMs;
+			Target.ContactDetectionMs = Source.ContactDetectionMs;
+		}
+
+		void AddStage3TriangleMark(
+			FCarrierV2Stage3FixtureResult& Result,
+			const FCarrierV2ProcessEventRecord& Event,
+			const int32 PlateId,
+			const int32 LocalTriangleId,
+			const FString& MarkClass,
+			const FString& Provenance)
+		{
+			FCarrierV2TriangleProcessMarkRecord Mark;
+			Mark.MarkId = Result.TriangleMarks.Num();
+			Mark.EventId = Event.EventId;
+			Mark.SourceCandidateId = Event.SourceCandidateId;
+			Mark.SampleId = Event.SampleId;
+			Mark.PlateId = PlateId;
+			Mark.LocalTriangleId = LocalTriangleId;
+			Mark.MarkClass = MarkClass;
+			Mark.Provenance = Provenance;
+			Result.TriangleMarks.Add(Mark);
+		}
+
+		bool AddStage3TriangleMarkIfMissing(
+			FCarrierV2Stage3FixtureResult& Result,
+			const FCarrierV2ProcessEventRecord& Event,
+			const int32 PlateId,
+			const int32 LocalTriangleId,
+			const FString& MarkClass,
+			const FString& Provenance)
+		{
+			for (const FCarrierV2TriangleProcessMarkRecord& Mark : Result.TriangleMarks)
+			{
+				if (Mark.EventId == Event.EventId &&
+					Mark.PlateId == PlateId &&
+					Mark.LocalTriangleId == LocalTriangleId &&
+					Mark.MarkClass.Equals(MarkClass, ESearchCase::IgnoreCase))
+				{
+					return false;
+				}
+			}
+			AddStage3TriangleMark(Result, Event, PlateId, LocalTriangleId, MarkClass, Provenance);
+			return true;
+		}
+
+		int32 AddStage3CandidatePlateMarks(
+			FCarrierV2Stage3FixtureResult& Result,
+			const FCarrierV2ProcessEventRecord& Event,
+			const FCarrierV2ProcessCandidateRecord& Candidate,
+			const int32 PlateId,
+			const int32 FallbackLocalTriangleId,
+			const FString& MarkClass,
+			const FString& Provenance)
+		{
+			int32 AddedCount = 0;
+			if (Candidate.ContactHitPlateIds.Num() == Candidate.ContactHitLocalTriangleIds.Num())
+			{
+				for (int32 Index = 0; Index < Candidate.ContactHitPlateIds.Num(); ++Index)
+				{
+					if (Candidate.ContactHitPlateIds[Index] == PlateId &&
+						AddStage3TriangleMarkIfMissing(
+							Result,
+							Event,
+							PlateId,
+							Candidate.ContactHitLocalTriangleIds[Index],
+							MarkClass,
+							Provenance))
+					{
+						++AddedCount;
+					}
+				}
+			}
+
+			if (AddedCount == 0 && FallbackLocalTriangleId != INDEX_NONE)
+			{
+				AddedCount += AddStage3TriangleMarkIfMissing(
+					Result,
+					Event,
+					PlateId,
+					FallbackLocalTriangleId,
+					MarkClass,
+					Provenance)
+					? 1
+					: 0;
+			}
+			return AddedCount;
+		}
+
+		bool IsOceanic(const FCarrierV2Stage3PlateMaterialProfile& Profile)
+		{
+			return Profile.MaterialClass == ECarrierV2MaterialClass::Oceanic;
+		}
+
+		bool IsContinental(const FCarrierV2Stage3PlateMaterialProfile& Profile)
+		{
+			return Profile.MaterialClass == ECarrierV2MaterialClass::Continental;
+		}
+
+		void AddStage3SubductionEvent(
+			const FCarrierV2ProcessCandidateRecord& Candidate,
+			const FCarrierV2Stage3PlateMaterialProfile& A,
+			const FCarrierV2Stage3PlateMaterialProfile& B,
+			const int32 ALocalTriangleId,
+			const int32 BLocalTriangleId,
+			FCarrierV2Stage3FixtureResult& Result)
+		{
+			const bool bASubducts = IsOceanic(A) && (!IsOceanic(B) || A.OceanicAgeMa >= B.OceanicAgeMa);
+			const FCarrierV2Stage3PlateMaterialProfile& Subducting = bASubducts ? A : B;
+			const FCarrierV2Stage3PlateMaterialProfile& Overriding = bASubducts ? B : A;
+			const int32 SubductingLocalTriangleId = bASubducts ? ALocalTriangleId : BLocalTriangleId;
+			const bool bBothOceanic = IsOceanic(A) && IsOceanic(B);
+			const bool bOlderOceanicSubducts = bBothOceanic &&
+				((bASubducts && A.OceanicAgeMa >= B.OceanicAgeMa) || (!bASubducts && B.OceanicAgeMa >= A.OceanicAgeMa));
+
+			FCarrierV2ProcessEventRecord Event;
+			Event.EventId = Result.ProcessEvents.Num();
+			Event.SourceCandidateId = Candidate.CandidateId;
+			Event.SampleId = Candidate.SampleId;
+			Event.EventClass = bBothOceanic ? TEXT("ocean_ocean_subduction_mark") : TEXT("ocean_continent_subduction_mark");
+			Event.ProcessClass = bBothOceanic ? TEXT("ocean_ocean_age_polarity") : TEXT("mixed_oceanic_subduction");
+			Event.SourcePlateId = A.PlateId;
+			Event.DestinationPlateId = B.PlateId;
+			Event.SourceLocalTriangleId = ALocalTriangleId;
+			Event.DestinationLocalTriangleId = BLocalTriangleId;
+			Event.SubductingPlateId = Subducting.PlateId;
+			Event.OverridingPlateId = Overriding.PlateId;
+			Event.SubductingLocalTriangleId = SubductingLocalTriangleId;
+			Event.SourceMaterialClass = A.MaterialClass;
+			Event.DestinationMaterialClass = B.MaterialClass;
+			Event.SourceOceanicAgeMa = A.OceanicAgeMa;
+			Event.DestinationOceanicAgeMa = B.OceanicAgeMa;
+			Event.bOlderOceanicSubducts = bOlderOceanicSubducts;
+			Event.bHasProvenance = true;
+			Event.Provenance = TEXT("accepted_v2_2_contact_plus_plate_material_profile");
+			Result.ProcessEvents.Add(Event);
+			const int32 SubductingMarkCount = AddStage3CandidatePlateMarks(
+				Result,
+				Event,
+				Candidate,
+				Subducting.PlateId,
+				SubductingLocalTriangleId,
+				TEXT("subducting"),
+				Event.Provenance);
+
+			++Result.Metrics.ProcessEventCount;
+			++Result.Metrics.ProcessEventWithProvenanceCount;
+			++Result.Metrics.SubductionEventCount;
+			Result.Metrics.SubductingTriangleMarkCount += SubductingMarkCount;
+			if (bBothOceanic)
+			{
+				++Result.Metrics.OceanicAgePolarityDecisionCount;
+				if (bOlderOceanicSubducts)
+				{
+					++Result.Metrics.OlderOceanicSubductingPassCount;
+				}
+			}
+		}
+
+		void AddStage3CollisionEvent(
+			const FCarrierV2ProcessCandidateRecord& Candidate,
+			const FCarrierV2Stage3PlateMaterialProfile& A,
+			const FCarrierV2Stage3PlateMaterialProfile& B,
+			const int32 ALocalTriangleId,
+			const int32 BLocalTriangleId,
+			FCarrierV2Stage3FixtureResult& Result)
+		{
+			FCarrierV2ProcessEventRecord Event;
+			Event.EventId = Result.ProcessEvents.Num();
+			Event.SourceCandidateId = Candidate.CandidateId;
+			Event.SampleId = Candidate.SampleId;
+			Event.EventClass = TEXT("continental_collision_suture_candidate");
+			Event.ProcessClass = TEXT("continental_collision_candidate");
+			Event.SourcePlateId = A.PlateId;
+			Event.DestinationPlateId = B.PlateId;
+			Event.SourceLocalTriangleId = ALocalTriangleId;
+			Event.DestinationLocalTriangleId = BLocalTriangleId;
+			Event.SourceMaterialClass = A.MaterialClass;
+			Event.DestinationMaterialClass = B.MaterialClass;
+			Event.SourceOceanicAgeMa = A.OceanicAgeMa;
+			Event.DestinationOceanicAgeMa = B.OceanicAgeMa;
+			Event.bHasProvenance = true;
+			Event.Provenance = TEXT("accepted_v2_2_contact_plus_continental_plate_profiles");
+			Result.ProcessEvents.Add(Event);
+			const int32 DetachMarkCount = AddStage3CandidatePlateMarks(
+				Result,
+				Event,
+				Candidate,
+				A.PlateId,
+				ALocalTriangleId,
+				TEXT("colliding_terrane_candidate"),
+				Event.Provenance);
+			const int32 SutureMarkCount = AddStage3CandidatePlateMarks(
+				Result,
+				Event,
+				Candidate,
+				B.PlateId,
+				BLocalTriangleId,
+				TEXT("suture_candidate"),
+				Event.Provenance);
+
+			++Result.Metrics.ProcessEventCount;
+			++Result.Metrics.ProcessEventWithProvenanceCount;
+			++Result.Metrics.CollisionCandidateCount;
+			++Result.Metrics.CollisionEventCount;
+			Result.Metrics.TerraneDetachTriangleCount += DetachMarkCount;
+			Result.Metrics.TerraneSutureTriangleCount += SutureMarkCount;
+		}
+
+		void BuildStage3ProcessState(
+			const FCarrierV2Stage3Config& Config,
+			FCarrierV2Stage3FixtureResult& Result)
+		{
+			Result.PlateMaterialProfiles.Reset();
+			for (int32 PlateId = 0; PlateId < Result.Metrics.PlateCount; ++PlateId)
+			{
+				Result.PlateMaterialProfiles.Add(Stage3ProfileForPlate(Config, PlateId));
+			}
+
+			const double ProcessStart = FPlatformTime::Seconds();
+			for (const FCarrierV2ProcessCandidateRecord& Candidate : Result.Stage2Result.ProcessCandidates)
+			{
+				if (!Candidate.bAccepted || Candidate.PlateIds.Num() < 2 || Candidate.LocalTriangleIds.Num() < 2)
+				{
+					continue;
+				}
+				if (Candidate.PlateIds.Num() != 2)
+				{
+					++Result.Metrics.ThirdPlatePassthroughCount;
+					continue;
+				}
+
+				const FCarrierV2Stage3PlateMaterialProfile A = Stage3ProfileForPlate(Config, Candidate.PlateIds[0]);
+				const FCarrierV2Stage3PlateMaterialProfile B = Stage3ProfileForPlate(Config, Candidate.PlateIds[1]);
+				if (IsOceanic(A) || IsOceanic(B))
+				{
+					AddStage3SubductionEvent(Candidate, A, B, Candidate.LocalTriangleIds[0], Candidate.LocalTriangleIds[1], Result);
+				}
+				else if (IsContinental(A) && IsContinental(B))
+				{
+					AddStage3CollisionEvent(Candidate, A, B, Candidate.LocalTriangleIds[0], Candidate.LocalTriangleIds[1], Result);
+				}
+			}
+			Result.Metrics.ProcessMutationMs = (FPlatformTime::Seconds() - ProcessStart) * 1000.0;
+		}
+
+		void FinalizeStage3Verdict(const FCarrierV2Stage3Config& Config, FCarrierV2Stage3Metrics& Metrics)
+		{
+			Metrics.bProcessEventProvenancePass =
+				Metrics.ProcessEventCount == Metrics.ProcessEventWithProvenanceCount &&
+				Metrics.ProcessEventWithoutProvenanceCount == 0;
+			Metrics.bSubductionPolarityPass = !Config.bRequireSubductionMark ||
+				(Metrics.SubductionEventCount >= FMath::Max(1, Config.ExpectedMinimumSubductionEvents) &&
+					Metrics.SubductingTriangleMarkCount >= FMath::Max(1, Config.ExpectedMinimumSubductingTriangleMarks));
+			if (Config.bRequireOceanicAgePolarity)
+			{
+				Metrics.bSubductionPolarityPass =
+					Metrics.bSubductionPolarityPass &&
+					Metrics.OceanicAgePolarityDecisionCount >= FMath::Max(1, Config.ExpectedMinimumSubductionEvents) &&
+					Metrics.OlderOceanicSubductingPassCount == Metrics.OceanicAgePolarityDecisionCount;
+			}
+			Metrics.bCollisionCandidatePass = !Config.bRequireCollisionCandidate ||
+				(Metrics.CollisionCandidateCount >= FMath::Max(1, Config.ExpectedMinimumCollisionCandidates) &&
+					Metrics.CollisionEventCount >= FMath::Max(1, Config.ExpectedMinimumCollisionEvents));
+			Metrics.bProcessEventExpectationPass = !Config.bRequireProcessEvents ||
+				Metrics.ProcessEventCount >= FMath::Max(1, Config.ExpectedMinimumProcessEvents);
+			Metrics.bNoForbiddenMutationPass =
+				Metrics.MaterialDestroyedWithoutProcessCount == 0 &&
+				Metrics.MaterialCreatedWithoutProcessCount == 0 &&
+				Metrics.TopologyMutationWithoutEventCount == 0 &&
+				Metrics.MaterialMutationCount == 0 &&
+				Metrics.RemeshDuringProcessMutationCount == 0 &&
+				Metrics.TopologyRebuildDuringProcessMutationCount == 0 &&
+				Metrics.GapFillDuringProcessMutationCount == 0 &&
+				Metrics.DivergentGenerationDuringProcessMutationCount == 0 &&
+				Metrics.TerrainBeautyMutationCount == 0 &&
+				Metrics.OwnershipRepairDuringProcessMutationCount == 0 &&
+				Metrics.CentroidPrimaryResolutionCount == 0 &&
+				Metrics.RandomPrimaryResolutionCount == 0 &&
+				Metrics.NearestPrimaryResolutionCount == 0 &&
+				Metrics.ProjectionOwnerLabelEvidenceCount == 0 &&
+				Metrics.OverlapConsumedBeforeProcessStateCount == 0;
+			Metrics.bSlabPullPass = !Metrics.bSlabPullEnabled && FMath::IsNearlyZero(Metrics.SlabPullAxisDeltaDeg, 1.0e-12);
+
+			Metrics.bFixturePass =
+				Metrics.bInheritedStage2Pass &&
+				Metrics.bMotionOraclePass &&
+				Metrics.bUnitLengthPass &&
+				Metrics.bMaterialAttachmentPass &&
+				Metrics.bProjectionExpectationPass &&
+				Metrics.bContactEvidencePass &&
+				Metrics.bProcessEventProvenancePass &&
+				Metrics.bSubductionPolarityPass &&
+				Metrics.bCollisionCandidatePass &&
+				Metrics.bProcessEventExpectationPass &&
+				Metrics.bNoForbiddenMutationPass &&
+				Metrics.bSlabPullPass;
+			Metrics.bStageGatePass = Metrics.bFixturePass;
+
+			if (!Metrics.bInheritedStage2Pass)
+			{
+				Metrics.Verdict = TEXT("FAIL_INHERITED_V2_2_GATE");
+			}
+			else if (!Metrics.bSubductionPolarityPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_SUBDUCTION_POLARITY");
+			}
+			else if (!Metrics.bCollisionCandidatePass)
+			{
+				Metrics.Verdict = TEXT("FAIL_COLLISION_CANDIDATE");
+			}
+			else if (!Metrics.bProcessEventProvenancePass)
+			{
+				Metrics.Verdict = TEXT("FAIL_PROCESS_EVENT_PROVENANCE");
+			}
+			else if (!Metrics.bProcessEventExpectationPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_PROCESS_EVENT_EXPECTATION");
+			}
+			else if (!Metrics.bNoForbiddenMutationPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_FORBIDDEN_PROCESS_MUTATION");
+			}
+			else if (!Metrics.bSlabPullPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_SLAB_PULL_BYPASS");
+			}
+			else
+			{
+				Metrics.Verdict = TEXT("PASS_PROCESS_MUTATION_FIXTURE");
+			}
+		}
+
+		bool RunStage3FixtureOnce(const FCarrierV2Stage3Config& Config, FCarrierV2Stage3FixtureResult& OutResult)
+		{
+			OutResult = FCarrierV2Stage3FixtureResult();
+			OutResult.Config = Config;
+			OutResult.Metrics.RunId = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+			OutResult.Metrics.FixtureId = Config.FixtureId;
+			OutResult.Metrics.FixtureName = Config.FixtureName;
+			OutResult.Metrics.FixtureKind = FixtureKindName(Config.ContactConfig.MotionConfig.BaseConfig.FixtureKind);
+			OutResult.Metrics.ExpectedProcessClass = Config.ExpectedProcessClass;
+			OutResult.Metrics.ProcessMutationPolicyId = Config.ProcessMutationPolicyId;
+			OutResult.Metrics.ConfigHash = HashToString(HashStage3Config(Config));
+			OutResult.Metrics.bSlabPullEnabled = Config.bEnableSlabPull;
+
+			const double TotalStart = FPlatformTime::Seconds();
+			FCarrierV2Stage2::RunFixtureWithReplay(Config.ContactConfig, OutResult.Stage2Result);
+			if (!OutResult.Stage2Result.bCompleted)
+			{
+				OutResult.Error = OutResult.Stage2Result.Error;
+				OutResult.Metrics.Verdict = TEXT("FAIL_INHERITED_V2_2_RUN");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+
+			CopyStage2MetricsToStage3(OutResult.Stage2Result.Metrics, OutResult.Metrics);
+			BuildStage3ProcessState(Config, OutResult);
+			OutResult.Metrics.ProcessStateHash = HashToString(HashStage3ProcessState(
+				Config,
+				OutResult.Metrics,
+				OutResult.ProcessEvents,
+				OutResult.TriangleMarks));
+			FinalizeStage3Verdict(Config, OutResult.Metrics);
+			OutResult.Metrics.MetricsMs = FMath::Max(0.0, OutResult.Stage2Result.Metrics.MetricsMs);
+			OutResult.Metrics.MetricsHash = HashToString(HashStage3Metrics(OutResult.Metrics, true));
+			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			OutResult.bCompleted = true;
+			return true;
+		}
+
+		struct FCarrierV2Stage4MarkFlags
+		{
+			bool bSubducting = false;
+			bool bColliding = false;
+		};
+
+		struct FCarrierV2Stage4TreeTriangleRef
+		{
+			int32 PlateId = INDEX_NONE;
+			int32 LocalTriangleId = INDEX_NONE;
+			int32 SourceTriangleId = INDEX_NONE;
+		};
+
+		uint64 Stage4TriangleKey(const int32 PlateId, const int32 LocalTriangleId)
+		{
+			return (static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) |
+				static_cast<uint64>(static_cast<uint32>(LocalTriangleId));
+		}
+
+		bool IsStage4CollisionMark(const FString& MarkClass)
+		{
+			return MarkClass.Contains(TEXT("collid"), ESearchCase::IgnoreCase) ||
+				MarkClass.Contains(TEXT("collision"), ESearchCase::IgnoreCase) ||
+				MarkClass.Contains(TEXT("suture"), ESearchCase::IgnoreCase);
+		}
+
+		bool IsStage4BoundaryBarycentric(const FVector3d& Barycentric, const double Epsilon)
+		{
+			return FMath::Abs(Barycentric.X) <= Epsilon ||
+				FMath::Abs(Barycentric.Y) <= Epsilon ||
+				FMath::Abs(Barycentric.Z) <= Epsilon ||
+				FMath::Abs(1.0 - Barycentric.X) <= Epsilon ||
+				FMath::Abs(1.0 - Barycentric.Y) <= Epsilon ||
+				FMath::Abs(1.0 - Barycentric.Z) <= Epsilon;
+		}
+
+		void BuildStage4MarkLookup(
+			const TArray<FCarrierV2TriangleProcessMarkRecord>& TriangleMarks,
+			TMap<uint64, FCarrierV2Stage4MarkFlags>& OutLookup)
+		{
+			OutLookup.Reset();
+			for (const FCarrierV2TriangleProcessMarkRecord& Mark : TriangleMarks)
+			{
+				if (Mark.PlateId == INDEX_NONE || Mark.LocalTriangleId == INDEX_NONE)
+				{
+					continue;
+				}
+				FCarrierV2Stage4MarkFlags& Flags = OutLookup.FindOrAdd(Stage4TriangleKey(Mark.PlateId, Mark.LocalTriangleId));
+				if (Mark.MarkClass.Equals(TEXT("subducting"), ESearchCase::IgnoreCase))
+				{
+					Flags.bSubducting = true;
+				}
+				if (IsStage4CollisionMark(Mark.MarkClass))
+				{
+					Flags.bColliding = true;
+				}
+			}
+		}
+
+		void CountStage4PretreatedPlates(
+			const FCarrierV2BuildState& State,
+			const TMap<uint64, FCarrierV2Stage4MarkFlags>& MarkLookup,
+			FCarrierV2Stage4Metrics& Metrics)
+		{
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				bool bHasNonSubductingTriangle = false;
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					const FCarrierV2Stage4MarkFlags* Flags = MarkLookup.Find(Stage4TriangleKey(Plate.PlateId, Triangle.LocalTriangleId));
+					if (Flags == nullptr || !Flags->bSubducting)
+					{
+						bHasNonSubductingTriangle = true;
+						break;
+					}
+				}
+				if (bHasNonSubductingTriangle)
+				{
+					++Metrics.PretreatedPlateCount;
+				}
+				else
+				{
+					++Metrics.FullySubductedPlateDestroyedCount;
+				}
+			}
+		}
+
+		bool BuildStage4AabbMesh(
+			const FCarrierV2BuildState& State,
+			UE::Geometry::FDynamicMesh3& Mesh,
+			TMap<int32, FCarrierV2Stage4TreeTriangleRef>& OutTriangleRefs,
+			FCarrierV2Stage4Metrics& Metrics,
+			FString& OutError)
+		{
+			Mesh = UE::Geometry::FDynamicMesh3();
+			OutTriangleRefs.Reset();
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					if (!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[0]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[1]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[2]))
+					{
+						OutError = FString::Printf(
+							TEXT("Stage4 AABB mesh build found invalid local triangle %d on plate %d."),
+							Triangle.LocalTriangleId,
+							Plate.PlateId);
+						return false;
+					}
+
+					const int32 A = Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[0]].UnitPosition);
+					const int32 B = Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[1]].UnitPosition);
+					const int32 C = Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[2]].UnitPosition);
+					const int32 TreeTriangleId = Mesh.AppendTriangle(A, B, C, Plate.PlateId);
+					if (TreeTriangleId < 0)
+					{
+						OutError = FString::Printf(
+							TEXT("Stage4 AABB mesh append failed for plate %d local triangle %d with result %d."),
+							Plate.PlateId,
+							Triangle.LocalTriangleId,
+							TreeTriangleId);
+						return false;
+					}
+
+					FCarrierV2Stage4TreeTriangleRef Ref;
+					Ref.PlateId = Plate.PlateId;
+					Ref.LocalTriangleId = Triangle.LocalTriangleId;
+					Ref.SourceTriangleId = Triangle.SourceTriangleId;
+					OutTriangleRefs.Add(TreeTriangleId, Ref);
+					++Metrics.AabbMeshTriangleCount;
+				}
+			}
+			return Metrics.AabbMeshTriangleCount > 0;
+		}
+
+		uint64 HashStage4Config(const FCarrierV2Stage4Config& Config)
+		{
+			uint64 Hash = HashStage3Config(Config.ProcessConfig);
+			HashMixString(Hash, Config.FixtureId);
+			HashMixString(Hash, Config.FixtureName);
+			HashMixString(Hash, Config.ExpectedRemeshClass);
+			HashMixString(Hash, Config.RemeshSamplingPolicyId);
+			HashMixString(Hash, Config.RemeshTriggerReason);
+			HashMixInt(Hash, Config.bRequireFilteredSubductingHit ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireFilteredCollidingHit ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireValidHitAfterFilter ? 1 : 0);
+			HashMixInt(Hash, Config.bAllowDeferredGapFill ? 1 : 0);
+			HashMixInt(Hash, Config.ExpectedMinimumFilteredSubductingHits);
+			HashMixInt(Hash, Config.ExpectedMinimumFilteredCollidingHits);
+			HashMixInt(Hash, Config.ExpectedMinimumValidHits);
+			return Hash;
+		}
+
+		uint64 HashStage4SamplingRecords(
+			const FCarrierV2Stage4Config& Config,
+			const FCarrierV2Stage4Metrics& Metrics,
+			const TArray<FCarrierV2RemeshSampleRecord>& SampleRecords)
+		{
+			uint64 Hash = HashStage4Config(Config);
+			HashMixString(Hash, Metrics.Stage3ProcessStateHash);
+			HashMixString(Hash, Metrics.RemeshInputHash);
+			for (const FCarrierV2RemeshSampleRecord& Record : SampleRecords)
+			{
+				HashMixInt(Hash, Record.SampleId);
+				HashMixInt(Hash, Record.RawHitCount);
+				HashMixInt(Hash, Record.FilteredSubductingHitCount);
+				HashMixInt(Hash, Record.FilteredCollidingHitCount);
+				HashMixInt(Hash, Record.ValidHitCount);
+				HashMixInt(Hash, Record.SelectedPlateId);
+				HashMixInt(Hash, Record.SelectedLocalTriangleId);
+				HashMixInt(Hash, Record.SelectedSourceTriangleId);
+				HashMixDouble(Hash, Record.SelectedContinentalFraction);
+				HashMixInt(Hash, Record.bZeroValidHit ? 1 : 0);
+				HashMixInt(Hash, Record.bPostFilterUnresolvedMultihit ? 1 : 0);
+				HashMixInt(Hash, Record.bSelectedFilteredHit ? 1 : 0);
+				HashMixString(Hash, Record.SelectionProvenance);
+			}
+			return Hash;
+		}
+
+		uint64 HashStage4Metrics(const FCarrierV2Stage4Metrics& Metrics, const bool bIncludeReplayFields)
+		{
+			uint64 Hash = FnvOffset;
+			HashMixString(Hash, Metrics.ConfigHash);
+			HashMixString(Hash, Metrics.Stage3ProcessStateHash);
+			HashMixString(Hash, Metrics.RemeshInputHash);
+			HashMixString(Hash, Metrics.GlobalSamplingHash);
+			HashMixInt(Hash, Metrics.GlobalSampleCount);
+			HashMixInt(Hash, Metrics.GlobalTriangleCount);
+			HashMixInt(Hash, Metrics.LocalPlateVertexCountSum);
+			HashMixInt(Hash, Metrics.LocalPlateTriangleCountSum);
+			HashMixInt(Hash, Metrics.PretreatedPlateCount);
+			HashMixInt(Hash, Metrics.FullySubductedPlateDestroyedCount);
+			HashMixInt(Hash, Metrics.AabbMeshTriangleCount);
+			HashMixInt(Hash, Metrics.AabbRayQueryCount);
+			HashMixInt(Hash, Metrics.RawHitCountTotal);
+			HashMixInt(Hash, Metrics.FilteredSubductingHitCount);
+			HashMixInt(Hash, Metrics.FilteredCollidingHitCount);
+			HashMixInt(Hash, Metrics.ValidHitAfterFilterCount);
+			HashMixInt(Hash, Metrics.ZeroValidHitCount);
+			HashMixInt(Hash, Metrics.GapFillDeferredCount);
+			HashMixInt(Hash, Metrics.PostFilterUnresolvedMultihitCount);
+			HashMixInt(Hash, Metrics.PostFilterBoundaryOnlyMultihitCount);
+			HashMixInt(Hash, Metrics.BoundaryDegenerateHitCount);
+			HashMixInt(Hash, Metrics.MaterialInterpolationCount);
+			HashMixInt(Hash, Metrics.SelectedFilteredHitCount);
+			HashMixInt(Hash, Metrics.PriorOwnerFallbackCount);
+			HashMixInt(Hash, Metrics.CentroidPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.RandomPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.NearestPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.OwnershipRepairDuringRemeshCount);
+			HashMixInt(Hash, Metrics.RetentionHysteresisAnchorCount);
+			HashMixInt(Hash, Metrics.GeneratedOceanicCount);
+			HashMixInt(Hash, Metrics.Q1Q2DeferredCount);
+			HashMixInt(Hash, Metrics.Q1Q2DiscreteApproxCount);
+			HashMixInt(Hash, Metrics.Q1Q2PriorOwnerLookupCount);
+			HashMixInt(Hash, Metrics.TopologyRebuildDuringSamplingCount);
+			HashMixInt(Hash, Metrics.ProcessStateResetCount);
+			HashMixInt(Hash, Metrics.TerrainBeautyMutationCount);
+			HashMixInt(Hash, Metrics.MaterialCreatedWithoutGapFillCount);
+			HashMixInt(Hash, Metrics.MaterialDestroyedWithoutProcessCount);
+			HashMixInt(Hash, Metrics.bInheritedStage3Pass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bSourceFilterPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bValidSelectionPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bNoForbiddenFallbackPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bDeferredGapFillPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bNoPrematureTopologyPass ? 1 : 0);
+			if (bIncludeReplayFields)
+			{
+				HashMixString(Hash, Metrics.ReplayStage3ProcessStateHash);
+				HashMixString(Hash, Metrics.ReplayGlobalSamplingHash);
+				HashMixString(Hash, Metrics.ReplayMetricsHash);
+				HashMixInt(Hash, Metrics.bReplayDeterministic ? 1 : 0);
+				HashMixString(Hash, Metrics.Verdict);
+			}
+			return Hash;
+		}
+
+		void SampleStage4GlobalTds(
+			const FCarrierV2Stage4Config& Config,
+			const FCarrierV2BuildState& State,
+			const TMap<uint64, FCarrierV2Stage4MarkFlags>& MarkLookup,
+			UE::Geometry::FDynamicMeshAABBTree3& Tree,
+			const TMap<int32, FCarrierV2Stage4TreeTriangleRef>& TreeTriangleRefs,
+			FCarrierV2Stage4FixtureResult& Result)
+		{
+			const double SamplingStart = FPlatformTime::Seconds();
+			Result.SampleRecords.Reset(State.Samples.Num());
+			for (const FCarrierV2SubstrateSample& Sample : State.Samples)
+			{
+				FCarrierV2RemeshSampleRecord Record;
+				Record.SampleId = Sample.SampleId;
+
+				TArray<MeshIntersection::FHitIntersectionResult> RawHits;
+				const FRay3d Ray(FVector3d::ZeroVector, Sample.UnitPosition);
+				UE::Geometry::IMeshSpatial::FQueryOptions QueryOptions;
+				QueryOptions.MaxDistance = 2.0;
+				++Result.Metrics.AabbRayQueryCount;
+				Tree.FindAllHitTriangles(Ray, RawHits, QueryOptions);
+
+				Record.RawHitCount = RawHits.Num();
+				Result.Metrics.RawHitCountTotal += RawHits.Num();
+
+				TArray<const MeshIntersection::FHitIntersectionResult*, TInlineAllocator<16>> ValidHits;
+				TArray<FCarrierV2Stage4TreeTriangleRef, TInlineAllocator<16>> ValidRefs;
+				bool bAllValidBoundary = true;
+				for (const MeshIntersection::FHitIntersectionResult& Hit : RawHits)
+				{
+					const FCarrierV2Stage4TreeTriangleRef* Ref = TreeTriangleRefs.Find(Hit.TriangleId);
+					if (Ref == nullptr)
+					{
+						continue;
+					}
+
+					const FCarrierV2Stage4MarkFlags* Flags = MarkLookup.Find(Stage4TriangleKey(Ref->PlateId, Ref->LocalTriangleId));
+					if (Flags != nullptr && Flags->bSubducting)
+					{
+						++Record.FilteredSubductingHitCount;
+						++Result.Metrics.FilteredSubductingHitCount;
+						continue;
+					}
+					if (Flags != nullptr && Flags->bColliding)
+					{
+						++Record.FilteredCollidingHitCount;
+						++Result.Metrics.FilteredCollidingHitCount;
+						continue;
+					}
+
+					const bool bBoundary = IsStage4BoundaryBarycentric(Hit.BaryCoords, Config.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.RayEpsilon);
+					bAllValidBoundary = bAllValidBoundary && bBoundary;
+					if (bBoundary)
+					{
+						++Result.Metrics.BoundaryDegenerateHitCount;
+					}
+					ValidHits.Add(&Hit);
+					ValidRefs.Add(*Ref);
+				}
+
+				Record.ValidHitCount = ValidHits.Num();
+				Result.Metrics.ValidHitAfterFilterCount += ValidHits.Num();
+				if (ValidHits.IsEmpty())
+				{
+					Record.bZeroValidHit = true;
+					Record.SelectionProvenance = TEXT("deferred_q1q2_gap_fill");
+					++Result.Metrics.ZeroValidHitCount;
+					++Result.Metrics.GapFillDeferredCount;
+					++Result.Metrics.Q1Q2DeferredCount;
+					Result.SampleRecords.Add(Record);
+					continue;
+				}
+
+				if (ValidHits.Num() > 1)
+				{
+					if (bAllValidBoundary)
+					{
+						++Result.Metrics.PostFilterBoundaryOnlyMultihitCount;
+					}
+					else
+					{
+						++Result.Metrics.PostFilterUnresolvedMultihitCount;
+						Record.bPostFilterUnresolvedMultihit = true;
+						Record.SelectionProvenance = TEXT("unresolved_post_filter_multihit");
+						Result.SampleRecords.Add(Record);
+						continue;
+					}
+				}
+
+				const MeshIntersection::FHitIntersectionResult* SelectedHit = ValidHits[0];
+				const FCarrierV2Stage4TreeTriangleRef& SelectedRef = ValidRefs[0];
+				Record.SelectedPlateId = SelectedRef.PlateId;
+				Record.SelectedLocalTriangleId = SelectedRef.LocalTriangleId;
+				Record.SelectedSourceTriangleId = SelectedRef.SourceTriangleId;
+				Record.SelectionProvenance = ValidHits.Num() == 1
+					? TEXT("single_valid_post_filter_intersection")
+					: TEXT("boundary_degenerate_valid_intersection");
+
+				const FCarrierV2Stage4MarkFlags* SelectedFlags = MarkLookup.Find(Stage4TriangleKey(SelectedRef.PlateId, SelectedRef.LocalTriangleId));
+				Record.bSelectedFilteredHit =
+					SelectedFlags != nullptr &&
+					(SelectedFlags->bSubducting || SelectedFlags->bColliding);
+				if (Record.bSelectedFilteredHit)
+				{
+					++Result.Metrics.SelectedFilteredHitCount;
+				}
+
+				if (State.Plates.IsValidIndex(SelectedRef.PlateId))
+				{
+					const FCarrierV2Plate& Plate = State.Plates[SelectedRef.PlateId];
+					if (Plate.LocalTriangles.IsValidIndex(SelectedRef.LocalTriangleId))
+					{
+						Record.SelectedContinentalFraction = InterpolateContinentalFraction(
+							Plate,
+							Plate.LocalTriangles[SelectedRef.LocalTriangleId],
+							SelectedHit->BaryCoords);
+						++Result.Metrics.MaterialInterpolationCount;
+					}
+				}
+				Result.SampleRecords.Add(Record);
+			}
+			Result.Metrics.GlobalSamplingMs = (FPlatformTime::Seconds() - SamplingStart) * 1000.0;
+		}
+
+		void FinalizeStage4Verdict(const FCarrierV2Stage4Config& Config, FCarrierV2Stage4Metrics& Metrics)
+		{
+			Metrics.bSourceFilterPass =
+				(!Config.bRequireFilteredSubductingHit ||
+					Metrics.FilteredSubductingHitCount >= FMath::Max(1, Config.ExpectedMinimumFilteredSubductingHits)) &&
+				(!Config.bRequireFilteredCollidingHit ||
+					Metrics.FilteredCollidingHitCount >= FMath::Max(1, Config.ExpectedMinimumFilteredCollidingHits)) &&
+				Metrics.SelectedFilteredHitCount == 0;
+
+			Metrics.bValidSelectionPass =
+				(!Config.bRequireValidHitAfterFilter ||
+					Metrics.ValidHitAfterFilterCount >= FMath::Max(1, Config.ExpectedMinimumValidHits)) &&
+				Metrics.PostFilterUnresolvedMultihitCount == 0;
+
+			Metrics.bNoForbiddenFallbackPass =
+				Metrics.PriorOwnerFallbackCount == 0 &&
+				Metrics.CentroidPrimaryResolutionCount == 0 &&
+				Metrics.RandomPrimaryResolutionCount == 0 &&
+				Metrics.NearestPrimaryResolutionCount == 0 &&
+				Metrics.OwnershipRepairDuringRemeshCount == 0 &&
+				Metrics.RetentionHysteresisAnchorCount == 0 &&
+				Metrics.Q1Q2DiscreteApproxCount == 0 &&
+				Metrics.Q1Q2PriorOwnerLookupCount == 0 &&
+				Metrics.MaterialCreatedWithoutGapFillCount == 0 &&
+				Metrics.MaterialDestroyedWithoutProcessCount == 0 &&
+				Metrics.TerrainBeautyMutationCount == 0;
+
+			Metrics.bDeferredGapFillPass = Config.bAllowDeferredGapFill
+				? Metrics.GapFillDeferredCount == Metrics.ZeroValidHitCount && Metrics.GeneratedOceanicCount == 0
+				: Metrics.ZeroValidHitCount == 0;
+
+			Metrics.bNoPrematureTopologyPass =
+				Metrics.TopologyRebuildDuringSamplingCount == 0 &&
+				Metrics.ProcessStateResetCount == 0;
+
+			Metrics.bFixturePass =
+				Metrics.bInheritedStage3Pass &&
+				Metrics.bSourceFilterPass &&
+				Metrics.bValidSelectionPass &&
+				Metrics.bNoForbiddenFallbackPass &&
+				Metrics.bDeferredGapFillPass &&
+				Metrics.bNoPrematureTopologyPass;
+			Metrics.bStageGatePass = Metrics.bFixturePass;
+
+			if (!Metrics.bInheritedStage3Pass)
+			{
+				Metrics.Verdict = TEXT("FAIL_INHERITED_V2_3_GATE");
+			}
+			else if (!Metrics.bSourceFilterPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_FILTERED_MARK_GATE");
+			}
+			else if (!Metrics.bValidSelectionPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_POST_FILTER_SELECTION_GATE");
+			}
+			else if (!Metrics.bNoForbiddenFallbackPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_FORBIDDEN_REPAIR_OR_RESOLVER");
+			}
+			else if (!Metrics.bDeferredGapFillPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_DEFERRED_GAP_FILL_LEDGER");
+			}
+			else if (!Metrics.bNoPrematureTopologyPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_PREMATURE_TOPOLOGY_OR_RESET");
+			}
+			else if (Metrics.ZeroValidHitCount > 0)
+			{
+				Metrics.Verdict = TEXT("PASS_FILTERED_GLOBAL_SAMPLING_Q1Q2_DEFERRED");
+			}
+			else
+			{
+				Metrics.Verdict = TEXT("PASS_FILTERED_GLOBAL_SAMPLING");
+			}
+		}
+
+		bool RunStage4FixtureOnce(const FCarrierV2Stage4Config& Config, FCarrierV2Stage4FixtureResult& OutResult)
+		{
+			OutResult = FCarrierV2Stage4FixtureResult();
+			OutResult.Config = Config;
+			OutResult.Metrics.RunId = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+			OutResult.Metrics.FixtureId = Config.FixtureId;
+			OutResult.Metrics.FixtureName = Config.FixtureName;
+			OutResult.Metrics.FixtureKind = FixtureKindName(Config.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.FixtureKind);
+			OutResult.Metrics.ExpectedRemeshClass = Config.ExpectedRemeshClass;
+			OutResult.Metrics.SourceStatus = Config.ProcessConfig.ContactConfig.MotionConfig.SourceStatus;
+			OutResult.Metrics.RemeshSamplingPolicyId = Config.RemeshSamplingPolicyId;
+			OutResult.Metrics.RemeshTriggerReason = Config.RemeshTriggerReason;
+			OutResult.Metrics.SampleCount = Config.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.SampleCount;
+			OutResult.Metrics.PlateCount = Config.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.PlateCount;
+			OutResult.Metrics.RayEpsilon = Config.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.RayEpsilon;
+			OutResult.Metrics.ConfigHash = HashToString(HashStage4Config(Config));
+
+			const double TotalStart = FPlatformTime::Seconds();
+			const double Stage3Start = FPlatformTime::Seconds();
+			FCarrierV2Stage3::RunFixtureWithReplay(Config.ProcessConfig, OutResult.Stage3Result);
+			OutResult.Metrics.Stage3Ms = (FPlatformTime::Seconds() - Stage3Start) * 1000.0;
+			OutResult.Metrics.Stage3ProcessStateHash = OutResult.Stage3Result.Metrics.ProcessStateHash;
+			OutResult.Metrics.bInheritedStage3Pass =
+				OutResult.Stage3Result.bCompleted &&
+				OutResult.Stage3Result.Metrics.bFixturePass &&
+				OutResult.Stage3Result.Metrics.bReplayDeterministic;
+			if (!OutResult.Stage3Result.bCompleted)
+			{
+				OutResult.Error = OutResult.Stage3Result.Error;
+				OutResult.Metrics.Verdict = TEXT("FAIL_INHERITED_V2_3_RUN");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+
+			FCarrierV2BuildState State;
+			FCarrierV2Stage0Metrics BuildMetrics;
+			if (!BuildStateForConfig(Config.ProcessConfig.ContactConfig.MotionConfig.BaseConfig, State, BuildMetrics, OutResult.Error))
+			{
+				OutResult.Metrics.Verdict = TEXT("FAIL_BUILD");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+			OutResult.Metrics.BuildSubstrateMs = BuildMetrics.BuildSubstrateMs;
+			OutResult.Metrics.BuildPlateLocalMs = BuildMetrics.BuildPlateLocalMs;
+			OutResult.Metrics.GlobalSampleCount = State.Samples.Num();
+			OutResult.Metrics.GlobalTriangleCount = State.Triangles.Num();
+			OutResult.Metrics.TriangleCount = State.Triangles.Num();
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				OutResult.Metrics.LocalPlateVertexCountSum += Plate.LocalVertices.Num();
+				OutResult.Metrics.LocalPlateTriangleCountSum += Plate.LocalTriangles.Num();
+			}
+
+			FCarrierV2Stage1Metrics MotionMetrics;
+			ApplyStage1MotionAndMeasure(Config.ProcessConfig.ContactConfig.MotionConfig, State, MotionMetrics);
+			OutResult.Metrics.MotionApplyMs = MotionMetrics.MotionApplyMs;
+			OutResult.Metrics.RemeshInputHash = HashToString(HashStage1Authority(State, Config.ProcessConfig.ContactConfig.MotionConfig));
+
+			TMap<uint64, FCarrierV2Stage4MarkFlags> MarkLookup;
+			BuildStage4MarkLookup(OutResult.Stage3Result.TriangleMarks, MarkLookup);
+			CountStage4PretreatedPlates(State, MarkLookup, OutResult.Metrics);
+
+			UE::Geometry::FDynamicMesh3 Mesh;
+			TMap<int32, FCarrierV2Stage4TreeTriangleRef> TreeTriangleRefs;
+			const double AabbStart = FPlatformTime::Seconds();
+			if (!BuildStage4AabbMesh(State, Mesh, TreeTriangleRefs, OutResult.Metrics, OutResult.Error))
+			{
+				OutResult.Metrics.Verdict = TEXT("FAIL_AABB_BUILD");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+			UE::Geometry::FDynamicMeshAABBTree3 Tree(&Mesh, true);
+			OutResult.Metrics.AabbBuildMs = (FPlatformTime::Seconds() - AabbStart) * 1000.0;
+
+			const double MetricsStart = FPlatformTime::Seconds();
+			SampleStage4GlobalTds(Config, State, MarkLookup, Tree, TreeTriangleRefs, OutResult);
+			OutResult.Metrics.GlobalSamplingHash = HashToString(HashStage4SamplingRecords(Config, OutResult.Metrics, OutResult.SampleRecords));
+			FinalizeStage4Verdict(Config, OutResult.Metrics);
+			OutResult.Metrics.MetricsMs = (FPlatformTime::Seconds() - MetricsStart) * 1000.0 - OutResult.Metrics.GlobalSamplingMs;
+			if (OutResult.Metrics.MetricsMs < 0.0)
+			{
+				OutResult.Metrics.MetricsMs = 0.0;
+			}
+			OutResult.Metrics.MetricsHash = HashToString(HashStage4Metrics(OutResult.Metrics, true));
+			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			OutResult.bCompleted = true;
+			return true;
+		}
+
+		struct FCarrierV2Stage5TreeTriangleRef
+		{
+			int32 PlateId = INDEX_NONE;
+			int32 LocalTriangleId = INDEX_NONE;
+			int32 SourceTriangleId = INDEX_NONE;
+		};
+
+		struct FCarrierV2Stage5BoundaryEdge
+		{
+			int32 PlateId = INDEX_NONE;
+			int32 LocalTriangleId = INDEX_NONE;
+			int32 SourceTriangleId = INDEX_NONE;
+			int32 LocalVertexA = INDEX_NONE;
+			int32 LocalVertexB = INDEX_NONE;
+			int32 SourceSampleA = INDEX_NONE;
+			int32 SourceSampleB = INDEX_NONE;
+			FVector3d A = FVector3d::ZeroVector;
+			FVector3d B = FVector3d::ZeroVector;
+			FCarrierV2MaterialRecord MaterialA;
+			FCarrierV2MaterialRecord MaterialB;
+		};
+
+		struct FCarrierV2Stage5EdgeAccumulator
+		{
+			int32 Count = 0;
+			FCarrierV2Stage5BoundaryEdge Edge;
+		};
+
+		struct FCarrierV2Stage5BoundaryCandidate
+		{
+			bool bValid = false;
+			bool bClippedToEndpoint = false;
+			int32 PlateId = INDEX_NONE;
+			int32 LocalTriangleId = INDEX_NONE;
+			int32 SourceTriangleId = INDEX_NONE;
+			double DistanceRad = MAX_dbl;
+			double EdgeT = 0.0;
+			double ContinentalFraction = 0.0;
+			FVector3d Point = FVector3d::ZeroVector;
+		};
+
+		double ClampUnitDot(const double Dot)
+		{
+			return FMath::Clamp(Dot, -1.0, 1.0);
+		}
+
+		double GeodesicDistanceRad(const FVector3d& A, const FVector3d& B)
+		{
+			return FMath::Acos(ClampUnitDot(FVector3d::DotProduct(A.GetSafeNormal(), B.GetSafeNormal())));
+		}
+
+		FCarrierV2MaterialRecord MakeStage5Material(const double ContinentalFraction, const FString& Provenance)
+		{
+			FCarrierV2MaterialRecord Material;
+			Material.ContinentalFraction = FMath::Clamp(ContinentalFraction, 0.0, 1.0);
+			if (Material.ContinentalFraction <= 1.0e-9)
+			{
+				Material.MaterialClass = ECarrierV2MaterialClass::Oceanic;
+			}
+			else if (Material.ContinentalFraction >= 1.0 - 1.0e-9)
+			{
+				Material.MaterialClass = ECarrierV2MaterialClass::Continental;
+			}
+			else
+			{
+				Material.MaterialClass = ECarrierV2MaterialClass::Mixed;
+			}
+			Material.Provenance = Provenance;
+			return Material;
+		}
+
+		uint64 Stage5EdgeKey(const int32 PlateId, const int32 A, const int32 B)
+		{
+			const int32 MinVertex = FMath::Min(A, B);
+			const int32 MaxVertex = FMath::Max(A, B);
+			uint64 Hash = FnvOffset;
+			HashMixInt(Hash, PlateId);
+			HashMixInt(Hash, MinVertex);
+			HashMixInt(Hash, MaxVertex);
+			return Hash;
+		}
+
+		FVector3d ClosestPointOnSphericalArc(
+			const FVector3d& P,
+			const FVector3d& A,
+			const FVector3d& B,
+			const double Epsilon,
+			bool& bOutClippedToEndpoint,
+			double& OutT)
+		{
+			bOutClippedToEndpoint = false;
+			OutT = 0.0;
+			const FVector3d UnitA = A.GetSafeNormal();
+			const FVector3d UnitB = B.GetSafeNormal();
+			const FVector3d UnitP = P.GetSafeNormal();
+			const double EdgeAngle = GeodesicDistanceRad(UnitA, UnitB);
+			if (EdgeAngle <= Epsilon)
+			{
+				bOutClippedToEndpoint = true;
+				return UnitA;
+			}
+
+			const FVector3d PlaneNormal = FVector3d::CrossProduct(UnitA, UnitB).GetSafeNormal();
+			if (PlaneNormal.SizeSquared() <= Epsilon * Epsilon)
+			{
+				bOutClippedToEndpoint = true;
+				const double DistA = GeodesicDistanceRad(UnitP, UnitA);
+				const double DistB = GeodesicDistanceRad(UnitP, UnitB);
+				OutT = DistB < DistA ? 1.0 : 0.0;
+				return DistB < DistA ? UnitB : UnitA;
+			}
+
+			FVector3d Projected = UnitP - PlaneNormal * FVector3d::DotProduct(UnitP, PlaneNormal);
+			if (Projected.SizeSquared() <= Epsilon * Epsilon)
+			{
+				bOutClippedToEndpoint = true;
+				const double DistA = GeodesicDistanceRad(UnitP, UnitA);
+				const double DistB = GeodesicDistanceRad(UnitP, UnitB);
+				OutT = DistB < DistA ? 1.0 : 0.0;
+				return DistB < DistA ? UnitB : UnitA;
+			}
+			Projected.Normalize();
+
+			const double AToProjected = GeodesicDistanceRad(UnitA, Projected);
+			const double ProjectedToB = GeodesicDistanceRad(Projected, UnitB);
+			if (AToProjected + ProjectedToB <= EdgeAngle + 1.0e-7)
+			{
+				OutT = FMath::Clamp(AToProjected / EdgeAngle, 0.0, 1.0);
+				return Projected;
+			}
+
+			bOutClippedToEndpoint = true;
+			const double DistA = GeodesicDistanceRad(UnitP, UnitA);
+			const double DistB = GeodesicDistanceRad(UnitP, UnitB);
+			OutT = DistB < DistA ? 1.0 : 0.0;
+			return DistB < DistA ? UnitB : UnitA;
+		}
+
+		bool IsBetterStage5BoundaryCandidate(
+			const FCarrierV2Stage5BoundaryCandidate& Candidate,
+			const FCarrierV2Stage5BoundaryCandidate& Best)
+		{
+			if (!Candidate.bValid)
+			{
+				return false;
+			}
+			if (!Best.bValid)
+			{
+				return true;
+			}
+			if (Candidate.DistanceRad < Best.DistanceRad - 1.0e-12)
+			{
+				return true;
+			}
+			if (Candidate.DistanceRad > Best.DistanceRad + 1.0e-12)
+			{
+				return false;
+			}
+			if (Candidate.PlateId != Best.PlateId)
+			{
+				return Candidate.PlateId < Best.PlateId;
+			}
+			if (Candidate.SourceTriangleId != Best.SourceTriangleId)
+			{
+				return Candidate.SourceTriangleId < Best.SourceTriangleId;
+			}
+			return Candidate.LocalTriangleId < Best.LocalTriangleId;
+		}
+
+		FCarrierV2Stage5BoundaryCandidate MakeStage5BoundaryCandidate(
+			const FCarrierV2Stage5BoundaryEdge& Edge,
+			const FVector3d& SamplePosition,
+			const double Epsilon)
+		{
+			FCarrierV2Stage5BoundaryCandidate Candidate;
+			Candidate.bValid = true;
+			Candidate.PlateId = Edge.PlateId;
+			Candidate.LocalTriangleId = Edge.LocalTriangleId;
+			Candidate.SourceTriangleId = Edge.SourceTriangleId;
+			Candidate.Point = ClosestPointOnSphericalArc(
+				SamplePosition,
+				Edge.A,
+				Edge.B,
+				Epsilon,
+				Candidate.bClippedToEndpoint,
+				Candidate.EdgeT);
+			Candidate.DistanceRad = GeodesicDistanceRad(SamplePosition, Candidate.Point);
+			Candidate.ContinentalFraction = FMath::Lerp(
+				Edge.MaterialA.ContinentalFraction,
+				Edge.MaterialB.ContinentalFraction,
+				Candidate.EdgeT);
+			return Candidate;
+		}
+
+		bool FindStage5Q1Q2BoundaryPair(
+			const TArray<FCarrierV2Stage5BoundaryEdge>& BoundaryEdges,
+			const FVector3d& SamplePosition,
+			const double Epsilon,
+			FCarrierV2Stage5BoundaryCandidate& OutQ1,
+			FCarrierV2Stage5BoundaryCandidate& OutQ2,
+			FCarrierV2Stage5Metrics& Metrics)
+		{
+			OutQ1 = FCarrierV2Stage5BoundaryCandidate();
+			OutQ2 = FCarrierV2Stage5BoundaryCandidate();
+			TArray<FCarrierV2Stage5BoundaryCandidate> BestByPlate;
+			for (const FCarrierV2Stage5BoundaryEdge& Edge : BoundaryEdges)
+			{
+				++Metrics.Q1Q2BoundaryQueryCount;
+				const FCarrierV2Stage5BoundaryCandidate Candidate = MakeStage5BoundaryCandidate(Edge, SamplePosition, Epsilon);
+				if (IsBetterStage5BoundaryCandidate(Candidate, OutQ1))
+				{
+					OutQ1 = Candidate;
+				}
+				if (Candidate.PlateId >= 0)
+				{
+					if (BestByPlate.Num() <= Candidate.PlateId)
+					{
+						BestByPlate.SetNum(Candidate.PlateId + 1);
+					}
+					if (IsBetterStage5BoundaryCandidate(Candidate, BestByPlate[Candidate.PlateId]))
+					{
+						BestByPlate[Candidate.PlateId] = Candidate;
+					}
+				}
+			}
+			if (!OutQ1.bValid)
+			{
+				return false;
+			}
+			for (const FCarrierV2Stage5BoundaryCandidate& Candidate : BestByPlate)
+			{
+				if (Candidate.bValid && Candidate.PlateId != OutQ1.PlateId && IsBetterStage5BoundaryCandidate(Candidate, OutQ2))
+				{
+					OutQ2 = Candidate;
+				}
+			}
+			return OutQ2.bValid;
+		}
+
+		void BuildStage5BoundaryEdges(
+			const FCarrierV2BuildState& State,
+			const TMap<uint64, FCarrierV2Stage4MarkFlags>& MarkLookup,
+			TArray<FCarrierV2Stage5BoundaryEdge>& OutEdges,
+			FCarrierV2Stage5Metrics& Metrics)
+		{
+			OutEdges.Reset();
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				TMap<uint64, FCarrierV2Stage5EdgeAccumulator> EdgeMap;
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					const FCarrierV2Stage4MarkFlags* Flags = MarkLookup.Find(Stage4TriangleKey(Plate.PlateId, Triangle.LocalTriangleId));
+					if (Flags != nullptr && Flags->bSubducting)
+					{
+						continue;
+					}
+
+					for (int32 EdgeIndex = 0; EdgeIndex < 3; ++EdgeIndex)
+					{
+						const int32 LocalA = Triangle.LocalVertexIds[EdgeIndex];
+						const int32 LocalB = Triangle.LocalVertexIds[(EdgeIndex + 1) % 3];
+						if (!Plate.LocalVertices.IsValidIndex(LocalA) || !Plate.LocalVertices.IsValidIndex(LocalB))
+						{
+							continue;
+						}
+						FCarrierV2Stage5EdgeAccumulator& Accumulator = EdgeMap.FindOrAdd(Stage5EdgeKey(Plate.PlateId, LocalA, LocalB));
+						++Accumulator.Count;
+						if (Accumulator.Count == 1)
+						{
+							Accumulator.Edge.PlateId = Plate.PlateId;
+							Accumulator.Edge.LocalTriangleId = Triangle.LocalTriangleId;
+							Accumulator.Edge.SourceTriangleId = Triangle.SourceTriangleId;
+							Accumulator.Edge.LocalVertexA = LocalA;
+							Accumulator.Edge.LocalVertexB = LocalB;
+							Accumulator.Edge.SourceSampleA = Plate.LocalVertices[LocalA].SourceSampleId;
+							Accumulator.Edge.SourceSampleB = Plate.LocalVertices[LocalB].SourceSampleId;
+							Accumulator.Edge.A = Plate.LocalVertices[LocalA].UnitPosition;
+							Accumulator.Edge.B = Plate.LocalVertices[LocalB].UnitPosition;
+							Accumulator.Edge.MaterialA = Plate.LocalVertices[LocalA].Material;
+							Accumulator.Edge.MaterialB = Plate.LocalVertices[LocalB].Material;
+						}
+					}
+				}
+
+				for (const TPair<uint64, FCarrierV2Stage5EdgeAccumulator>& Pair : EdgeMap)
+				{
+					if (Pair.Value.Count == 1)
+					{
+						OutEdges.Add(Pair.Value.Edge);
+					}
+				}
+			}
+			Metrics.BoundaryEdgeCount = OutEdges.Num();
+		}
+
+		bool BuildStage5AabbMesh(
+			const FCarrierV2BuildState& State,
+			UE::Geometry::FDynamicMesh3& Mesh,
+			TMap<int32, FCarrierV2Stage5TreeTriangleRef>& OutTriangleRefs,
+			FCarrierV2Stage5Metrics& Metrics,
+			FString& OutError)
+		{
+			Mesh = UE::Geometry::FDynamicMesh3();
+			OutTriangleRefs.Reset();
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					if (!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[0]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[1]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[2]))
+					{
+						OutError = FString::Printf(
+							TEXT("Stage5 AABB mesh build found invalid local triangle %d on plate %d."),
+							Triangle.LocalTriangleId,
+							Plate.PlateId);
+						return false;
+					}
+
+					const int32 A = Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[0]].UnitPosition);
+					const int32 B = Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[1]].UnitPosition);
+					const int32 C = Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[2]].UnitPosition);
+					const int32 TreeTriangleId = Mesh.AppendTriangle(A, B, C, Plate.PlateId);
+					if (TreeTriangleId < 0)
+					{
+						OutError = FString::Printf(
+							TEXT("Stage5 AABB mesh append failed for plate %d local triangle %d with result %d."),
+							Plate.PlateId,
+							Triangle.LocalTriangleId,
+							TreeTriangleId);
+						return false;
+					}
+
+					FCarrierV2Stage5TreeTriangleRef Ref;
+					Ref.PlateId = Plate.PlateId;
+					Ref.LocalTriangleId = Triangle.LocalTriangleId;
+					Ref.SourceTriangleId = Triangle.SourceTriangleId;
+					OutTriangleRefs.Add(TreeTriangleId, Ref);
+					++Metrics.AabbMeshTriangleCount;
+				}
+			}
+			return Metrics.AabbMeshTriangleCount > 0;
+		}
+
+		uint64 HashStage5Config(const FCarrierV2Stage5Config& Config)
+		{
+			uint64 Hash = HashStage4Config(Config.SamplingConfig);
+			HashMixString(Hash, Config.FixtureId);
+			HashMixString(Hash, Config.FixtureName);
+			HashMixString(Hash, Config.ExpectedRemeshClass);
+			HashMixString(Hash, Config.RemeshSamplingPolicyId);
+			HashMixString(Hash, Config.TrianglePartitionPolicyId);
+			HashMixString(Hash, Config.RemeshTriggerReason);
+			HashMixInt(Hash, Config.bRequireGeneratedOceanic ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireContinuousQ1Q2 ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireTopologyRebuild ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireProcessReset ? 1 : 0);
+			HashMixInt(Hash, Config.ExpectedMinimumGeneratedOceanic);
+			HashMixInt(Hash, Config.ExpectedMinimumQ1Q2Pairs);
+			return Hash;
+		}
+
+		uint64 HashStage5SamplingRecords(
+			const FCarrierV2Stage5Config& Config,
+			const FCarrierV2Stage5Metrics& Metrics,
+			const TArray<FCarrierV2Stage5SampleRecord>& SampleRecords)
+		{
+			uint64 Hash = HashStage5Config(Config);
+			HashMixString(Hash, Metrics.Stage3ProcessStateHash);
+			HashMixString(Hash, Metrics.RemeshInputHash);
+			for (const FCarrierV2Stage5SampleRecord& Record : SampleRecords)
+			{
+				HashMixInt(Hash, Record.SampleId);
+				HashMixInt(Hash, Record.RawHitCount);
+				HashMixInt(Hash, Record.FilteredSubductingHitCount);
+				HashMixInt(Hash, Record.FilteredCollidingHitCount);
+				HashMixInt(Hash, Record.ValidHitCount);
+				HashMixInt(Hash, Record.SelectedPlateId);
+				HashMixInt(Hash, Record.SelectedLocalTriangleId);
+				HashMixInt(Hash, Record.SelectedSourceTriangleId);
+				HashMixDouble(Hash, Record.SelectedContinentalFraction);
+				HashMixInt(Hash, Record.bZeroValidHit ? 1 : 0);
+				HashMixInt(Hash, Record.bGeneratedOceanic ? 1 : 0);
+				HashMixInt(Hash, Record.bPostFilterUnresolvedMultihit ? 1 : 0);
+				HashMixInt(Hash, Record.bSelectedFilteredHit ? 1 : 0);
+				HashMixInt(Hash, Record.bBoundaryPairFound ? 1 : 0);
+				HashMixInt(Hash, Record.bQ1Q2DifferentPlates ? 1 : 0);
+				HashMixInt(Hash, Record.Q1PlateId);
+				HashMixInt(Hash, Record.Q2PlateId);
+				HashMixInt(Hash, Record.AssignedPlateId);
+				HashMixDouble(Hash, Record.Q1DistanceRad);
+				HashMixDouble(Hash, Record.Q2DistanceRad);
+				HashMixDouble(Hash, Record.QGammaDistanceRad);
+				HashMixDouble(Hash, Record.QGammaAlpha);
+				HashMixDouble(Hash, Record.Q1BoundaryContinentalFraction);
+				HashMixDouble(Hash, Record.Q2BoundaryContinentalFraction);
+				HashMixString(Hash, Record.SelectionProvenance);
+			}
+			return Hash;
+		}
+
+		uint64 HashStage5Topology(const FCarrierV2Stage5Config& Config, const TArray<FCarrierV2Plate>& RebuiltPlates)
+		{
+			uint64 Hash = HashStage5Config(Config);
+			for (const FCarrierV2Plate& Plate : RebuiltPlates)
+			{
+				HashMixInt(Hash, Plate.PlateId);
+				HashMixInt(Hash, Plate.LocalVertices.Num());
+				HashMixInt(Hash, Plate.LocalTriangles.Num());
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					HashMixInt(Hash, Vertex.LocalVertexId);
+					HashMixInt(Hash, Vertex.SourceSampleId);
+					HashMixDouble(Hash, Vertex.UnitPosition.X);
+					HashMixDouble(Hash, Vertex.UnitPosition.Y);
+					HashMixDouble(Hash, Vertex.UnitPosition.Z);
+					HashMixInt(Hash, static_cast<int32>(Vertex.Material.MaterialClass));
+					HashMixDouble(Hash, Vertex.Material.ContinentalFraction);
+					HashMixString(Hash, Vertex.Material.Provenance);
+				}
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					HashMixInt(Hash, Triangle.LocalTriangleId);
+					HashMixInt(Hash, Triangle.SourceTriangleId);
+					for (int32 Corner = 0; Corner < 3; ++Corner)
+					{
+						HashMixInt(Hash, Triangle.LocalVertexIds[Corner]);
+						HashMixInt(Hash, Triangle.SourceSampleIds[Corner]);
+					}
+				}
+			}
+			return Hash;
+		}
+
+		uint64 HashStage5Metrics(const FCarrierV2Stage5Metrics& Metrics, const bool bIncludeReplayFields)
+		{
+			uint64 Hash = FnvOffset;
+			HashMixString(Hash, Metrics.ConfigHash);
+			HashMixString(Hash, Metrics.Stage3ProcessStateHash);
+			HashMixString(Hash, Metrics.RemeshInputHash);
+			HashMixString(Hash, Metrics.GlobalSamplingHash);
+			HashMixString(Hash, Metrics.GapFillHash);
+			HashMixString(Hash, Metrics.RebuiltTopologyHash);
+			HashMixInt(Hash, Metrics.GlobalSampleCount);
+			HashMixInt(Hash, Metrics.GlobalTriangleCount);
+			HashMixInt(Hash, Metrics.LocalPlateVertexCountSum);
+			HashMixInt(Hash, Metrics.LocalPlateTriangleCountSum);
+			HashMixInt(Hash, Metrics.PretreatedPlateCount);
+			HashMixInt(Hash, Metrics.FullySubductedPlateDestroyedCount);
+			HashMixInt(Hash, Metrics.BoundaryEdgeCount);
+			HashMixInt(Hash, Metrics.AabbMeshTriangleCount);
+			HashMixInt(Hash, Metrics.AabbRayQueryCount);
+			HashMixInt(Hash, Metrics.RawHitCountTotal);
+			HashMixInt(Hash, Metrics.FilteredSubductingHitCount);
+			HashMixInt(Hash, Metrics.FilteredCollidingHitCount);
+			HashMixInt(Hash, Metrics.ValidHitAfterFilterCount);
+			HashMixInt(Hash, Metrics.ZeroValidHitCount);
+			HashMixInt(Hash, Metrics.Q1Q2GapFillCount);
+			HashMixInt(Hash, Metrics.Q1Q2BoundaryQueryCount);
+			HashMixInt(Hash, Metrics.Q1Q2BoundaryPairCount);
+			HashMixInt(Hash, Metrics.Q1Q2DifferentPlatePairCount);
+			HashMixInt(Hash, Metrics.QGammaComputedCount);
+			HashMixInt(Hash, Metrics.GeneratedOceanicCount);
+			HashMixInt(Hash, Metrics.GapFillNoBoundaryPairCount);
+			HashMixInt(Hash, Metrics.PostFilterUnresolvedMultihitCount);
+			HashMixInt(Hash, Metrics.PostFilterBoundaryOnlyMultihitCount);
+			HashMixInt(Hash, Metrics.BoundaryDegenerateHitCount);
+			HashMixInt(Hash, Metrics.MaterialInterpolationCount);
+			HashMixInt(Hash, Metrics.SelectedFilteredHitCount);
+			HashMixInt(Hash, Metrics.PriorOwnerFallbackCount);
+			HashMixInt(Hash, Metrics.CentroidPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.RandomPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.NearestPrimaryResolutionCount);
+			HashMixInt(Hash, Metrics.OwnershipRepairDuringRemeshCount);
+			HashMixInt(Hash, Metrics.RetentionHysteresisAnchorCount);
+			HashMixInt(Hash, Metrics.Q1Q2DiscreteApproxCount);
+			HashMixInt(Hash, Metrics.Q1Q2PriorOwnerLookupCount);
+			HashMixInt(Hash, Metrics.TopologyRebuildCount);
+			HashMixInt(Hash, Metrics.RebuiltPlateCount);
+			HashMixInt(Hash, Metrics.RebuiltLocalVertexCountSum);
+			HashMixInt(Hash, Metrics.RebuiltLocalTriangleCountSum);
+			HashMixInt(Hash, Metrics.RebuiltTriangleAssignmentCount);
+			HashMixInt(Hash, Metrics.MixedVertexTriangleCount);
+			HashMixInt(Hash, Metrics.MajorityTriangleAssignmentCount);
+			HashMixInt(Hash, Metrics.ThreeWayTriangleAssignmentCount);
+			HashMixInt(Hash, Metrics.UnassignedTriangleCount);
+			HashMixInt(Hash, Metrics.ProcessStateResetCount);
+			HashMixInt(Hash, Metrics.PreResetTriangleMarkCount);
+			HashMixInt(Hash, Metrics.PostResetTriangleMarkCount);
+			HashMixInt(Hash, Metrics.TerrainBeautyMutationCount);
+			HashMixInt(Hash, Metrics.MaterialCreatedWithoutGapFillCount);
+			HashMixInt(Hash, Metrics.MaterialDestroyedWithoutProcessCount);
+			HashMixInt(Hash, Metrics.bInheritedStage3Pass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bSourceFilterPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bQ1Q2GapFillPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bTopologyRebuildPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bProcessResetPass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bNoForbiddenFallbackPass ? 1 : 0);
+			if (bIncludeReplayFields)
+			{
+				HashMixString(Hash, Metrics.ReplayStage3ProcessStateHash);
+				HashMixString(Hash, Metrics.ReplayGlobalSamplingHash);
+				HashMixString(Hash, Metrics.ReplayGapFillHash);
+				HashMixString(Hash, Metrics.ReplayRebuiltTopologyHash);
+				HashMixString(Hash, Metrics.ReplayMetricsHash);
+				HashMixInt(Hash, Metrics.bReplayDeterministic ? 1 : 0);
+				HashMixString(Hash, Metrics.Verdict);
+			}
+			return Hash;
+		}
+
+		void CountStage5PretreatedPlates(
+			const FCarrierV2BuildState& State,
+			const TMap<uint64, FCarrierV2Stage4MarkFlags>& MarkLookup,
+			FCarrierV2Stage5Metrics& Metrics)
+		{
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				bool bHasNonSubductingTriangle = false;
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					const FCarrierV2Stage4MarkFlags* Flags = MarkLookup.Find(Stage4TriangleKey(Plate.PlateId, Triangle.LocalTriangleId));
+					if (Flags == nullptr || !Flags->bSubducting)
+					{
+						bHasNonSubductingTriangle = true;
+						break;
+					}
+				}
+				if (bHasNonSubductingTriangle)
+				{
+					++Metrics.PretreatedPlateCount;
+				}
+				else
+				{
+					++Metrics.FullySubductedPlateDestroyedCount;
+				}
+			}
+		}
+
+		void SampleStage5GlobalTds(
+			const FCarrierV2Stage5Config& Config,
+			const FCarrierV2BuildState& State,
+			const TMap<uint64, FCarrierV2Stage4MarkFlags>& MarkLookup,
+			const TArray<FCarrierV2Stage5BoundaryEdge>& BoundaryEdges,
+			UE::Geometry::FDynamicMeshAABBTree3& Tree,
+			const TMap<int32, FCarrierV2Stage5TreeTriangleRef>& TreeTriangleRefs,
+			TArray<int32>& OutSamplePlateAssignments,
+			TArray<FCarrierV2MaterialRecord>& OutSampleMaterials,
+			FCarrierV2Stage5FixtureResult& Result)
+		{
+			const double SamplingStart = FPlatformTime::Seconds();
+			Result.SampleRecords.Reset(State.Samples.Num());
+			OutSamplePlateAssignments.Init(INDEX_NONE, State.Samples.Num());
+			OutSampleMaterials.SetNum(State.Samples.Num());
+
+			for (const FCarrierV2SubstrateSample& Sample : State.Samples)
+			{
+				FCarrierV2Stage5SampleRecord Record;
+				Record.SampleId = Sample.SampleId;
+
+				TArray<MeshIntersection::FHitIntersectionResult> RawHits;
+				const FRay3d Ray(FVector3d::ZeroVector, Sample.UnitPosition);
+				UE::Geometry::IMeshSpatial::FQueryOptions QueryOptions;
+				QueryOptions.MaxDistance = 2.0;
+				++Result.Metrics.AabbRayQueryCount;
+				Tree.FindAllHitTriangles(Ray, RawHits, QueryOptions);
+
+				Record.RawHitCount = RawHits.Num();
+				Result.Metrics.RawHitCountTotal += RawHits.Num();
+
+				TArray<const MeshIntersection::FHitIntersectionResult*, TInlineAllocator<16>> ValidHits;
+				TArray<FCarrierV2Stage5TreeTriangleRef, TInlineAllocator<16>> ValidRefs;
+				bool bAllValidBoundary = true;
+				for (const MeshIntersection::FHitIntersectionResult& Hit : RawHits)
+				{
+					const FCarrierV2Stage5TreeTriangleRef* Ref = TreeTriangleRefs.Find(Hit.TriangleId);
+					if (Ref == nullptr)
+					{
+						continue;
+					}
+
+					const FCarrierV2Stage4MarkFlags* Flags = MarkLookup.Find(Stage4TriangleKey(Ref->PlateId, Ref->LocalTriangleId));
+					if (Flags != nullptr && Flags->bSubducting)
+					{
+						++Record.FilteredSubductingHitCount;
+						++Result.Metrics.FilteredSubductingHitCount;
+						continue;
+					}
+					if (Flags != nullptr && Flags->bColliding)
+					{
+						++Record.FilteredCollidingHitCount;
+						++Result.Metrics.FilteredCollidingHitCount;
+						continue;
+					}
+
+					const bool bBoundary = IsStage4BoundaryBarycentric(
+						Hit.BaryCoords,
+						Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.RayEpsilon);
+					bAllValidBoundary = bAllValidBoundary && bBoundary;
+					if (bBoundary)
+					{
+						++Result.Metrics.BoundaryDegenerateHitCount;
+					}
+					ValidHits.Add(&Hit);
+					ValidRefs.Add(*Ref);
+				}
+
+				Record.ValidHitCount = ValidHits.Num();
+				Result.Metrics.ValidHitAfterFilterCount += ValidHits.Num();
+				if (ValidHits.IsEmpty())
+				{
+					Record.bZeroValidHit = true;
+					++Result.Metrics.ZeroValidHitCount;
+
+					FCarrierV2Stage5BoundaryCandidate Q1;
+					FCarrierV2Stage5BoundaryCandidate Q2;
+					if (!FindStage5Q1Q2BoundaryPair(
+						BoundaryEdges,
+						Sample.UnitPosition,
+						Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.RayEpsilon,
+						Q1,
+						Q2,
+						Result.Metrics))
+					{
+						Record.SelectionProvenance = TEXT("q1q2_no_boundary_pair");
+						++Result.Metrics.GapFillNoBoundaryPairCount;
+						Result.SampleRecords.Add(Record);
+						continue;
+					}
+
+					const FVector3d QGamma = (Q1.Point + Q2.Point).GetSafeNormal();
+					const double DPlate = FMath::Min(Q1.DistanceRad, Q2.DistanceRad);
+					const double DGamma = GeodesicDistanceRad(Sample.UnitPosition, QGamma);
+					const double Alpha = (DGamma + DPlate) > 1.0e-12 ? DGamma / (DGamma + DPlate) : 0.0;
+					const bool bAssignQ2 = Q2.DistanceRad < Q1.DistanceRad;
+
+					Record.bBoundaryPairFound = true;
+					Record.bQ1Q2DifferentPlates = Q1.PlateId != Q2.PlateId;
+					Record.bGeneratedOceanic = true;
+					Record.Q1PlateId = Q1.PlateId;
+					Record.Q2PlateId = Q2.PlateId;
+					Record.AssignedPlateId = bAssignQ2 ? Q2.PlateId : Q1.PlateId;
+					Record.SelectedPlateId = Record.AssignedPlateId;
+					Record.Q1DistanceRad = Q1.DistanceRad;
+					Record.Q2DistanceRad = Q2.DistanceRad;
+					Record.QGammaDistanceRad = DGamma;
+					Record.QGammaAlpha = Alpha;
+					Record.Q1BoundaryContinentalFraction = Q1.ContinentalFraction;
+					Record.Q2BoundaryContinentalFraction = Q2.ContinentalFraction;
+					Record.SelectionProvenance = TEXT("continuous_q1q2_qgamma_oceanic_generation");
+
+					OutSamplePlateAssignments[Sample.SampleId] = Record.AssignedPlateId;
+					OutSampleMaterials[Sample.SampleId] = MakeStage5Material(0.0, TEXT("q1q2_qgamma_oceanic"));
+					++Result.Metrics.Q1Q2GapFillCount;
+					++Result.Metrics.Q1Q2BoundaryPairCount;
+					++Result.Metrics.Q1Q2DifferentPlatePairCount;
+					++Result.Metrics.QGammaComputedCount;
+					++Result.Metrics.GeneratedOceanicCount;
+					Result.SampleRecords.Add(Record);
+					continue;
+				}
+
+				if (ValidHits.Num() > 1)
+				{
+					if (bAllValidBoundary)
+					{
+						++Result.Metrics.PostFilterBoundaryOnlyMultihitCount;
+					}
+					else
+					{
+						++Result.Metrics.PostFilterUnresolvedMultihitCount;
+						Record.bPostFilterUnresolvedMultihit = true;
+						Record.SelectionProvenance = TEXT("unresolved_post_filter_multihit");
+						Result.SampleRecords.Add(Record);
+						continue;
+					}
+				}
+
+				const MeshIntersection::FHitIntersectionResult* SelectedHit = ValidHits[0];
+				const FCarrierV2Stage5TreeTriangleRef& SelectedRef = ValidRefs[0];
+				Record.SelectedPlateId = SelectedRef.PlateId;
+				Record.AssignedPlateId = SelectedRef.PlateId;
+				Record.SelectedLocalTriangleId = SelectedRef.LocalTriangleId;
+				Record.SelectedSourceTriangleId = SelectedRef.SourceTriangleId;
+				Record.SelectionProvenance = ValidHits.Num() == 1
+					? TEXT("single_valid_post_filter_intersection")
+					: TEXT("boundary_degenerate_valid_intersection");
+
+				const FCarrierV2Stage4MarkFlags* SelectedFlags = MarkLookup.Find(Stage4TriangleKey(SelectedRef.PlateId, SelectedRef.LocalTriangleId));
+				Record.bSelectedFilteredHit =
+					SelectedFlags != nullptr &&
+					(SelectedFlags->bSubducting || SelectedFlags->bColliding);
+				if (Record.bSelectedFilteredHit)
+				{
+					++Result.Metrics.SelectedFilteredHitCount;
+				}
+
+				if (State.Plates.IsValidIndex(SelectedRef.PlateId))
+				{
+					const FCarrierV2Plate& Plate = State.Plates[SelectedRef.PlateId];
+					if (Plate.LocalTriangles.IsValidIndex(SelectedRef.LocalTriangleId))
+					{
+						Record.SelectedContinentalFraction = InterpolateContinentalFraction(
+							Plate,
+							Plate.LocalTriangles[SelectedRef.LocalTriangleId],
+							SelectedHit->BaryCoords);
+						OutSamplePlateAssignments[Sample.SampleId] = Record.AssignedPlateId;
+						OutSampleMaterials[Sample.SampleId] = MakeStage5Material(Record.SelectedContinentalFraction, TEXT("barycentric_resample"));
+						++Result.Metrics.MaterialInterpolationCount;
+					}
+				}
+				Result.SampleRecords.Add(Record);
+			}
+			Result.Metrics.GlobalSamplingMs = (FPlatformTime::Seconds() - SamplingStart) * 1000.0;
+		}
+
+		int32 ChooseStage5TrianglePlate(
+			const FCarrierV2SubstrateTriangle& Triangle,
+			const TArray<int32>& SampleAssignments,
+			const TArray<int32>& SampleAssignmentCounts,
+			FCarrierV2Stage5Metrics& Metrics)
+		{
+			int32 PlateIds[3] = {INDEX_NONE, INDEX_NONE, INDEX_NONE};
+			for (int32 Corner = 0; Corner < 3; ++Corner)
+			{
+				const int32 SampleId = Triangle.SampleIds[Corner];
+				if (!SampleAssignments.IsValidIndex(SampleId) || SampleAssignments[SampleId] == INDEX_NONE)
+				{
+					++Metrics.UnassignedTriangleCount;
+					return INDEX_NONE;
+				}
+				PlateIds[Corner] = SampleAssignments[SampleId];
+			}
+
+			if (PlateIds[0] == PlateIds[1] && PlateIds[1] == PlateIds[2])
+			{
+				return PlateIds[0];
+			}
+
+			++Metrics.MixedVertexTriangleCount;
+			if (PlateIds[0] == PlateIds[1] || PlateIds[0] == PlateIds[2])
+			{
+				++Metrics.MajorityTriangleAssignmentCount;
+				return PlateIds[0];
+			}
+			if (PlateIds[1] == PlateIds[2])
+			{
+				++Metrics.MajorityTriangleAssignmentCount;
+				return PlateIds[1];
+			}
+
+			++Metrics.ThreeWayTriangleAssignmentCount;
+			int32 BestPlateId = PlateIds[0];
+			int32 BestCount = SampleAssignmentCounts.IsValidIndex(BestPlateId) ? SampleAssignmentCounts[BestPlateId] : 0;
+			for (int32 Corner = 1; Corner < 3; ++Corner)
+			{
+				const int32 CandidatePlateId = PlateIds[Corner];
+				const int32 CandidateCount = SampleAssignmentCounts.IsValidIndex(CandidatePlateId) ? SampleAssignmentCounts[CandidatePlateId] : 0;
+				if (CandidateCount > BestCount || (CandidateCount == BestCount && CandidatePlateId < BestPlateId))
+				{
+					BestPlateId = CandidatePlateId;
+					BestCount = CandidateCount;
+				}
+			}
+			return BestPlateId;
+		}
+
+		int32 AddOrFindStage5RebuiltVertex(
+			FCarrierV2Plate& Plate,
+			const FCarrierV2BuildState& State,
+			const TArray<FCarrierV2MaterialRecord>& SampleMaterials,
+			const int32 SourceSampleId)
+		{
+			if (const int32* Existing = Plate.SourceSampleToLocalVertex.Find(SourceSampleId))
+			{
+				return *Existing;
+			}
+			if (!State.Samples.IsValidIndex(SourceSampleId) || !SampleMaterials.IsValidIndex(SourceSampleId))
+			{
+				return INDEX_NONE;
+			}
+
+			FCarrierV2PlateVertex Vertex;
+			Vertex.LocalVertexId = Plate.LocalVertices.Num();
+			Vertex.SourceSampleId = SourceSampleId;
+			Vertex.UnitPosition = State.Samples[SourceSampleId].UnitPosition;
+			Vertex.Material = SampleMaterials[SourceSampleId];
+			Plate.SourceSampleToLocalVertex.Add(SourceSampleId, Vertex.LocalVertexId);
+			Plate.LocalVertices.Add(Vertex);
+			return Vertex.LocalVertexId;
+		}
+
+		void RebuildStage5PlateLocalTopology(
+			const FCarrierV2Stage5Config& Config,
+			const FCarrierV2BuildState& State,
+			const TArray<int32>& SampleAssignments,
+			const TArray<FCarrierV2MaterialRecord>& SampleMaterials,
+			FCarrierV2Stage5FixtureResult& Result)
+		{
+			const double RebuildStart = FPlatformTime::Seconds();
+			Result.RebuiltPlates.Reset(State.Config.PlateCount);
+			for (int32 PlateId = 0; PlateId < State.Config.PlateCount; ++PlateId)
+			{
+				FCarrierV2Plate Plate;
+				Plate.PlateId = PlateId;
+				Result.RebuiltPlates.Add(MoveTemp(Plate));
+			}
+
+			TArray<int32> SampleAssignmentCounts;
+			SampleAssignmentCounts.Init(0, State.Config.PlateCount);
+			for (const int32 PlateId : SampleAssignments)
+			{
+				if (SampleAssignmentCounts.IsValidIndex(PlateId))
+				{
+					++SampleAssignmentCounts[PlateId];
+				}
+			}
+
+			for (const FCarrierV2SubstrateTriangle& SourceTriangle : State.Triangles)
+			{
+				const int32 PlateId = ChooseStage5TrianglePlate(SourceTriangle, SampleAssignments, SampleAssignmentCounts, Result.Metrics);
+				if (!Result.RebuiltPlates.IsValidIndex(PlateId))
+				{
+					if (PlateId != INDEX_NONE)
+					{
+						++Result.Metrics.UnassignedTriangleCount;
+					}
+					continue;
+				}
+
+				FCarrierV2Plate& Plate = Result.RebuiltPlates[PlateId];
+				FCarrierV2PlateTriangle LocalTriangle;
+				LocalTriangle.LocalTriangleId = Plate.LocalTriangles.Num();
+				LocalTriangle.SourceTriangleId = SourceTriangle.TriangleId;
+				bool bTriangleValid = true;
+				for (int32 Corner = 0; Corner < 3; ++Corner)
+				{
+					const int32 SourceSampleId = SourceTriangle.SampleIds[Corner];
+					LocalTriangle.SourceSampleIds[Corner] = SourceSampleId;
+					LocalTriangle.LocalVertexIds[Corner] = AddOrFindStage5RebuiltVertex(Plate, State, SampleMaterials, SourceSampleId);
+					if (LocalTriangle.LocalVertexIds[Corner] == INDEX_NONE)
+					{
+						++Result.Metrics.UnassignedTriangleCount;
+						bTriangleValid = false;
+						break;
+					}
+				}
+				if (!bTriangleValid)
+				{
+					continue;
+				}
+				Plate.LocalTriangles.Add(LocalTriangle);
+				++Result.Metrics.RebuiltTriangleAssignmentCount;
+			}
+
+			Result.Metrics.TopologyRebuildCount = 1;
+			Result.Metrics.ProcessStateResetCount = 1;
+			Result.Metrics.PostResetTriangleMarkCount = 0;
+			for (const FCarrierV2Plate& Plate : Result.RebuiltPlates)
+			{
+				Result.Metrics.RebuiltLocalVertexCountSum += Plate.LocalVertices.Num();
+				Result.Metrics.RebuiltLocalTriangleCountSum += Plate.LocalTriangles.Num();
+				if (!Plate.LocalTriangles.IsEmpty())
+				{
+					++Result.Metrics.RebuiltPlateCount;
+				}
+			}
+			Result.Metrics.RebuiltTopologyHash = HashToString(HashStage5Topology(Config, Result.RebuiltPlates));
+			Result.Metrics.TopologyRebuildMs = (FPlatformTime::Seconds() - RebuildStart) * 1000.0;
+		}
+
+		void FinalizeStage5Verdict(const FCarrierV2Stage5Config& Config, FCarrierV2Stage5Metrics& Metrics)
+		{
+			const FCarrierV2Stage4Config& SamplingConfig = Config.SamplingConfig;
+			Metrics.bSourceFilterPass =
+				(!SamplingConfig.bRequireFilteredSubductingHit ||
+					Metrics.FilteredSubductingHitCount >= FMath::Max(1, SamplingConfig.ExpectedMinimumFilteredSubductingHits)) &&
+				(!SamplingConfig.bRequireFilteredCollidingHit ||
+					Metrics.FilteredCollidingHitCount >= FMath::Max(1, SamplingConfig.ExpectedMinimumFilteredCollidingHits)) &&
+				Metrics.SelectedFilteredHitCount == 0 &&
+				Metrics.PostFilterUnresolvedMultihitCount == 0;
+
+			Metrics.bQ1Q2GapFillPass =
+				Metrics.GapFillNoBoundaryPairCount == 0 &&
+				Metrics.Q1Q2GapFillCount == Metrics.ZeroValidHitCount &&
+				Metrics.GeneratedOceanicCount == Metrics.ZeroValidHitCount &&
+				Metrics.Q1Q2BoundaryPairCount == Metrics.ZeroValidHitCount &&
+				Metrics.Q1Q2DifferentPlatePairCount == Metrics.ZeroValidHitCount &&
+				Metrics.QGammaComputedCount == Metrics.ZeroValidHitCount &&
+				(!Config.bRequireGeneratedOceanic ||
+					Metrics.GeneratedOceanicCount >= FMath::Max(1, Config.ExpectedMinimumGeneratedOceanic)) &&
+				(!Config.bRequireContinuousQ1Q2 ||
+					Metrics.Q1Q2BoundaryPairCount >= FMath::Max(1, Config.ExpectedMinimumQ1Q2Pairs));
+
+			Metrics.bTopologyRebuildPass =
+				(!Config.bRequireTopologyRebuild ||
+					(Metrics.TopologyRebuildCount == 1 &&
+						Metrics.RebuiltTriangleAssignmentCount == Metrics.GlobalTriangleCount &&
+						Metrics.RebuiltLocalTriangleCountSum == Metrics.GlobalTriangleCount &&
+						Metrics.UnassignedTriangleCount == 0 &&
+						!Metrics.RebuiltTopologyHash.IsEmpty()));
+
+			Metrics.bProcessResetPass =
+				(!Config.bRequireProcessReset ||
+					(Metrics.ProcessStateResetCount == 1 && Metrics.PostResetTriangleMarkCount == 0));
+
+			Metrics.bNoForbiddenFallbackPass =
+				Metrics.PriorOwnerFallbackCount == 0 &&
+				Metrics.CentroidPrimaryResolutionCount == 0 &&
+				Metrics.RandomPrimaryResolutionCount == 0 &&
+				Metrics.NearestPrimaryResolutionCount == 0 &&
+				Metrics.OwnershipRepairDuringRemeshCount == 0 &&
+				Metrics.RetentionHysteresisAnchorCount == 0 &&
+				Metrics.Q1Q2DiscreteApproxCount == 0 &&
+				Metrics.Q1Q2PriorOwnerLookupCount == 0 &&
+				Metrics.MaterialCreatedWithoutGapFillCount == 0 &&
+				Metrics.MaterialDestroyedWithoutProcessCount == 0 &&
+				Metrics.TerrainBeautyMutationCount == 0;
+
+			Metrics.bFixturePass =
+				Metrics.bInheritedStage3Pass &&
+				Metrics.bSourceFilterPass &&
+				Metrics.bQ1Q2GapFillPass &&
+				Metrics.bTopologyRebuildPass &&
+				Metrics.bProcessResetPass &&
+				Metrics.bNoForbiddenFallbackPass;
+			Metrics.bStageGatePass = Metrics.bFixturePass;
+
+			if (!Metrics.bInheritedStage3Pass)
+			{
+				Metrics.Verdict = TEXT("FAIL_INHERITED_V2_3_GATE");
+			}
+			else if (!Metrics.bSourceFilterPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_FILTERED_MARK_GATE");
+			}
+			else if (!Metrics.bQ1Q2GapFillPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_Q1Q2_GAP_FILL_GATE");
+			}
+			else if (!Metrics.bTopologyRebuildPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_TOPOLOGY_REBUILD_GATE");
+			}
+			else if (!Metrics.bProcessResetPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_PROCESS_RESET_GATE");
+			}
+			else if (!Metrics.bNoForbiddenFallbackPass)
+			{
+				Metrics.Verdict = TEXT("FAIL_FORBIDDEN_REPAIR_OR_RESOLVER");
+			}
+			else if (Metrics.ZeroValidHitCount > 0)
+			{
+				Metrics.Verdict = TEXT("PASS_Q1Q2_GAP_FILL_REBUILD_RESET");
+			}
+			else
+			{
+				Metrics.Verdict = TEXT("PASS_REBUILD_RESET_NO_GAPS");
+			}
+		}
+
+		bool RunStage5FixtureOnce(const FCarrierV2Stage5Config& Config, FCarrierV2Stage5FixtureResult& OutResult)
+		{
+			OutResult = FCarrierV2Stage5FixtureResult();
+			OutResult.Config = Config;
+			OutResult.Metrics.RunId = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+			OutResult.Metrics.FixtureId = Config.FixtureId;
+			OutResult.Metrics.FixtureName = Config.FixtureName;
+			OutResult.Metrics.FixtureKind = FixtureKindName(Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.FixtureKind);
+			OutResult.Metrics.ExpectedRemeshClass = Config.ExpectedRemeshClass;
+			OutResult.Metrics.SourceStatus = Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.SourceStatus;
+			OutResult.Metrics.RemeshSamplingPolicyId = Config.RemeshSamplingPolicyId;
+			OutResult.Metrics.TrianglePartitionPolicyId = Config.TrianglePartitionPolicyId;
+			OutResult.Metrics.RemeshTriggerReason = Config.RemeshTriggerReason;
+			OutResult.Metrics.SampleCount = Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.SampleCount;
+			OutResult.Metrics.PlateCount = Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.PlateCount;
+			OutResult.Metrics.RayEpsilon = Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig.RayEpsilon;
+			OutResult.Metrics.ConfigHash = HashToString(HashStage5Config(Config));
+
+			const double TotalStart = FPlatformTime::Seconds();
+			const double Stage3Start = FPlatformTime::Seconds();
+			FCarrierV2Stage3::RunFixtureWithReplay(Config.SamplingConfig.ProcessConfig, OutResult.Stage3Result);
+			OutResult.Metrics.Stage3Ms = (FPlatformTime::Seconds() - Stage3Start) * 1000.0;
+			OutResult.Metrics.Stage3ProcessStateHash = OutResult.Stage3Result.Metrics.ProcessStateHash;
+			OutResult.Metrics.PreResetTriangleMarkCount = OutResult.Stage3Result.TriangleMarks.Num();
+			OutResult.Metrics.bInheritedStage3Pass =
+				OutResult.Stage3Result.bCompleted &&
+				OutResult.Stage3Result.Metrics.bFixturePass &&
+				OutResult.Stage3Result.Metrics.bReplayDeterministic;
+			if (!OutResult.Stage3Result.bCompleted)
+			{
+				OutResult.Error = OutResult.Stage3Result.Error;
+				OutResult.Metrics.Verdict = TEXT("FAIL_INHERITED_V2_3_RUN");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+
+			FCarrierV2BuildState State;
+			FCarrierV2Stage0Metrics BuildMetrics;
+			if (!BuildStateForConfig(Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig, State, BuildMetrics, OutResult.Error))
+			{
+				OutResult.Metrics.Verdict = TEXT("FAIL_BUILD");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+			OutResult.Metrics.BuildSubstrateMs = BuildMetrics.BuildSubstrateMs;
+			OutResult.Metrics.BuildPlateLocalMs = BuildMetrics.BuildPlateLocalMs;
+			OutResult.Metrics.GlobalSampleCount = State.Samples.Num();
+			OutResult.Metrics.GlobalTriangleCount = State.Triangles.Num();
+			OutResult.Metrics.TriangleCount = State.Triangles.Num();
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				OutResult.Metrics.LocalPlateVertexCountSum += Plate.LocalVertices.Num();
+				OutResult.Metrics.LocalPlateTriangleCountSum += Plate.LocalTriangles.Num();
+			}
+
+			FCarrierV2Stage1Metrics MotionMetrics;
+			ApplyStage1MotionAndMeasure(Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig, State, MotionMetrics);
+			OutResult.Metrics.MotionApplyMs = MotionMetrics.MotionApplyMs;
+			OutResult.Metrics.RemeshInputHash = HashToString(HashStage1Authority(State, Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig));
+
+			TMap<uint64, FCarrierV2Stage4MarkFlags> MarkLookup;
+			BuildStage4MarkLookup(OutResult.Stage3Result.TriangleMarks, MarkLookup);
+			CountStage5PretreatedPlates(State, MarkLookup, OutResult.Metrics);
+
+			TArray<FCarrierV2Stage5BoundaryEdge> BoundaryEdges;
+			BuildStage5BoundaryEdges(State, MarkLookup, BoundaryEdges, OutResult.Metrics);
+
+			UE::Geometry::FDynamicMesh3 Mesh;
+			TMap<int32, FCarrierV2Stage5TreeTriangleRef> TreeTriangleRefs;
+			const double AabbStart = FPlatformTime::Seconds();
+			if (!BuildStage5AabbMesh(State, Mesh, TreeTriangleRefs, OutResult.Metrics, OutResult.Error))
+			{
+				OutResult.Metrics.Verdict = TEXT("FAIL_AABB_BUILD");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+			UE::Geometry::FDynamicMeshAABBTree3 Tree(&Mesh, true);
+			OutResult.Metrics.AabbBuildMs = (FPlatformTime::Seconds() - AabbStart) * 1000.0;
+
+			const double MetricsStart = FPlatformTime::Seconds();
+			TArray<int32> SampleAssignments;
+			TArray<FCarrierV2MaterialRecord> SampleMaterials;
+			SampleStage5GlobalTds(Config, State, MarkLookup, BoundaryEdges, Tree, TreeTriangleRefs, SampleAssignments, SampleMaterials, OutResult);
+			OutResult.Metrics.GlobalSamplingHash = HashToString(HashStage5SamplingRecords(Config, OutResult.Metrics, OutResult.SampleRecords));
+			OutResult.Metrics.GapFillHash = OutResult.Metrics.GlobalSamplingHash;
+			RebuildStage5PlateLocalTopology(Config, State, SampleAssignments, SampleMaterials, OutResult);
+			FinalizeStage5Verdict(Config, OutResult.Metrics);
+			OutResult.Metrics.MetricsMs = (FPlatformTime::Seconds() - MetricsStart) * 1000.0 -
+				OutResult.Metrics.GlobalSamplingMs -
+				OutResult.Metrics.TopologyRebuildMs;
+			if (OutResult.Metrics.MetricsMs < 0.0)
+			{
+				OutResult.Metrics.MetricsMs = 0.0;
+			}
+			OutResult.Metrics.MetricsHash = HashToString(HashStage5Metrics(OutResult.Metrics, true));
+			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			OutResult.bCompleted = true;
+			return true;
+		}
+	}
+
+	bool FCarrierV2FoundationStepper::BuildSnapshot(
+		const FCarrierV2Stage5Config& Config,
+		FCarrierV2FoundationStepperSnapshot& OutSnapshot)
+	{
+		OutSnapshot = FCarrierV2FoundationStepperSnapshot();
+		OutSnapshot.Config = Config;
+
+		const bool bRunOk = FCarrierV2Stage5::RunFixtureWithReplay(Config, OutSnapshot.Stage5Result);
+		if (!bRunOk || !OutSnapshot.Stage5Result.bCompleted)
+		{
+			OutSnapshot.Error = OutSnapshot.Stage5Result.Error.IsEmpty()
+				? TEXT("Stage 5 fixture did not complete for foundation stepper snapshot.")
+				: OutSnapshot.Stage5Result.Error;
+			OutSnapshot.Summary = FString::Printf(
+				TEXT("fixture=%s completed=false verdict=%s error=%s"),
+				*Config.FixtureId,
+				*OutSnapshot.Stage5Result.Metrics.Verdict,
+				*OutSnapshot.Error);
+			return false;
+		}
+
+		FCarrierV2BuildState State;
+		FCarrierV2Stage0Metrics BuildMetrics;
+		FString BuildError;
+		if (!BuildStateForConfig(
+			Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig.BaseConfig,
+			State,
+			BuildMetrics,
+			BuildError))
+		{
+			OutSnapshot.Error = BuildError;
+			OutSnapshot.Summary = FString::Printf(
+				TEXT("fixture=%s completed=false verdict=FAIL_SNAPSHOT_BUILD error=%s"),
+				*Config.FixtureId,
+				*OutSnapshot.Error);
+			return false;
+		}
+
+		FCarrierV2Stage1Metrics MotionMetrics;
+		ApplyStage1MotionAndMeasure(
+			Config.SamplingConfig.ProcessConfig.ContactConfig.MotionConfig,
+			State,
+			MotionMetrics);
+
+		const int32 SampleCount = State.Samples.Num();
+		const int32 PlateCount = FMath::Max(0, State.Config.PlateCount);
+		TArray<TArray<int32>> SampleColdPlateCounts;
+		SampleColdPlateCounts.SetNum(SampleCount);
+		for (TArray<int32>& PlateCounts : SampleColdPlateCounts)
+		{
+			PlateCounts.Init(0, PlateCount);
+		}
+
+		for (const FCarrierV2SubstrateTriangle& Triangle : State.Triangles)
+		{
+			const int32 PlateId = State.TrianglePlateIds.IsValidIndex(Triangle.TriangleId)
+				? State.TrianglePlateIds[Triangle.TriangleId]
+				: INDEX_NONE;
+			if (!SampleColdPlateCounts.IsValidIndex(Triangle.SampleIds[0]) ||
+				!SampleColdPlateCounts.IsValidIndex(Triangle.SampleIds[1]) ||
+				!SampleColdPlateCounts.IsValidIndex(Triangle.SampleIds[2]) ||
+				PlateId == INDEX_NONE ||
+				PlateId >= PlateCount)
+			{
+				continue;
+			}
+
+			for (int32 Corner = 0; Corner < 3; ++Corner)
+			{
+				++SampleColdPlateCounts[Triangle.SampleIds[Corner]][PlateId];
+			}
+		}
+
+		auto ChooseColdPlate = [](const TArray<int32>& PlateCounts) -> int32
+		{
+			int32 BestPlateId = INDEX_NONE;
+			int32 BestCount = 0;
+			for (int32 PlateId = 0; PlateId < PlateCounts.Num(); ++PlateId)
+			{
+				const int32 Count = PlateCounts[PlateId];
+				if (Count > BestCount || (Count == BestCount && Count > 0 && (BestPlateId == INDEX_NONE || PlateId < BestPlateId)))
+				{
+					BestPlateId = PlateId;
+					BestCount = Count;
+				}
+			}
+			return BestPlateId;
+		};
+
+		TMap<int32, FCarrierV2Stage5SampleRecord> SampleRecordsById;
+		SampleRecordsById.Reserve(OutSnapshot.Stage5Result.SampleRecords.Num());
+		for (const FCarrierV2Stage5SampleRecord& Record : OutSnapshot.Stage5Result.SampleRecords)
+		{
+			SampleRecordsById.Add(Record.SampleId, Record);
+		}
+
+		TMap<uint64, FCarrierV2Stage4MarkFlags> MarkLookup;
+		BuildStage4MarkLookup(OutSnapshot.Stage5Result.Stage3Result.TriangleMarks, MarkLookup);
+
+		TMap<int32, FCarrierV2Stage4MarkFlags> SourceTriangleMarks;
+		TSet<int32> MarkedSampleIds;
+		for (const FCarrierV2TriangleProcessMarkRecord& Mark : OutSnapshot.Stage5Result.Stage3Result.TriangleMarks)
+		{
+			if (Mark.SampleId != INDEX_NONE)
+			{
+				MarkedSampleIds.Add(Mark.SampleId);
+			}
+		}
+		for (const FCarrierV2Plate& Plate : State.Plates)
+		{
+			for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+			{
+				const FCarrierV2Stage4MarkFlags* Flags = MarkLookup.Find(Stage4TriangleKey(Plate.PlateId, Triangle.LocalTriangleId));
+				if (Flags == nullptr)
+				{
+					continue;
+				}
+				FCarrierV2Stage4MarkFlags& SourceFlags = SourceTriangleMarks.FindOrAdd(Triangle.SourceTriangleId);
+				SourceFlags.bSubducting = SourceFlags.bSubducting || Flags->bSubducting;
+				SourceFlags.bColliding = SourceFlags.bColliding || Flags->bColliding;
+			}
+		}
+
+		TMap<int32, int32> RebuiltPlateBySourceTriangle;
+		for (const FCarrierV2Plate& Plate : OutSnapshot.Stage5Result.RebuiltPlates)
+		{
+			for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+			{
+				RebuiltPlateBySourceTriangle.Add(Triangle.SourceTriangleId, Plate.PlateId);
+			}
+		}
+
+		OutSnapshot.Samples.Reserve(State.Samples.Num());
+		for (const FCarrierV2SubstrateSample& Sample : State.Samples)
+		{
+			FCarrierV2FoundationStepperSampleVisual Visual;
+			Visual.SampleId = Sample.SampleId;
+			Visual.UnitPosition = Sample.UnitPosition;
+			Visual.ColdStartPlateId = SampleColdPlateCounts.IsValidIndex(Sample.SampleId)
+				? ChooseColdPlate(SampleColdPlateCounts[Sample.SampleId])
+				: INDEX_NONE;
+			Visual.bProcessMarked = MarkedSampleIds.Contains(Sample.SampleId);
+
+			if (const FCarrierV2Stage5SampleRecord* Record = SampleRecordsById.Find(Sample.SampleId))
+			{
+				Visual.AssignedPlateId = Record->AssignedPlateId;
+				Visual.RawHitCount = Record->RawHitCount;
+				Visual.FilteredSubductingHitCount = Record->FilteredSubductingHitCount;
+				Visual.FilteredCollidingHitCount = Record->FilteredCollidingHitCount;
+				Visual.ValidHitCount = Record->ValidHitCount;
+				Visual.ContinentalFraction = Record->SelectedContinentalFraction;
+				Visual.bZeroValidHit = Record->bZeroValidHit;
+				Visual.bGeneratedOceanic = Record->bGeneratedOceanic;
+				Visual.bBoundaryPairFound = Record->bBoundaryPairFound;
+				Visual.bQ1Q2DifferentPlates = Record->bQ1Q2DifferentPlates;
+				Visual.SelectionProvenance = Record->SelectionProvenance;
+			}
+			else
+			{
+				Visual.ContinentalFraction = ExpectedMaterialForSample(Sample.SampleId, State.Config.Seed).ContinentalFraction;
+				Visual.SelectionProvenance = TEXT("missing_stage5_record");
+			}
+			OutSnapshot.Samples.Add(Visual);
+		}
+
+		OutSnapshot.Triangles.Reserve(State.Triangles.Num());
+		for (const FCarrierV2SubstrateTriangle& Triangle : State.Triangles)
+		{
+			FCarrierV2FoundationStepperTriangleVisual Visual;
+			Visual.TriangleId = Triangle.TriangleId;
+			Visual.SampleIds[0] = Triangle.SampleIds[0];
+			Visual.SampleIds[1] = Triangle.SampleIds[1];
+			Visual.SampleIds[2] = Triangle.SampleIds[2];
+			Visual.ColdStartPlateId = State.TrianglePlateIds.IsValidIndex(Triangle.TriangleId)
+				? State.TrianglePlateIds[Triangle.TriangleId]
+				: INDEX_NONE;
+			Visual.RebuiltPlateId = RebuiltPlateBySourceTriangle.Contains(Triangle.TriangleId)
+				? RebuiltPlateBySourceTriangle[Triangle.TriangleId]
+				: INDEX_NONE;
+			Visual.bUnassignedAfterRebuild = Visual.RebuiltPlateId == INDEX_NONE;
+
+			if (const FCarrierV2Stage4MarkFlags* Flags = SourceTriangleMarks.Find(Triangle.TriangleId))
+			{
+				Visual.bSubductingProcessMarked = Flags->bSubducting;
+				Visual.bCollidingProcessMarked = Flags->bColliding;
+				Visual.bProcessMarked = Flags->bSubducting || Flags->bColliding;
+				for (int32 Corner = 0; Corner < 3; ++Corner)
+				{
+					if (OutSnapshot.Samples.IsValidIndex(Triangle.SampleIds[Corner]))
+					{
+						OutSnapshot.Samples[Triangle.SampleIds[Corner]].bProcessMarked = true;
+						OutSnapshot.Samples[Triangle.SampleIds[Corner]].bSubductingProcessMarked |= Flags->bSubducting;
+						OutSnapshot.Samples[Triangle.SampleIds[Corner]].bCollidingProcessMarked |= Flags->bColliding;
+					}
+				}
+			}
+
+			const FCarrierV2Stage5SampleRecord* A = SampleRecordsById.Find(Triangle.SampleIds[0]);
+			const FCarrierV2Stage5SampleRecord* B = SampleRecordsById.Find(Triangle.SampleIds[1]);
+			const FCarrierV2Stage5SampleRecord* C = SampleRecordsById.Find(Triangle.SampleIds[2]);
+			if (A != nullptr && B != nullptr && C != nullptr)
+			{
+				Visual.bMixedVertexAssignment =
+					A->AssignedPlateId != INDEX_NONE &&
+					B->AssignedPlateId != INDEX_NONE &&
+					C->AssignedPlateId != INDEX_NONE &&
+					(A->AssignedPlateId != B->AssignedPlateId ||
+						B->AssignedPlateId != C->AssignedPlateId);
+			}
+
+			OutSnapshot.Triangles.Add(Visual);
+		}
+
+		const FCarrierV2Stage5Metrics& M = OutSnapshot.Stage5Result.Metrics;
+		OutSnapshot.bCompleted = true;
+		OutSnapshot.bFixturePass = M.bFixturePass;
+		OutSnapshot.bReplayDeterministic = M.bReplayDeterministic;
+		OutSnapshot.bForbiddenFallbackDetected =
+			M.PriorOwnerFallbackCount != 0 ||
+			M.CentroidPrimaryResolutionCount != 0 ||
+			M.RandomPrimaryResolutionCount != 0 ||
+			M.NearestPrimaryResolutionCount != 0 ||
+			M.OwnershipRepairDuringRemeshCount != 0 ||
+			M.RetentionHysteresisAnchorCount != 0 ||
+			M.Q1Q2DiscreteApproxCount != 0 ||
+			M.Q1Q2PriorOwnerLookupCount != 0 ||
+			M.MaterialCreatedWithoutGapFillCount != 0 ||
+			M.MaterialDestroyedWithoutProcessCount != 0 ||
+			M.TerrainBeautyMutationCount != 0;
+		OutSnapshot.Summary = FString::Printf(
+			TEXT("fixture=%s verdict=%s pass=%s replay=%s samples=%d triangles=%d contacts=%d process_events=%d pre_marks=%d post_marks=%d zero_valid=%d generated=%d rebuilt=%d/%d forbidden=%s"),
+			*M.FixtureId,
+			*M.Verdict,
+			M.bFixturePass ? TEXT("true") : TEXT("false"),
+			M.bReplayDeterministic ? TEXT("true") : TEXT("false"),
+			M.GlobalSampleCount,
+			M.GlobalTriangleCount,
+			OutSnapshot.Stage5Result.Stage3Result.Stage2Result.Metrics.ContactCandidateCount,
+			OutSnapshot.Stage5Result.Stage3Result.Metrics.ProcessEventCount,
+			M.PreResetTriangleMarkCount,
+			M.PostResetTriangleMarkCount,
+			M.ZeroValidHitCount,
+			M.GeneratedOceanicCount,
+			M.RebuiltTriangleAssignmentCount,
+			M.GlobalTriangleCount,
+			OutSnapshot.bForbiddenFallbackDetected ? TEXT("true") : TEXT("false"));
+		return OutSnapshot.bCompleted;
 	}
 
 	TArray<FCarrierV2Stage0Config> FCarrierV2Stage0::MakeMicroFixtureConfigs()
@@ -1155,6 +4594,2281 @@ namespace CarrierLab::V2
 			Report += FString::Printf(TEXT("- 250k characterization: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
 		}
 		Report += TEXT("\nExplicit user go/no-go is required before Stage 1.\n");
+
+		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
+		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);
+		return Report;
+	}
+
+	TArray<FCarrierV2Stage1Config> FCarrierV2Stage1::MakeMicroFixtureConfigs()
+	{
+		TArray<FCarrierV2Stage1Config> Configs;
+
+		FCarrierV2Stage1Config FX005;
+		FX005.BaseConfig.FixtureId = TEXT("FX-005");
+		FX005.BaseConfig.FixtureName = TEXT("ZeroMotionReplayBase");
+		FX005.BaseConfig.SampleCount = 6;
+		FX005.BaseConfig.PlateCount = 2;
+		FX005.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX005.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX005.FixtureId = TEXT("FX-005");
+		FX005.FixtureName = TEXT("ZeroMotionReplay");
+		FX005.ExpectedMotionClass = TEXT("stable");
+		FX005.MotionStepCount = 4;
+		FX005.DtMa = 1.0;
+		FX005.bRequireNoMotionGapOrOverlap = true;
+		FX005.PlateMotions.Add(FCarrierV2MotionSpec());
+		FX005.PlateMotions.Add(FCarrierV2MotionSpec());
+		Configs.Add(FX005);
+
+		FCarrierV2Stage1Config FX006;
+		FX006.BaseConfig.FixtureId = TEXT("FX-006");
+		FX006.BaseConfig.FixtureName = TEXT("SinglePlateRotationBase");
+		FX006.BaseConfig.SampleCount = 6;
+		FX006.BaseConfig.PlateCount = 1;
+		FX006.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX006.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX006.FixtureId = TEXT("FX-006");
+		FX006.FixtureName = TEXT("SinglePlateRotation");
+		FX006.ExpectedMotionClass = TEXT("rigid_rotation");
+		FX006.MotionStepCount = 1;
+		FX006.DtMa = 1.0;
+		FX006.bRequireNoMotionGapOrOverlap = true;
+		FCarrierV2MotionSpec SingleMotion;
+		SingleMotion.Axis = FVector3d(0.0, 0.0, 1.0);
+		SingleMotion.AngularSpeedRadPerMa = 0.2;
+		FX006.PlateMotions.Add(SingleMotion);
+		Configs.Add(FX006);
+
+		FCarrierV2Stage1Config FX007;
+		FX007.BaseConfig.FixtureId = TEXT("FX-007");
+		FX007.BaseConfig.FixtureName = TEXT("ForcedDivergenceBase");
+		FX007.BaseConfig.SampleCount = 6;
+		FX007.BaseConfig.PlateCount = 2;
+		FX007.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX007.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX007.FixtureId = TEXT("FX-007");
+		FX007.FixtureName = TEXT("ForcedDivergence");
+		FX007.ExpectedMotionClass = TEXT("divergent_candidate");
+		FX007.MotionStepCount = 1;
+		FX007.DtMa = 1.0;
+		FX007.bRequireDivergentCandidate = true;
+		FCarrierV2MotionSpec DivergentA;
+		DivergentA.Axis = FVector3d(1.0, 0.0, 0.0);
+		DivergentA.AngularSpeedRadPerMa = 0.05;
+		FCarrierV2MotionSpec DivergentB;
+		DivergentB.Axis = FVector3d(1.0, 0.0, 0.0);
+		DivergentB.AngularSpeedRadPerMa = -0.05;
+		FX007.PlateMotions.Add(DivergentA);
+		FX007.PlateMotions.Add(DivergentB);
+		Configs.Add(FX007);
+
+		FCarrierV2Stage1Config FX008;
+		FX008.BaseConfig.FixtureId = TEXT("FX-008");
+		FX008.BaseConfig.FixtureName = TEXT("ForcedConvergenceBase");
+		FX008.BaseConfig.SampleCount = 6;
+		FX008.BaseConfig.PlateCount = 2;
+		FX008.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX008.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX008.FixtureId = TEXT("FX-008");
+		FX008.FixtureName = TEXT("ForcedConvergence");
+		FX008.ExpectedMotionClass = TEXT("convergent_candidate");
+		FX008.MotionStepCount = 1;
+		FX008.DtMa = 1.0;
+		FX008.bRequireConvergentCandidate = true;
+		FCarrierV2MotionSpec ConvergentA;
+		ConvergentA.Axis = FVector3d(1.0, 0.0, 0.0);
+		ConvergentA.AngularSpeedRadPerMa = -0.4;
+		FCarrierV2MotionSpec ConvergentB;
+		ConvergentB.Axis = FVector3d(1.0, 1.0, 0.0);
+		ConvergentB.AngularSpeedRadPerMa = -0.4;
+		FX008.PlateMotions.Add(ConvergentA);
+		FX008.PlateMotions.Add(ConvergentB);
+		Configs.Add(FX008);
+
+		return Configs;
+	}
+
+	FCarrierV2Stage1Config FCarrierV2Stage1::MakeScaleConfig(const int32 SampleCount, const bool bComparisonScale)
+	{
+		FCarrierV2Stage1Config Config;
+		Config.BaseConfig = FCarrierV2Stage0::MakeScaleConfig(SampleCount, bComparisonScale);
+		Config.BaseConfig.FixtureId = bComparisonScale ? TEXT("SCALE-250K-MOTION") : TEXT("SCALE-50K-MOTION");
+		Config.BaseConfig.FixtureName = bComparisonScale ? TEXT("Scale250kRigidMotionCharacterization") : TEXT("Scale50kRigidMotionGate");
+		Config.FixtureId = Config.BaseConfig.FixtureId;
+		Config.FixtureName = Config.BaseConfig.FixtureName;
+		Config.ExpectedMotionClass = TEXT("scale_motion");
+		Config.SourceStatus = TEXT("source_explicit_motion_scale_characterization");
+		Config.ProjectionCandidatePolicyId = TEXT("source_adjacent_candidates");
+		Config.bUseFullTriangleScanForProjection = false;
+		Config.bRequireNoMotionGapOrOverlap = false;
+		Config.bRequireDivergentCandidate = false;
+		Config.bRequireConvergentCandidate = false;
+		Config.MotionStepCount = 1;
+		Config.DtMa = 1.0;
+		Config.MotionToleranceKm = 1.0e-6;
+		Config.UnitLengthTolerance = 1.0e-10;
+
+		Config.PlateMotions.Reset();
+		for (int32 PlateId = 0; PlateId < Config.BaseConfig.PlateCount; ++PlateId)
+		{
+			const double Z = FMath::Clamp(-0.85 + 1.7 * (static_cast<double>(PlateId) + 0.5) / static_cast<double>(Config.BaseConfig.PlateCount), -0.95, 0.95);
+			const double R = FMath::Sqrt(FMath::Max(0.0, 1.0 - Z * Z));
+			const double Theta = GoldenAngle * static_cast<double>(PlateId + 3);
+			FCarrierV2MotionSpec Motion;
+			Motion.Axis = FVector3d(R * FMath::Cos(Theta), R * FMath::Sin(Theta), Z);
+			const double Magnitude = 0.0005 + 0.00001 * static_cast<double>(PlateId % 5);
+			Motion.AngularSpeedRadPerMa = (PlateId % 2 == 0) ? Magnitude : -Magnitude;
+			Config.PlateMotions.Add(Motion);
+		}
+
+		return Config;
+	}
+
+	bool FCarrierV2Stage1::RunFixtureWithReplay(const FCarrierV2Stage1Config& Config, FCarrierV2Stage1FixtureResult& OutResult)
+	{
+		FCarrierV2Stage1FixtureResult Replay;
+		const bool bPrimaryOk = RunStage1FixtureOnce(Config, OutResult);
+		const bool bReplayOk = RunStage1FixtureOnce(Config, Replay);
+
+		OutResult.Metrics.ReplayPostMotionAuthorityHash = Replay.Metrics.PostMotionAuthorityHash;
+		OutResult.Metrics.ReplayProjectionOutputHash = Replay.Metrics.ProjectionOutputHash;
+		OutResult.Metrics.ReplayMetricsHash = Replay.Metrics.MetricsHash;
+		OutResult.Metrics.bReplayDeterministic =
+			bPrimaryOk == bReplayOk &&
+			OutResult.Metrics.PostMotionAuthorityHash == Replay.Metrics.PostMotionAuthorityHash &&
+			OutResult.Metrics.ProjectionOutputHash == Replay.Metrics.ProjectionOutputHash &&
+			OutResult.Metrics.Verdict == Replay.Metrics.Verdict &&
+			OutResult.Metrics.bFixturePass == Replay.Metrics.bFixturePass;
+
+		OutResult.Metrics.bFixturePass = OutResult.Metrics.bFixturePass && OutResult.Metrics.bReplayDeterministic;
+		OutResult.Metrics.bStageGatePass = OutResult.Metrics.bFixturePass;
+		if (!OutResult.Metrics.bReplayDeterministic)
+		{
+			OutResult.Metrics.Verdict = TEXT("FAIL_REPLAY_DETERMINISM");
+			if (OutResult.Error.IsEmpty())
+			{
+				OutResult.Error = TEXT("Replay A/B post-motion authority, projection, or verdict differed.");
+			}
+		}
+		OutResult.Metrics.ProjectionOutputHash = HashToString(HashStage1ProjectionMetrics(OutResult.Metrics, false));
+		OutResult.Metrics.MetricsHash.Reset();
+		OutResult.Metrics.MetricsHash = HashToString(HashStage1ProjectionMetrics(OutResult.Metrics, true));
+		return bPrimaryOk && bReplayOk && OutResult.Metrics.bFixturePass;
+	}
+
+	FString FCarrierV2Stage1::MetricsToJson(const FCarrierV2Stage1FixtureResult& Result)
+	{
+		const FCarrierV2Stage1Metrics& M = Result.Metrics;
+		return FString::Printf(
+			TEXT("{")
+			TEXT("\"run_id\":%s,")
+			TEXT("\"stage_id\":%s,")
+			TEXT("\"fixture_id\":%s,")
+			TEXT("\"fixture_name\":%s,")
+			TEXT("\"fixture_kind\":%s,")
+			TEXT("\"expected_motion_class\":%s,")
+			TEXT("\"source_status\":%s,")
+			TEXT("\"projection_candidate_policy_id\":%s,")
+			TEXT("\"sample_count\":%d,")
+			TEXT("\"triangle_count\":%d,")
+			TEXT("\"plate_count\":%d,")
+			TEXT("\"motion_step_count\":%d,")
+			TEXT("\"dt_ma\":%.12g,")
+			TEXT("\"total_motion_ma\":%.12g,")
+			TEXT("\"planet_radius_km\":%.12g,")
+			TEXT("\"motion_tolerance_km\":%.12g,")
+			TEXT("\"unit_length_tolerance\":%.12g,")
+			TEXT("\"ray_epsilon\":%.12g,")
+			TEXT("\"config_hash\":%s,")
+			TEXT("\"pre_motion_authority_hash\":%s,")
+			TEXT("\"post_motion_authority_hash\":%s,")
+			TEXT("\"projection_output_hash\":%s,")
+			TEXT("\"metrics_hash\":%s,")
+			TEXT("\"global_sample_count\":%d,")
+			TEXT("\"global_triangle_count\":%d,")
+			TEXT("\"local_plate_vertex_count_sum\":%d,")
+			TEXT("\"local_plate_triangle_count_sum\":%d,")
+			TEXT("\"motion_vertex_count\":%d,")
+			TEXT("\"analytic_motion_max_error_km\":%.12g,")
+			TEXT("\"analytic_motion_mean_error_km\":%.12g,")
+			TEXT("\"unit_length_max_error\":%.12g,")
+			TEXT("\"rotated_vector_max_error\":%.12g,")
+			TEXT("\"rotated_vector_count\":%d,")
+			TEXT("\"material_attachment_error_count\":%d,")
+			TEXT("\"raw_motion_miss_count\":%d,")
+			TEXT("\"raw_motion_overlap_count\":%d,")
+			TEXT("\"boundary_degenerate_count\":%d,")
+			TEXT("\"boundary_policy_selected_count\":%d,")
+			TEXT("\"divergent_candidate_count\":%d,")
+			TEXT("\"convergent_candidate_count\":%d,")
+			TEXT("\"motion_repair_count\":%d,")
+			TEXT("\"remesh_during_motion_count\":%d,")
+			TEXT("\"projection_reads_global_owner_count\":%d,")
+			TEXT("\"raw_hit_count_total\":%lld,")
+			TEXT("\"ray_triangle_test_count\":%lld,")
+			TEXT("\"motion_oracle_pass\":%s,")
+			TEXT("\"unit_length_pass\":%s,")
+			TEXT("\"material_attachment_pass\":%s,")
+			TEXT("\"projection_expectation_pass\":%s,")
+			TEXT("\"no_repair_or_remesh_pass\":%s,")
+			TEXT("\"replay_deterministic\":%s,")
+			TEXT("\"fixture_pass\":%s,")
+			TEXT("\"stage_gate_pass\":%s,")
+			TEXT("\"verdict\":%s,")
+			TEXT("\"replay_post_motion_authority_hash\":%s,")
+			TEXT("\"replay_projection_output_hash\":%s,")
+			TEXT("\"replay_metrics_hash\":%s,")
+			TEXT("\"build_substrate_ms\":%.3f,")
+			TEXT("\"build_plate_local_ms\":%.3f,")
+			TEXT("\"motion_apply_ms\":%.3f,")
+			TEXT("\"projection_kernel_ms\":%.3f,")
+			TEXT("\"metrics_ms\":%.3f,")
+			TEXT("\"total_ms\":%.3f,")
+			TEXT("\"peak_memory_mb\":%.3f")
+			TEXT("}"),
+			*JsonString(M.RunId),
+			*JsonString(M.StageId),
+			*JsonString(M.FixtureId),
+			*JsonString(M.FixtureName),
+			*JsonString(M.FixtureKind),
+			*JsonString(M.ExpectedMotionClass),
+			*JsonString(M.SourceStatus),
+			*JsonString(M.ProjectionCandidatePolicyId),
+			M.SampleCount,
+			M.TriangleCount,
+			M.PlateCount,
+			M.MotionStepCount,
+			M.DtMa,
+			M.TotalMotionMa,
+			M.PlanetRadiusKm,
+			M.MotionToleranceKm,
+			M.UnitLengthTolerance,
+			M.RayEpsilon,
+			*JsonString(M.ConfigHash),
+			*JsonString(M.PreMotionAuthorityHash),
+			*JsonString(M.PostMotionAuthorityHash),
+			*JsonString(M.ProjectionOutputHash),
+			*JsonString(M.MetricsHash),
+			M.GlobalSampleCount,
+			M.GlobalTriangleCount,
+			M.LocalPlateVertexCountSum,
+			M.LocalPlateTriangleCountSum,
+			M.MotionVertexCount,
+			M.AnalyticMotionMaxErrorKm,
+			M.AnalyticMotionMeanErrorKm,
+			M.UnitLengthMaxError,
+			M.RotatedVectorMaxError,
+			M.RotatedVectorCount,
+			M.MaterialAttachmentErrorCount,
+			M.RawMotionMissCount,
+			M.RawMotionOverlapCount,
+			M.BoundaryDegenerateCount,
+			M.BoundaryPolicySelectedCount,
+			M.DivergentCandidateCount,
+			M.ConvergentCandidateCount,
+			M.MotionRepairCount,
+			M.RemeshDuringMotionCount,
+			M.ProjectionReadsGlobalOwnerCount,
+			M.RawHitCountTotal,
+			M.RayTriangleTestCount,
+			M.bMotionOraclePass ? TEXT("true") : TEXT("false"),
+			M.bUnitLengthPass ? TEXT("true") : TEXT("false"),
+			M.bMaterialAttachmentPass ? TEXT("true") : TEXT("false"),
+			M.bProjectionExpectationPass ? TEXT("true") : TEXT("false"),
+			M.bNoRepairOrRemeshPass ? TEXT("true") : TEXT("false"),
+			M.bReplayDeterministic ? TEXT("true") : TEXT("false"),
+			M.bFixturePass ? TEXT("true") : TEXT("false"),
+			M.bStageGatePass ? TEXT("true") : TEXT("false"),
+			*JsonString(M.Verdict),
+			*JsonString(M.ReplayPostMotionAuthorityHash),
+			*JsonString(M.ReplayProjectionOutputHash),
+			*JsonString(M.ReplayMetricsHash),
+			M.BuildSubstrateMs,
+			M.BuildPlateLocalMs,
+			M.MotionApplyMs,
+			M.ProjectionKernelMs,
+			M.MetricsMs,
+			M.TotalMs,
+			M.PeakMemoryMb);
+	}
+
+	FString FCarrierV2Stage1::BuildCheckpointReport(
+		const FCarrierV2Stage1SuiteResult& Suite,
+		const FString& CommandLine,
+		const FString& CommitSha)
+	{
+		const double Start = FPlatformTime::Seconds();
+		FString Report;
+		Report += TEXT("# CarrierLab V2 Stage 1 Report\n\n");
+		Report += TEXT("Status: generated by `CarrierLabV2Stage1`.\n\n");
+		Report += FString::Printf(TEXT("- Commit: `%s`\n"), CommitSha.IsEmpty() ? TEXT("unknown") : *CommitSha);
+		Report += FString::Printf(TEXT("- Command: `%s`\n"), *CommandLine);
+		Report += FString::Printf(TEXT("- Output root: `%s`\n"), *Suite.OutputRoot);
+		Report += FString::Printf(TEXT("- Metrics JSONL: `%s`\n\n"), *Suite.MetricsPath);
+
+		Report += TEXT("## Scope\n\n");
+		Report += TEXT("V2-1 covers rigid plate-local motion, attached material record preservation, an independent analytic motion oracle, replay determinism, and raw post-motion projection classification. It does not cover remesh, gap filling, contact resolution, subduction, collision, rifting, uplift, erosion, slab pull, editor UI, maps as gates, or ownership repair.\n\n");
+
+		Report += TEXT("## Fixture Gates\n\n");
+		Report += TEXT("| fixture | class | samples | triangles | policy | pass | verdict |\n");
+		Report += TEXT("|---|---|---:|---:|---|---|---|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | %d | %d | `%s` | %s | `%s` |\n"),
+				*M.FixtureId,
+				*M.ExpectedMotionClass,
+				M.GlobalSampleCount,
+				M.GlobalTriangleCount,
+				*M.ProjectionCandidatePolicyId,
+				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
+				*M.Verdict);
+		}
+
+		Report += TEXT("\n## Motion Oracle\n\n");
+		Report += TEXT("| fixture | moved vertices | max error km | mean error km | unit length max error | material attachment errors | oracle pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %.12g | %.12g | %.12g | %d | %s |\n"),
+				*M.FixtureId,
+				M.MotionVertexCount,
+				M.AnalyticMotionMaxErrorKm,
+				M.AnalyticMotionMeanErrorKm,
+				M.UnitLengthMaxError,
+				M.MaterialAttachmentErrorCount,
+				M.bMotionOraclePass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Post-Motion Projection Classification\n\n");
+		Report += TEXT("| fixture | raw misses | raw overlaps | boundary hits | divergent candidates | convergent candidates | repairs | remeshes | expectation pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.RawMotionMissCount,
+				M.RawMotionOverlapCount,
+				M.BoundaryDegenerateCount,
+				M.DivergentCandidateCount,
+				M.ConvergentCandidateCount,
+				M.MotionRepairCount,
+				M.RemeshDuringMotionCount,
+				M.bProjectionExpectationPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Performance Ladder\n\n");
+		Report += TEXT("| fixture | samples | substrate ms | plate-local ms | motion ms | projection ms | metrics ms | total ms | peak memory mb |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n"),
+				*M.FixtureId,
+				M.GlobalSampleCount,
+				M.BuildSubstrateMs,
+				M.BuildPlateLocalMs,
+				M.MotionApplyMs,
+				M.ProjectionKernelMs,
+				M.MetricsMs,
+				M.TotalMs,
+				M.PeakMemoryMb);
+		}
+
+		Report += TEXT("\n## Replay A/B\n\n");
+		Report += TEXT("| fixture | post-motion authority | replay authority | projection hash | replay projection hash | deterministic |\n");
+		Report += TEXT("|---|---|---|---|---|---|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | `%s` | `%s` | `%s` | %s |\n"),
+				*M.FixtureId,
+				*M.PostMotionAuthorityHash,
+				*M.ReplayPostMotionAuthorityHash,
+				*M.ProjectionOutputHash,
+				*M.ReplayProjectionOutputHash,
+				M.bReplayDeterministic ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Policy Ledger\n\n");
+		Report += TEXT("| policy | authority class | behavior | audit evidence |\n");
+		Report += TEXT("|---|---|---|---|\n");
+		Report += TEXT("| `V2-1-POL-FULL-SCAN-MICRO` | diagnostic_only | FX-005 through FX-008 classify moved geometry with exhaustive local triangle scans | `projection_candidate_policy_id=full_triangle_scan` |\n");
+		Report += TEXT("| `V2-1-POL-SOURCE-ADJACENT-SCALE-READOUT` | source_silent_lab_policy | scale fixtures classify only source-adjacent triangle candidates as a performance sanity probe, not final broadphase authority | `projection_candidate_policy_id=source_adjacent_candidates` |\n");
+		Report += TEXT("| `V2-1-POL-NO-REPAIR-NO-REMESH` | source_explicit_stop_condition | gaps and overlaps are counted but not repaired or resampled | `motion_repair_count=0`, `remesh_during_motion_count=0` |\n");
+		Report += TEXT("| `V2-1-POL-INDEPENDENT-ROTATION-ORACLE` | source_explicit_formula | implementation applies incremental Rodrigues rotation; oracle recomputes final position from pre-motion snapshots with axis-parallel/perpendicular decomposition | analytic error columns |\n\n");
+
+		Report += TEXT("## Independent Oracle\n\n");
+		Report += TEXT("Motion checks recompute expected final vertex positions from pre-motion snapshots and motion specs, not from mutated post-motion state. Material checks compare source sample ids and material records before and after motion. Projection classification reads moved plate-local triangles and never reads persistent global sample ownership as tectonic authority.\n\n");
+
+		Report += TEXT("## Known Limitations\n\n");
+		Report += TEXT("- Micro fixtures are correctness microscopes for motion and raw classification, not paper-scale terrain evidence.\n");
+		Report += TEXT("- 50k is the minimum V2-1 scale gate; 250k is characterization unless explicitly made a hard gate.\n");
+		Report += TEXT("- 500k is not attempted by this V2-1 commandlet goal.\n");
+		Report += TEXT("- Scale projection uses source-adjacent candidates, so it is a performance/readout sanity check rather than the final moved-surface spatial index.\n");
+		Report += TEXT("- V2-1 intentionally stops before Stage 1.5 resampling and before any process physics.\n\n");
+
+		Report += TEXT("## Verdict\n\n");
+		Report += FString::Printf(TEXT("Verdict: `%s`\n\n"), *Suite.Verdict);
+		Report += FString::Printf(TEXT("- Micro gate: %s\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 50k gate: %s\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 250k characterization attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
+		if (Suite.bAttempted250k)
+		{
+			Report += FString::Printf(TEXT("- 250k characterization: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
+		}
+		Report += TEXT("\nExplicit user go/no-go is required before V2-2 or Stage 1.5 work.\n");
+
+		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
+		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);
+		return Report;
+	}
+
+	TArray<FCarrierV2Stage2Config> FCarrierV2Stage2::MakeMicroFixtureConfigs()
+	{
+		TArray<FCarrierV2Stage2Config> Configs;
+		const TArray<FCarrierV2Stage1Config> Stage1Configs = FCarrierV2Stage1::MakeMicroFixtureConfigs();
+
+		for (const FCarrierV2Stage1Config& Stage1Config : Stage1Configs)
+		{
+			if (Stage1Config.FixtureId == TEXT("FX-007"))
+			{
+				FCarrierV2Stage2Config FX007;
+				FX007.MotionConfig = Stage1Config;
+				FX007.FixtureId = TEXT("FX-007");
+				FX007.FixtureName = TEXT("ForcedDivergenceNoProcessDryRun");
+				FX007.ExpectedProcessClass = TEXT("divergent_gap_no_process_dry_run");
+				FX007.ContactPolicyId = TEXT("moved_geometry_full_scan_dry_run");
+				FX007.bUseFullTriangleScanForContact = true;
+				FX007.bRequireNoContactCandidates = true;
+				Configs.Add(FX007);
+			}
+			else if (Stage1Config.FixtureId == TEXT("FX-008"))
+			{
+				FCarrierV2Stage2Config FX008;
+				FX008.MotionConfig = Stage1Config;
+				FX008.FixtureId = TEXT("FX-008");
+				FX008.FixtureName = TEXT("ForcedConvergenceContactDryRun");
+				FX008.ExpectedProcessClass = TEXT("convergent_contact_dry_run");
+				FX008.ContactPolicyId = TEXT("moved_geometry_full_scan_dry_run");
+				FX008.bUseFullTriangleScanForContact = true;
+				FX008.bRequireContactCandidate = true;
+				FX008.bRequirePolarityCandidate = true;
+				FX008.ExpectedMinimumContactCandidates = 1;
+				FX008.ExpectedMinimumPolarityCandidates = 1;
+				Configs.Add(FX008);
+			}
+		}
+
+		FCarrierV2Stage2Config FX009;
+		FX009.MotionConfig.BaseConfig.FixtureId = TEXT("FX-009");
+		FX009.MotionConfig.BaseConfig.FixtureName = TEXT("ThirdPlateIntrusionBase");
+		FX009.MotionConfig.BaseConfig.SampleCount = 6;
+		FX009.MotionConfig.BaseConfig.PlateCount = 3;
+		FX009.MotionConfig.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX009.MotionConfig.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX009.MotionConfig.FixtureId = TEXT("FX-009");
+		FX009.MotionConfig.FixtureName = TEXT("ThirdPlateIntrusionMotion");
+		FX009.MotionConfig.ExpectedMotionClass = TEXT("third_plate_intrusion_candidate");
+		FX009.MotionConfig.SourceStatus = TEXT("source_explicit_contact_fixture_lab_policy");
+		FX009.MotionConfig.MotionStepCount = 1;
+		FX009.MotionConfig.DtMa = 1.0;
+		FX009.MotionConfig.bRequireConvergentCandidate = true;
+		FX009.MotionConfig.PlateMotions.Reset();
+		FCarrierV2MotionSpec Plate0Motion;
+		Plate0Motion.Axis = FVector3d(0.9426621464385799, -0.3175991106642196, 0.10256160381500525);
+		Plate0Motion.AngularSpeedRadPerMa = 0.5923621410870896;
+		FCarrierV2MotionSpec Plate1Motion;
+		Plate1Motion.Axis = FVector3d(0.5899635663382427, -0.24654745832838693, -0.7688675706422232);
+		Plate1Motion.AngularSpeedRadPerMa = -0.44091979709734674;
+		FCarrierV2MotionSpec Plate2Motion;
+		Plate2Motion.Axis = FVector3d(0.5600355667775193, 0.3593805462203835, 0.7464621805172192);
+		Plate2Motion.AngularSpeedRadPerMa = 0.04244305037900342;
+		FX009.MotionConfig.PlateMotions.Add(Plate0Motion);
+		FX009.MotionConfig.PlateMotions.Add(Plate1Motion);
+		FX009.MotionConfig.PlateMotions.Add(Plate2Motion);
+		FX009.FixtureId = TEXT("FX-009");
+		FX009.FixtureName = TEXT("ThirdPlateIntrusionDryRun");
+		FX009.ExpectedProcessClass = TEXT("third_plate_intrusion_dry_run");
+		FX009.ContactPolicyId = TEXT("moved_geometry_full_scan_dry_run");
+		FX009.bUseFullTriangleScanForContact = true;
+		FX009.bRequireContactCandidate = true;
+		FX009.bRequireThirdPlateIntrusion = true;
+		FX009.bRequirePolarityCandidate = true;
+		FX009.ExpectedMinimumContactCandidates = 1;
+		FX009.ExpectedMinimumThirdPlateIntrusions = 1;
+		FX009.ExpectedMinimumPolarityCandidates = 1;
+		Configs.Add(FX009);
+
+		return Configs;
+	}
+
+	FCarrierV2Stage2Config FCarrierV2Stage2::MakeScaleConfig(const int32 SampleCount, const bool bComparisonScale)
+	{
+		FCarrierV2Stage2Config Config;
+		Config.MotionConfig = FCarrierV2Stage1::MakeScaleConfig(SampleCount, bComparisonScale);
+		Config.MotionConfig.BaseConfig.FixtureId = bComparisonScale ? TEXT("SCALE-250K-CONTACT") : TEXT("SCALE-50K-CONTACT");
+		Config.MotionConfig.BaseConfig.FixtureName = bComparisonScale ? TEXT("Scale250kContactDryRunCharacterization") : TEXT("Scale50kContactDryRunGate");
+		Config.MotionConfig.FixtureId = Config.MotionConfig.BaseConfig.FixtureId;
+		Config.MotionConfig.FixtureName = Config.MotionConfig.BaseConfig.FixtureName;
+		Config.MotionConfig.ExpectedMotionClass = TEXT("scale_motion_contact_readout");
+		Config.FixtureId = Config.MotionConfig.FixtureId;
+		Config.FixtureName = Config.MotionConfig.FixtureName;
+		Config.ExpectedProcessClass = TEXT("scale_contact_dry_run");
+		Config.ContactPolicyId = TEXT("moved_geometry_source_adjacent_contact_dry_run");
+		Config.bUseFullTriangleScanForContact = false;
+		Config.bRequireContactCandidate = true;
+		Config.bRequirePolarityCandidate = true;
+		Config.ExpectedMinimumContactCandidates = 1;
+		Config.ExpectedMinimumPolarityCandidates = 1;
+		return Config;
+	}
+
+	bool FCarrierV2Stage2::RunFixtureWithReplay(const FCarrierV2Stage2Config& Config, FCarrierV2Stage2FixtureResult& OutResult)
+	{
+		FCarrierV2Stage2FixtureResult Replay;
+		const bool bPrimaryOk = RunStage2FixtureOnce(Config, OutResult);
+		const bool bReplayOk = RunStage2FixtureOnce(Config, Replay);
+
+		OutResult.Metrics.ReplayPostMotionAuthorityHash = Replay.Metrics.PostMotionAuthorityHash;
+		OutResult.Metrics.ReplayProjectionOutputHash = Replay.Metrics.ProjectionOutputHash;
+		OutResult.Metrics.ReplayProcessStateHash = Replay.Metrics.ProcessStateHash;
+		OutResult.Metrics.ReplayMetricsHash = Replay.Metrics.MetricsHash;
+		OutResult.Metrics.bReplayDeterministic =
+			bPrimaryOk == bReplayOk &&
+			OutResult.Metrics.PostMotionAuthorityHash == Replay.Metrics.PostMotionAuthorityHash &&
+			OutResult.Metrics.ProjectionOutputHash == Replay.Metrics.ProjectionOutputHash &&
+			OutResult.Metrics.ProcessStateHash == Replay.Metrics.ProcessStateHash &&
+			OutResult.Metrics.Verdict == Replay.Metrics.Verdict &&
+			OutResult.Metrics.bFixturePass == Replay.Metrics.bFixturePass;
+
+		OutResult.Metrics.bFixturePass = OutResult.Metrics.bFixturePass && OutResult.Metrics.bReplayDeterministic;
+		OutResult.Metrics.bStageGatePass = OutResult.Metrics.bFixturePass;
+		if (!OutResult.Metrics.bReplayDeterministic)
+		{
+			OutResult.Metrics.Verdict = TEXT("FAIL_REPLAY_DETERMINISM");
+			if (OutResult.Error.IsEmpty())
+			{
+				OutResult.Error = TEXT("Replay A/B post-motion, projection, process-state, or verdict differed.");
+			}
+		}
+		OutResult.Metrics.MetricsHash = HashToString(HashStage2Metrics(OutResult.Metrics, true));
+		return bPrimaryOk && bReplayOk && OutResult.Metrics.bFixturePass;
+	}
+
+	FString FCarrierV2Stage2::MetricsToJson(const FCarrierV2Stage2FixtureResult& Result)
+	{
+		const FCarrierV2Stage2Metrics& M = Result.Metrics;
+		FString Json = FString::Printf(
+			TEXT("{")
+			TEXT("\"run_id\":%s,")
+			TEXT("\"stage_id\":%s,")
+			TEXT("\"fixture_id\":%s,")
+			TEXT("\"fixture_name\":%s,")
+			TEXT("\"fixture_kind\":%s,")
+			TEXT("\"expected_motion_class\":%s,")
+			TEXT("\"expected_process_class\":%s,")
+			TEXT("\"source_status\":%s,")
+			TEXT("\"projection_candidate_policy_id\":%s,")
+			TEXT("\"contact_policy_id\":%s,")
+			TEXT("\"sample_count\":%d,")
+			TEXT("\"triangle_count\":%d,")
+			TEXT("\"plate_count\":%d,")
+			TEXT("\"motion_step_count\":%d,")
+			TEXT("\"dt_ma\":%.12g,")
+			TEXT("\"total_motion_ma\":%.12g,")
+			TEXT("\"planet_radius_km\":%.12g,")
+			TEXT("\"motion_tolerance_km\":%.12g,")
+			TEXT("\"unit_length_tolerance\":%.12g,")
+			TEXT("\"ray_epsilon\":%.12g,")
+			TEXT("\"config_hash\":%s,")
+			TEXT("\"pre_motion_authority_hash\":%s,")
+			TEXT("\"post_motion_authority_hash\":%s,")
+			TEXT("\"projection_output_hash\":%s,")
+			TEXT("\"process_state_hash\":%s,")
+			TEXT("\"metrics_hash\":%s,")
+			TEXT("\"global_sample_count\":%d,")
+			TEXT("\"global_triangle_count\":%d,")
+			TEXT("\"local_plate_vertex_count_sum\":%d,")
+			TEXT("\"local_plate_triangle_count_sum\":%d,")
+			TEXT("\"motion_vertex_count\":%d,")
+			TEXT("\"analytic_motion_max_error_km\":%.12g,")
+			TEXT("\"analytic_motion_mean_error_km\":%.12g,")
+			TEXT("\"unit_length_max_error\":%.12g,")
+			TEXT("\"material_attachment_error_count\":%d,")
+			TEXT("\"raw_motion_miss_count\":%d,")
+			TEXT("\"raw_motion_overlap_count\":%d,")
+			TEXT("\"boundary_degenerate_count\":%d,")
+			TEXT("\"boundary_policy_selected_count\":%d,")
+			TEXT("\"divergent_candidate_count\":%d,")
+			TEXT("\"convergent_candidate_count\":%d,")
+			TEXT("\"motion_repair_count\":%d,")
+			TEXT("\"remesh_during_motion_count\":%d,")
+			TEXT("\"projection_reads_global_owner_count\":%d,")
+			TEXT("\"contact_candidate_count\":%d,")
+			TEXT("\"accepted_convergence_evidence_count\":%d,")
+			TEXT("\"rejected_contact_count\":%d,")
+			TEXT("\"third_plate_intrusion_count\":%d,")
+			TEXT("\"polarity_candidate_count\":%d,")
+			TEXT("\"process_mutation_count\":%d,")
+			TEXT("\"centroid_primary_resolution_count\":%d,")
+			TEXT("\"random_primary_resolution_count\":%d,")
+			TEXT("\"nearest_primary_resolution_count\":%d,")
+			TEXT("\"projection_owner_label_evidence_count\":%d,")
+			TEXT("\"overlap_consumed_before_process_state_count\":%d,")
+			TEXT("\"material_mutation_count\":%d,")
+			TEXT("\"remesh_during_process_dry_run_count\":%d,")
+			TEXT("\"gap_fill_during_process_dry_run_count\":%d,")
+			TEXT("\"raw_hit_count_total\":%lld,")
+			TEXT("\"ray_triangle_test_count\":%lld,")
+			TEXT("\"contact_raw_hit_count_total\":%lld,")
+			TEXT("\"contact_ray_triangle_test_count\":%lld,")
+			TEXT("\"motion_oracle_pass\":%s,")
+			TEXT("\"unit_length_pass\":%s,")
+			TEXT("\"material_attachment_pass\":%s,")
+			TEXT("\"projection_expectation_pass\":%s,")
+			TEXT("\"no_repair_or_remesh_pass\":%s,")
+			TEXT("\"contact_evidence_pass\":%s,")
+			TEXT("\"dry_run_no_mutation_pass\":%s,")
+			TEXT("\"no_primary_resolver_pass\":%s,")
+			TEXT("\"third_plate_pass\":%s,")
+			TEXT("\"polarity_pass\":%s,")
+			TEXT("\"replay_deterministic\":%s,")
+			TEXT("\"fixture_pass\":%s,")
+			TEXT("\"stage_gate_pass\":%s,")
+			TEXT("\"verdict\":%s,")
+			TEXT("\"replay_post_motion_authority_hash\":%s,")
+			TEXT("\"replay_projection_output_hash\":%s,")
+			TEXT("\"replay_process_state_hash\":%s,")
+			TEXT("\"replay_metrics_hash\":%s,")
+			TEXT("\"build_substrate_ms\":%.3f,")
+			TEXT("\"build_plate_local_ms\":%.3f,")
+			TEXT("\"motion_apply_ms\":%.3f,")
+			TEXT("\"projection_kernel_ms\":%.3f,")
+			TEXT("\"contact_detection_ms\":%.3f,")
+			TEXT("\"metrics_ms\":%.3f,")
+			TEXT("\"total_ms\":%.3f,")
+			TEXT("\"peak_memory_mb\":%.3f,")
+			TEXT("\"process_candidates\":["),
+			*JsonString(M.RunId),
+			*JsonString(M.StageId),
+			*JsonString(M.FixtureId),
+			*JsonString(M.FixtureName),
+			*JsonString(M.FixtureKind),
+			*JsonString(M.ExpectedMotionClass),
+			*JsonString(M.ExpectedProcessClass),
+			*JsonString(M.SourceStatus),
+			*JsonString(M.ProjectionCandidatePolicyId),
+			*JsonString(M.ContactPolicyId),
+			M.SampleCount,
+			M.TriangleCount,
+			M.PlateCount,
+			M.MotionStepCount,
+			M.DtMa,
+			M.TotalMotionMa,
+			M.PlanetRadiusKm,
+			M.MotionToleranceKm,
+			M.UnitLengthTolerance,
+			M.RayEpsilon,
+			*JsonString(M.ConfigHash),
+			*JsonString(M.PreMotionAuthorityHash),
+			*JsonString(M.PostMotionAuthorityHash),
+			*JsonString(M.ProjectionOutputHash),
+			*JsonString(M.ProcessStateHash),
+			*JsonString(M.MetricsHash),
+			M.GlobalSampleCount,
+			M.GlobalTriangleCount,
+			M.LocalPlateVertexCountSum,
+			M.LocalPlateTriangleCountSum,
+			M.MotionVertexCount,
+			M.AnalyticMotionMaxErrorKm,
+			M.AnalyticMotionMeanErrorKm,
+			M.UnitLengthMaxError,
+			M.MaterialAttachmentErrorCount,
+			M.RawMotionMissCount,
+			M.RawMotionOverlapCount,
+			M.BoundaryDegenerateCount,
+			M.BoundaryPolicySelectedCount,
+			M.DivergentCandidateCount,
+			M.ConvergentCandidateCount,
+			M.MotionRepairCount,
+			M.RemeshDuringMotionCount,
+			M.ProjectionReadsGlobalOwnerCount,
+			M.ContactCandidateCount,
+			M.AcceptedConvergenceEvidenceCount,
+			M.RejectedContactCount,
+			M.ThirdPlateIntrusionCount,
+			M.PolarityCandidateCount,
+			M.ProcessMutationCount,
+			M.CentroidPrimaryResolutionCount,
+			M.RandomPrimaryResolutionCount,
+			M.NearestPrimaryResolutionCount,
+			M.ProjectionOwnerLabelEvidenceCount,
+			M.OverlapConsumedBeforeProcessStateCount,
+			M.MaterialMutationCount,
+			M.RemeshDuringProcessDryRunCount,
+			M.GapFillDuringProcessDryRunCount,
+			M.RawHitCountTotal,
+			M.RayTriangleTestCount,
+			M.ContactRawHitCountTotal,
+			M.ContactRayTriangleTestCount,
+			M.bMotionOraclePass ? TEXT("true") : TEXT("false"),
+			M.bUnitLengthPass ? TEXT("true") : TEXT("false"),
+			M.bMaterialAttachmentPass ? TEXT("true") : TEXT("false"),
+			M.bProjectionExpectationPass ? TEXT("true") : TEXT("false"),
+			M.bNoRepairOrRemeshPass ? TEXT("true") : TEXT("false"),
+			M.bContactEvidencePass ? TEXT("true") : TEXT("false"),
+			M.bDryRunNoMutationPass ? TEXT("true") : TEXT("false"),
+			M.bNoPrimaryResolverPass ? TEXT("true") : TEXT("false"),
+			M.bThirdPlatePass ? TEXT("true") : TEXT("false"),
+			M.bPolarityPass ? TEXT("true") : TEXT("false"),
+			M.bReplayDeterministic ? TEXT("true") : TEXT("false"),
+			M.bFixturePass ? TEXT("true") : TEXT("false"),
+			M.bStageGatePass ? TEXT("true") : TEXT("false"),
+			*JsonString(M.Verdict),
+			*JsonString(M.ReplayPostMotionAuthorityHash),
+			*JsonString(M.ReplayProjectionOutputHash),
+			*JsonString(M.ReplayProcessStateHash),
+			*JsonString(M.ReplayMetricsHash),
+			M.BuildSubstrateMs,
+			M.BuildPlateLocalMs,
+			M.MotionApplyMs,
+			M.ProjectionKernelMs,
+			M.ContactDetectionMs,
+			M.MetricsMs,
+			M.TotalMs,
+			M.PeakMemoryMb);
+
+		for (int32 Index = 0; Index < Result.ProcessCandidates.Num(); ++Index)
+		{
+			if (Index > 0)
+			{
+				Json += TEXT(",");
+			}
+			const FCarrierV2ProcessCandidateRecord& Candidate = Result.ProcessCandidates[Index];
+			Json += FString::Printf(
+				TEXT("{\"candidate_id\":%d,\"sample_id\":%d,\"candidate_class\":%s,\"evidence_kind\":%s,\"plate_ids\":%s,\"local_triangle_ids\":%s,\"contact_hit_plate_ids\":%s,\"contact_hit_local_triangle_ids\":%s,\"third_plate_visible\":%s,\"polarity_candidate\":%s,\"accepted\":%s}"),
+				Candidate.CandidateId,
+				Candidate.SampleId,
+				*JsonString(Candidate.CandidateClass),
+				*JsonString(Candidate.EvidenceKind),
+				*JsonIntArray(Candidate.PlateIds),
+				*JsonIntArray(Candidate.LocalTriangleIds),
+				*JsonIntArray(Candidate.ContactHitPlateIds),
+				*JsonIntArray(Candidate.ContactHitLocalTriangleIds),
+				Candidate.bThirdPlateVisible ? TEXT("true") : TEXT("false"),
+				Candidate.bPolarityCandidate ? TEXT("true") : TEXT("false"),
+				Candidate.bAccepted ? TEXT("true") : TEXT("false"));
+		}
+		Json += TEXT("]}");
+		return Json;
+	}
+
+	FString FCarrierV2Stage2::BuildCheckpointReport(
+		const FCarrierV2Stage2SuiteResult& Suite,
+		const FString& CommandLine,
+		const FString& CommitSha)
+	{
+		const double Start = FPlatformTime::Seconds();
+		FString Report;
+		Report += TEXT("# CarrierLab V2 Stage 2 Report\n\n");
+		Report += TEXT("Status: generated by `CarrierLabV2Stage2`.\n\n");
+		Report += FString::Printf(TEXT("- Commit: `%s`\n"), CommitSha.IsEmpty() ? TEXT("unknown") : *CommitSha);
+		Report += FString::Printf(TEXT("- Command: `%s`\n"), *CommandLine);
+		Report += FString::Printf(TEXT("- Output root: `%s`\n"), *Suite.OutputRoot);
+		Report += FString::Printf(TEXT("- Metrics JSONL: `%s`\n\n"), *Suite.MetricsPath);
+
+		Report += TEXT("## Scope\n\n");
+		Report += TEXT("V2-2 covers contact/process dry-run evidence after rigid motion: moved-geometry multi-hit candidates, polarity candidate records, third-plate visibility, process-state hashing, and replay determinism. It does not mutate material, choose overlap winners, subduct, collide, remesh, fill gaps, repair ownership, or claim terrain generation.\n\n");
+
+		Report += TEXT("## Fixture Gates\n\n");
+		Report += TEXT("| fixture | process class | samples | triangles | policy | pass | verdict |\n");
+		Report += TEXT("|---|---|---:|---:|---|---|---|\n");
+		for (const FCarrierV2Stage2FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage2Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | %d | %d | `%s` | %s | `%s` |\n"),
+				*M.FixtureId,
+				*M.ExpectedProcessClass,
+				M.GlobalSampleCount,
+				M.GlobalTriangleCount,
+				*M.ContactPolicyId,
+				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
+				*M.Verdict);
+		}
+
+		Report += TEXT("\n## Contact Evidence\n\n");
+		Report += TEXT("| fixture | raw motion miss | raw motion overlap | contacts | accepted evidence | rejected contacts | third-plate | polarity | contact pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage2FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage2Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.RawMotionMissCount,
+				M.RawMotionOverlapCount,
+				M.ContactCandidateCount,
+				M.AcceptedConvergenceEvidenceCount,
+				M.RejectedContactCount,
+				M.ThirdPlateIntrusionCount,
+				M.PolarityCandidateCount,
+				M.bContactEvidencePass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Dry-Run Guardrails\n\n");
+		Report += TEXT("| fixture | process mutations | material mutations | remeshes | gap fills | centroid resolver | random resolver | nearest resolver | owner-label evidence | guard pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage2FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage2Metrics& M = Result.Metrics;
+			const bool bGuardPass = M.bDryRunNoMutationPass && M.bNoPrimaryResolverPass && M.ProjectionOwnerLabelEvidenceCount == 0;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.ProcessMutationCount,
+				M.MaterialMutationCount,
+				M.RemeshDuringProcessDryRunCount,
+				M.GapFillDuringProcessDryRunCount,
+				M.CentroidPrimaryResolutionCount,
+				M.RandomPrimaryResolutionCount,
+				M.NearestPrimaryResolutionCount,
+				M.ProjectionOwnerLabelEvidenceCount,
+				bGuardPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Replay A/B\n\n");
+		Report += TEXT("| fixture | post-motion authority | replay authority | projection hash | replay projection hash | process hash | replay process hash | deterministic |\n");
+		Report += TEXT("|---|---|---|---|---|---|---|---|\n");
+		for (const FCarrierV2Stage2FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage2Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %s |\n"),
+				*M.FixtureId,
+				*M.PostMotionAuthorityHash,
+				*M.ReplayPostMotionAuthorityHash,
+				*M.ProjectionOutputHash,
+				*M.ReplayProjectionOutputHash,
+				*M.ProcessStateHash,
+				*M.ReplayProcessStateHash,
+				M.bReplayDeterministic ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Performance Ladder\n\n");
+		Report += TEXT("| fixture | samples | substrate ms | plate-local ms | motion ms | projection ms | contact ms | metrics ms | total ms | peak memory mb |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Stage2FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage2Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n"),
+				*M.FixtureId,
+				M.GlobalSampleCount,
+				M.BuildSubstrateMs,
+				M.BuildPlateLocalMs,
+				M.MotionApplyMs,
+				M.ProjectionKernelMs,
+				M.ContactDetectionMs,
+				M.MetricsMs,
+				M.TotalMs,
+				M.PeakMemoryMb);
+		}
+
+		Report += TEXT("\n## Policy Ledger\n\n");
+		Report += TEXT("| policy | authority class | behavior | audit evidence |\n");
+		Report += TEXT("|---|---|---|---|\n");
+		Report += TEXT("| `V2-2-POL-CONTACT-FULL-SCAN-MICRO` | diagnostic_only | FX-007 through FX-009 detect process candidates by exhaustive moved plate-local triangle scans | `contact_policy_id=moved_geometry_full_scan_dry_run` |\n");
+		Report += TEXT("| `V2-2-POL-SOURCE-ADJACENT-SCALE-CONTACT` | source_silent_lab_policy | scale contact detection uses source-adjacent moved triangles as a performance readout, not final broadphase authority | `contact_policy_id=moved_geometry_source_adjacent_contact_dry_run` |\n");
+		Report += TEXT("| `V2-2-POL-POLARITY-CANDIDATE-ONLY` | source_explicit_process_state | convergent contacts create polarity candidates but do not choose a subducting or colliding side | `polarity_candidate_count`, `process_mutation_count=0` |\n");
+		Report += TEXT("| `V2-2-POL-NO-PRIMARY-RESOLVER` | source_explicit_stop_condition | raw overlap remains process evidence; centroid/random/nearest winner policies are not allowed | resolver count columns are zero |\n\n");
+
+		Report += TEXT("## Independent Oracle\n\n");
+		Report += TEXT("Motion is still checked by the V2-1 analytic oracle from pre-motion snapshots. Contact evidence is derived from moved plate-local triangle intersections and candidate records are hashed independently of replay output. The dry-run gate fails if contact evidence comes from projection owner labels or if any overlap resolver consumes the evidence before process state exists.\n\n");
+
+		Report += TEXT("## Known Limitations\n\n");
+		Report += TEXT("- V2-2 records process candidates only; it does not implement the paper's subduction, collision, material transfer, remesh, or elevation evolution.\n");
+		Report += TEXT("- FX-009 is a deterministic micro fixture for third-plate visibility, not a production broadphase design.\n");
+		Report += TEXT("- 50k is the minimum V2-2 scale gate; 250k is characterization unless explicitly made a hard gate.\n");
+		Report += TEXT("- 500k is not attempted by this V2-2 commandlet goal.\n");
+		Report += TEXT("- Scale contact detection still uses source-adjacent candidates, so it is a performance/readout sanity check rather than the final moved-surface spatial index.\n\n");
+
+		Report += TEXT("## Verdict\n\n");
+		Report += FString::Printf(TEXT("Verdict: `%s`\n\n"), *Suite.Verdict);
+		Report += FString::Printf(TEXT("- Micro gate: %s\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 50k gate: %s\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 250k characterization attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
+		if (Suite.bAttempted250k)
+		{
+			Report += FString::Printf(TEXT("- 250k characterization: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
+		}
+		Report += TEXT("\nExplicit user go/no-go is required before V2-3 process mutation or Stage 1.5 resampling work.\n");
+
+		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
+		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);
+		return Report;
+	}
+
+	TArray<FCarrierV2Stage3Config> FCarrierV2Stage3::MakeMicroFixtureConfigs()
+	{
+		TArray<FCarrierV2Stage3Config> Configs;
+		FCarrierV2Stage2Config ConvergenceContact;
+		for (const FCarrierV2Stage2Config& Stage2Config : FCarrierV2Stage2::MakeMicroFixtureConfigs())
+		{
+			if (Stage2Config.FixtureId == TEXT("FX-008"))
+			{
+				ConvergenceContact = Stage2Config;
+				break;
+			}
+		}
+
+		FCarrierV2Stage3Config FX010;
+		FX010.ContactConfig = ConvergenceContact;
+		FX010.ContactConfig.FixtureId = TEXT("FX-010");
+		FX010.ContactConfig.FixtureName = TEXT("OceanOceanAgePolarityContact");
+		FX010.ContactConfig.MotionConfig.BaseConfig.FixtureId = TEXT("FX-010");
+		FX010.ContactConfig.MotionConfig.BaseConfig.FixtureName = TEXT("OceanOceanAgePolarityBase");
+		FX010.ContactConfig.MotionConfig.FixtureId = TEXT("FX-010");
+		FX010.ContactConfig.MotionConfig.FixtureName = TEXT("OceanOceanAgePolarityMotion");
+		FX010.ContactConfig.ExpectedProcessClass = TEXT("ocean_ocean_age_polarity_contact");
+		FX010.FixtureId = TEXT("FX-010");
+		FX010.FixtureName = TEXT("OceanOceanAgePolarity");
+		FX010.ExpectedProcessClass = TEXT("ocean_ocean_age_polarity");
+		FX010.ProcessMutationPolicyId = TEXT("process_state_age_polarity_marks_no_remesh");
+		FX010.bRequireSubductionMark = true;
+		FX010.bRequireOceanicAgePolarity = true;
+		FX010.bRequireProcessEvents = true;
+		FX010.ExpectedMinimumSubductionEvents = 1;
+		FX010.ExpectedMinimumSubductingTriangleMarks = 1;
+		FX010.ExpectedMinimumProcessEvents = 1;
+		AddPlateMaterialProfile(FX010, 0, ECarrierV2MaterialClass::Oceanic, 120.0, TEXT("fx_010_explicit_older_oceanic_plate"));
+		AddPlateMaterialProfile(FX010, 1, ECarrierV2MaterialClass::Oceanic, 20.0, TEXT("fx_010_explicit_younger_oceanic_plate"));
+		Configs.Add(FX010);
+
+		FCarrierV2Stage3Config FX011;
+		FX011.ContactConfig = ConvergenceContact;
+		FX011.ContactConfig.FixtureId = TEXT("FX-011");
+		FX011.ContactConfig.FixtureName = TEXT("ContinentalCollisionCandidateContact");
+		FX011.ContactConfig.MotionConfig.BaseConfig.FixtureId = TEXT("FX-011");
+		FX011.ContactConfig.MotionConfig.BaseConfig.FixtureName = TEXT("ContinentalCollisionCandidateBase");
+		FX011.ContactConfig.MotionConfig.FixtureId = TEXT("FX-011");
+		FX011.ContactConfig.MotionConfig.FixtureName = TEXT("ContinentalCollisionCandidateMotion");
+		FX011.ContactConfig.ExpectedProcessClass = TEXT("continental_collision_candidate_contact");
+		FX011.FixtureId = TEXT("FX-011");
+		FX011.FixtureName = TEXT("ContinentalCollisionCandidate");
+		FX011.ExpectedProcessClass = TEXT("continental_collision_candidate");
+		FX011.ProcessMutationPolicyId = TEXT("process_state_collision_suture_candidates_no_topology_transfer");
+		FX011.bRequireCollisionCandidate = true;
+		FX011.bRequireProcessEvents = true;
+		FX011.ExpectedMinimumCollisionCandidates = 1;
+		FX011.ExpectedMinimumCollisionEvents = 1;
+		FX011.ExpectedMinimumProcessEvents = 1;
+		AddPlateMaterialProfile(FX011, 0, ECarrierV2MaterialClass::Continental, 0.0, TEXT("fx_011_explicit_continental_plate_a"));
+		AddPlateMaterialProfile(FX011, 1, ECarrierV2MaterialClass::Continental, 0.0, TEXT("fx_011_explicit_continental_plate_b"));
+		Configs.Add(FX011);
+
+		return Configs;
+	}
+
+	FCarrierV2Stage3Config FCarrierV2Stage3::MakeScaleConfig(const int32 SampleCount, const bool bComparisonScale)
+	{
+		FCarrierV2Stage3Config Config;
+		Config.ContactConfig = FCarrierV2Stage2::MakeScaleConfig(SampleCount, bComparisonScale);
+		Config.ContactConfig.FixtureId = bComparisonScale ? TEXT("SCALE-250K-PROCESS") : TEXT("SCALE-50K-PROCESS");
+		Config.ContactConfig.FixtureName = bComparisonScale ? TEXT("Scale250kProcessMutationCharacterization") : TEXT("Scale50kProcessMutationGate");
+		Config.ContactConfig.MotionConfig.BaseConfig.FixtureId = Config.ContactConfig.FixtureId;
+		Config.ContactConfig.MotionConfig.BaseConfig.FixtureName = Config.ContactConfig.FixtureName;
+		Config.ContactConfig.MotionConfig.FixtureId = Config.ContactConfig.FixtureId;
+		Config.ContactConfig.MotionConfig.FixtureName = Config.ContactConfig.FixtureName;
+		Config.ContactConfig.ExpectedProcessClass = TEXT("scale_process_candidate_contact");
+		Config.FixtureId = Config.ContactConfig.FixtureId;
+		Config.FixtureName = Config.ContactConfig.FixtureName;
+		Config.ExpectedProcessClass = TEXT("scale_process_mutation_fixture");
+		Config.ProcessMutationPolicyId = TEXT("deterministic_plate_profile_process_marks_no_remesh");
+		Config.bRequireSubductionMark = true;
+		Config.bRequireCollisionCandidate = true;
+		Config.bRequireProcessEvents = true;
+		Config.ExpectedMinimumSubductionEvents = 1;
+		Config.ExpectedMinimumSubductingTriangleMarks = 1;
+		Config.ExpectedMinimumCollisionCandidates = 1;
+		Config.ExpectedMinimumCollisionEvents = 1;
+		Config.ExpectedMinimumProcessEvents = 1;
+		for (int32 PlateId = 0; PlateId < Config.ContactConfig.MotionConfig.BaseConfig.PlateCount; ++PlateId)
+		{
+			Config.PlateMaterialProfiles.Add(MakeDefaultStage3PlateProfile(PlateId));
+		}
+		return Config;
+	}
+
+	bool FCarrierV2Stage3::RunFixtureWithReplay(const FCarrierV2Stage3Config& Config, FCarrierV2Stage3FixtureResult& OutResult)
+	{
+		FCarrierV2Stage3FixtureResult Replay;
+		const bool bPrimaryOk = RunStage3FixtureOnce(Config, OutResult);
+		const bool bReplayOk = RunStage3FixtureOnce(Config, Replay);
+
+		OutResult.Metrics.ReplayStage2ProcessStateHash = Replay.Metrics.Stage2ProcessStateHash;
+		OutResult.Metrics.ReplayProcessStateHash = Replay.Metrics.ProcessStateHash;
+		OutResult.Metrics.ReplayMetricsHash = Replay.Metrics.MetricsHash;
+		OutResult.Metrics.bReplayDeterministic =
+			bPrimaryOk == bReplayOk &&
+			OutResult.Metrics.Stage2ProcessStateHash == Replay.Metrics.Stage2ProcessStateHash &&
+			OutResult.Metrics.ProcessStateHash == Replay.Metrics.ProcessStateHash &&
+			OutResult.Metrics.Verdict == Replay.Metrics.Verdict &&
+			OutResult.Metrics.bFixturePass == Replay.Metrics.bFixturePass;
+
+		OutResult.Metrics.bFixturePass = OutResult.Metrics.bFixturePass && OutResult.Metrics.bReplayDeterministic;
+		OutResult.Metrics.bStageGatePass = OutResult.Metrics.bFixturePass;
+		if (!OutResult.Metrics.bReplayDeterministic)
+		{
+			OutResult.Metrics.Verdict = TEXT("FAIL_REPLAY_DETERMINISM");
+			if (OutResult.Error.IsEmpty())
+			{
+				OutResult.Error = TEXT("Replay A/B stage2-process, process-state, verdict, or fixture pass differed.");
+			}
+		}
+		OutResult.Metrics.MetricsHash = HashToString(HashStage3Metrics(OutResult.Metrics, true));
+		return bPrimaryOk && bReplayOk && OutResult.Metrics.bFixturePass;
+	}
+
+	FString FCarrierV2Stage3::MetricsToJson(const FCarrierV2Stage3FixtureResult& Result)
+	{
+		const FCarrierV2Stage3Metrics& M = Result.Metrics;
+		FString Json = FString::Printf(
+			TEXT("{")
+			TEXT("\"run_id\":%s,")
+			TEXT("\"stage_id\":%s,")
+			TEXT("\"fixture_id\":%s,")
+			TEXT("\"fixture_name\":%s,")
+			TEXT("\"fixture_kind\":%s,")
+			TEXT("\"expected_motion_class\":%s,")
+			TEXT("\"expected_process_class\":%s,")
+			TEXT("\"source_status\":%s,")
+			TEXT("\"projection_candidate_policy_id\":%s,")
+			TEXT("\"contact_policy_id\":%s,")
+			TEXT("\"process_mutation_policy_id\":%s,")
+			TEXT("\"sample_count\":%d,")
+			TEXT("\"triangle_count\":%d,")
+			TEXT("\"plate_count\":%d,")
+			TEXT("\"motion_step_count\":%d,")
+			TEXT("\"dt_ma\":%.12g,")
+			TEXT("\"total_motion_ma\":%.12g,")
+			TEXT("\"planet_radius_km\":%.12g,")
+			TEXT("\"motion_tolerance_km\":%.12g,")
+			TEXT("\"unit_length_tolerance\":%.12g,")
+			TEXT("\"ray_epsilon\":%.12g,")
+			TEXT("\"config_hash\":%s,")
+			TEXT("\"stage2_process_state_hash\":%s,")
+			TEXT("\"process_state_hash\":%s,")
+			TEXT("\"metrics_hash\":%s,")
+			TEXT("\"global_sample_count\":%d,")
+			TEXT("\"global_triangle_count\":%d,")
+			TEXT("\"local_plate_vertex_count_sum\":%d,")
+			TEXT("\"local_plate_triangle_count_sum\":%d,")
+			TEXT("\"motion_vertex_count\":%d,")
+			TEXT("\"analytic_motion_max_error_km\":%.12g,")
+			TEXT("\"analytic_motion_mean_error_km\":%.12g,")
+			TEXT("\"unit_length_max_error\":%.12g,")
+			TEXT("\"material_attachment_error_count\":%d,")
+			TEXT("\"raw_motion_miss_count\":%d,")
+			TEXT("\"raw_motion_overlap_count\":%d,")
+			TEXT("\"divergent_candidate_count\":%d,")
+			TEXT("\"convergent_candidate_count\":%d,")
+			TEXT("\"contact_candidate_count\":%d,")
+			TEXT("\"accepted_convergence_evidence_count\":%d,")
+			TEXT("\"third_plate_intrusion_count\":%d,")
+			TEXT("\"polarity_candidate_count\":%d,")
+			TEXT("\"third_plate_passthrough_count\":%d,")
+			TEXT("\"process_event_count\":%d,")
+			TEXT("\"process_event_with_provenance_count\":%d,")
+			TEXT("\"process_event_without_provenance_count\":%d,")
+			TEXT("\"subduction_event_count\":%d,")
+			TEXT("\"oceanic_age_polarity_decision_count\":%d,")
+			TEXT("\"older_oceanic_subducting_pass_count\":%d,")
+			TEXT("\"subducting_triangle_mark_count\":%d,")
+			TEXT("\"collision_candidate_count\":%d,")
+			TEXT("\"collision_event_count\":%d,")
+			TEXT("\"terrane_detach_triangle_count\":%d,")
+			TEXT("\"terrane_suture_triangle_count\":%d,")
+			TEXT("\"material_destroyed_without_process_count\":%d,")
+			TEXT("\"material_created_without_process_count\":%d,")
+			TEXT("\"topology_mutation_without_event_count\":%d,")
+			TEXT("\"material_mutation_count\":%d,")
+			TEXT("\"remesh_during_process_mutation_count\":%d,")
+			TEXT("\"topology_rebuild_during_process_mutation_count\":%d,")
+			TEXT("\"gap_fill_during_process_mutation_count\":%d,")
+			TEXT("\"divergent_generation_during_process_mutation_count\":%d,")
+			TEXT("\"terrain_beauty_mutation_count\":%d,")
+			TEXT("\"ownership_repair_during_process_mutation_count\":%d,")
+			TEXT("\"centroid_primary_resolution_count\":%d,")
+			TEXT("\"random_primary_resolution_count\":%d,")
+			TEXT("\"nearest_primary_resolution_count\":%d,")
+			TEXT("\"projection_owner_label_evidence_count\":%d,")
+			TEXT("\"overlap_consumed_before_process_state_count\":%d,")
+			TEXT("\"slab_pull_enabled\":%s,")
+			TEXT("\"slab_pull_axis_delta_deg\":%.12g,")
+			TEXT("\"inherited_stage2_pass\":%s,")
+			TEXT("\"motion_oracle_pass\":%s,")
+			TEXT("\"unit_length_pass\":%s,")
+			TEXT("\"material_attachment_pass\":%s,")
+			TEXT("\"projection_expectation_pass\":%s,")
+			TEXT("\"contact_evidence_pass\":%s,")
+			TEXT("\"process_event_provenance_pass\":%s,")
+			TEXT("\"subduction_polarity_pass\":%s,")
+			TEXT("\"collision_candidate_pass\":%s,")
+			TEXT("\"process_event_expectation_pass\":%s,")
+			TEXT("\"no_forbidden_mutation_pass\":%s,")
+			TEXT("\"slab_pull_pass\":%s,")
+			TEXT("\"replay_deterministic\":%s,")
+			TEXT("\"fixture_pass\":%s,")
+			TEXT("\"stage_gate_pass\":%s,")
+			TEXT("\"verdict\":%s,")
+			TEXT("\"replay_stage2_process_state_hash\":%s,")
+			TEXT("\"replay_process_state_hash\":%s,")
+			TEXT("\"replay_metrics_hash\":%s,")
+			TEXT("\"build_substrate_ms\":%.3f,")
+			TEXT("\"build_plate_local_ms\":%.3f,")
+			TEXT("\"motion_apply_ms\":%.3f,")
+			TEXT("\"projection_kernel_ms\":%.3f,")
+			TEXT("\"contact_detection_ms\":%.3f,")
+			TEXT("\"process_mutation_ms\":%.3f,")
+			TEXT("\"metrics_ms\":%.3f,")
+			TEXT("\"total_ms\":%.3f,")
+			TEXT("\"peak_memory_mb\":%.3f,")
+			TEXT("\"process_events\":["),
+			*JsonString(M.RunId),
+			*JsonString(M.StageId),
+			*JsonString(M.FixtureId),
+			*JsonString(M.FixtureName),
+			*JsonString(M.FixtureKind),
+			*JsonString(M.ExpectedMotionClass),
+			*JsonString(M.ExpectedProcessClass),
+			*JsonString(M.SourceStatus),
+			*JsonString(M.ProjectionCandidatePolicyId),
+			*JsonString(M.ContactPolicyId),
+			*JsonString(M.ProcessMutationPolicyId),
+			M.SampleCount,
+			M.TriangleCount,
+			M.PlateCount,
+			M.MotionStepCount,
+			M.DtMa,
+			M.TotalMotionMa,
+			M.PlanetRadiusKm,
+			M.MotionToleranceKm,
+			M.UnitLengthTolerance,
+			M.RayEpsilon,
+			*JsonString(M.ConfigHash),
+			*JsonString(M.Stage2ProcessStateHash),
+			*JsonString(M.ProcessStateHash),
+			*JsonString(M.MetricsHash),
+			M.GlobalSampleCount,
+			M.GlobalTriangleCount,
+			M.LocalPlateVertexCountSum,
+			M.LocalPlateTriangleCountSum,
+			M.MotionVertexCount,
+			M.AnalyticMotionMaxErrorKm,
+			M.AnalyticMotionMeanErrorKm,
+			M.UnitLengthMaxError,
+			M.MaterialAttachmentErrorCount,
+			M.RawMotionMissCount,
+			M.RawMotionOverlapCount,
+			M.DivergentCandidateCount,
+			M.ConvergentCandidateCount,
+			M.ContactCandidateCount,
+			M.AcceptedConvergenceEvidenceCount,
+			M.ThirdPlateIntrusionCount,
+			M.PolarityCandidateCount,
+			M.ThirdPlatePassthroughCount,
+			M.ProcessEventCount,
+			M.ProcessEventWithProvenanceCount,
+			M.ProcessEventWithoutProvenanceCount,
+			M.SubductionEventCount,
+			M.OceanicAgePolarityDecisionCount,
+			M.OlderOceanicSubductingPassCount,
+			M.SubductingTriangleMarkCount,
+			M.CollisionCandidateCount,
+			M.CollisionEventCount,
+			M.TerraneDetachTriangleCount,
+			M.TerraneSutureTriangleCount,
+			M.MaterialDestroyedWithoutProcessCount,
+			M.MaterialCreatedWithoutProcessCount,
+			M.TopologyMutationWithoutEventCount,
+			M.MaterialMutationCount,
+			M.RemeshDuringProcessMutationCount,
+			M.TopologyRebuildDuringProcessMutationCount,
+			M.GapFillDuringProcessMutationCount,
+			M.DivergentGenerationDuringProcessMutationCount,
+			M.TerrainBeautyMutationCount,
+			M.OwnershipRepairDuringProcessMutationCount,
+			M.CentroidPrimaryResolutionCount,
+			M.RandomPrimaryResolutionCount,
+			M.NearestPrimaryResolutionCount,
+			M.ProjectionOwnerLabelEvidenceCount,
+			M.OverlapConsumedBeforeProcessStateCount,
+			M.bSlabPullEnabled ? TEXT("true") : TEXT("false"),
+			M.SlabPullAxisDeltaDeg,
+			M.bInheritedStage2Pass ? TEXT("true") : TEXT("false"),
+			M.bMotionOraclePass ? TEXT("true") : TEXT("false"),
+			M.bUnitLengthPass ? TEXT("true") : TEXT("false"),
+			M.bMaterialAttachmentPass ? TEXT("true") : TEXT("false"),
+			M.bProjectionExpectationPass ? TEXT("true") : TEXT("false"),
+			M.bContactEvidencePass ? TEXT("true") : TEXT("false"),
+			M.bProcessEventProvenancePass ? TEXT("true") : TEXT("false"),
+			M.bSubductionPolarityPass ? TEXT("true") : TEXT("false"),
+			M.bCollisionCandidatePass ? TEXT("true") : TEXT("false"),
+			M.bProcessEventExpectationPass ? TEXT("true") : TEXT("false"),
+			M.bNoForbiddenMutationPass ? TEXT("true") : TEXT("false"),
+			M.bSlabPullPass ? TEXT("true") : TEXT("false"),
+			M.bReplayDeterministic ? TEXT("true") : TEXT("false"),
+			M.bFixturePass ? TEXT("true") : TEXT("false"),
+			M.bStageGatePass ? TEXT("true") : TEXT("false"),
+			*JsonString(M.Verdict),
+			*JsonString(M.ReplayStage2ProcessStateHash),
+			*JsonString(M.ReplayProcessStateHash),
+			*JsonString(M.ReplayMetricsHash),
+			M.BuildSubstrateMs,
+			M.BuildPlateLocalMs,
+			M.MotionApplyMs,
+			M.ProjectionKernelMs,
+			M.ContactDetectionMs,
+			M.ProcessMutationMs,
+			M.MetricsMs,
+			M.TotalMs,
+			M.PeakMemoryMb);
+
+		for (int32 Index = 0; Index < Result.ProcessEvents.Num(); ++Index)
+		{
+			if (Index > 0)
+			{
+				Json += TEXT(",");
+			}
+			const FCarrierV2ProcessEventRecord& Event = Result.ProcessEvents[Index];
+			Json += FString::Printf(
+				TEXT("{\"event_id\":%d,\"source_candidate_id\":%d,\"sample_id\":%d,\"event_class\":%s,\"process_class\":%s,\"source_plate_id\":%d,\"destination_plate_id\":%d,\"source_local_triangle_id\":%d,\"destination_local_triangle_id\":%d,\"subducting_plate_id\":%d,\"overriding_plate_id\":%d,\"subducting_local_triangle_id\":%d,\"source_material_class\":%s,\"destination_material_class\":%s,\"source_oceanic_age_ma\":%.12g,\"destination_oceanic_age_ma\":%.12g,\"older_oceanic_subducts\":%s,\"has_provenance\":%s,\"provenance\":%s}"),
+				Event.EventId,
+				Event.SourceCandidateId,
+				Event.SampleId,
+				*JsonString(Event.EventClass),
+				*JsonString(Event.ProcessClass),
+				Event.SourcePlateId,
+				Event.DestinationPlateId,
+				Event.SourceLocalTriangleId,
+				Event.DestinationLocalTriangleId,
+				Event.SubductingPlateId,
+				Event.OverridingPlateId,
+				Event.SubductingLocalTriangleId,
+				*JsonString(MaterialClassName(Event.SourceMaterialClass)),
+				*JsonString(MaterialClassName(Event.DestinationMaterialClass)),
+				Event.SourceOceanicAgeMa,
+				Event.DestinationOceanicAgeMa,
+				Event.bOlderOceanicSubducts ? TEXT("true") : TEXT("false"),
+				Event.bHasProvenance ? TEXT("true") : TEXT("false"),
+				*JsonString(Event.Provenance));
+		}
+		Json += TEXT("],\"triangle_marks\":[");
+		for (int32 Index = 0; Index < Result.TriangleMarks.Num(); ++Index)
+		{
+			if (Index > 0)
+			{
+				Json += TEXT(",");
+			}
+			const FCarrierV2TriangleProcessMarkRecord& Mark = Result.TriangleMarks[Index];
+			Json += FString::Printf(
+				TEXT("{\"mark_id\":%d,\"event_id\":%d,\"source_candidate_id\":%d,\"sample_id\":%d,\"plate_id\":%d,\"local_triangle_id\":%d,\"mark_class\":%s,\"provenance\":%s}"),
+				Mark.MarkId,
+				Mark.EventId,
+				Mark.SourceCandidateId,
+				Mark.SampleId,
+				Mark.PlateId,
+				Mark.LocalTriangleId,
+				*JsonString(Mark.MarkClass),
+				*JsonString(Mark.Provenance));
+		}
+		Json += TEXT("]}");
+		return Json;
+	}
+
+	FString FCarrierV2Stage3::BuildCheckpointReport(
+		const FCarrierV2Stage3SuiteResult& Suite,
+		const FString& CommandLine,
+		const FString& CommitSha)
+	{
+		const double Start = FPlatformTime::Seconds();
+		FString Report;
+		Report += TEXT("# CarrierLab V2 Stage 3 Report\n\n");
+		Report += TEXT("Status: generated by `CarrierLabV2Stage3`.\n\n");
+		Report += FString::Printf(TEXT("- Commit: `%s`\n"), CommitSha.IsEmpty() ? TEXT("unknown") : *CommitSha);
+		Report += FString::Printf(TEXT("- Command: `%s`\n"), *CommandLine);
+		Report += FString::Printf(TEXT("- Output root: `%s`\n"), *Suite.OutputRoot);
+		Report += FString::Printf(TEXT("- Metrics JSONL: `%s`\n\n"), *Suite.MetricsPath);
+
+		Report += TEXT("## Scope\n\n");
+		Report += TEXT("V2-3 consumes V2-2 accepted convergence candidates and records process-state events before any remesh. It covers ocean-ocean age polarity, subducting triangle marks, continental collision/suture candidate records, process provenance, replay-stable process hashes, a 50k gate, and optional 250k characterization. It does not rebuild topology, remesh, fill gaps, generate divergent crust, transfer terrain, mutate elevation, repair ownership, choose overlap winners, or implement slab pull.\n\n");
+
+		Report += TEXT("## Fixture Gates\n\n");
+		Report += TEXT("| fixture | process class | samples | contacts | events | subduction marks | collision events | pass | verdict |\n");
+		Report += TEXT("|---|---|---:|---:|---:|---:|---:|---|---|\n");
+		for (const FCarrierV2Stage3FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage3Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | %d | %d | %d | %d | %d | %s | `%s` |\n"),
+				*M.FixtureId,
+				*M.ExpectedProcessClass,
+				M.GlobalSampleCount,
+				M.ContactCandidateCount,
+				M.ProcessEventCount,
+				M.SubductingTriangleMarkCount,
+				M.CollisionEventCount,
+				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
+				*M.Verdict);
+		}
+
+		Report += TEXT("\n## Process State Evidence\n\n");
+		Report += TEXT("| fixture | age polarity decisions | older oceanic subducted | subduction events | collision candidates | terrane detach marks | suture marks | third-plate passthrough |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Stage3FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage3Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d |\n"),
+				*M.FixtureId,
+				M.OceanicAgePolarityDecisionCount,
+				M.OlderOceanicSubductingPassCount,
+				M.SubductionEventCount,
+				M.CollisionCandidateCount,
+				M.TerraneDetachTriangleCount,
+				M.TerraneSutureTriangleCount,
+				M.ThirdPlatePassthroughCount);
+		}
+
+		Report += TEXT("\n## Hard Guards\n\n");
+		Report += TEXT("| fixture | provenance holes | material no-process destroy | material no-process create | topology no-event | material mutations | remesh | rebuild | gap fill | divergent generation | terrain beauty | ownership repair | resolvers | guard pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage3FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage3Metrics& M = Result.Metrics;
+			const int32 ResolverTotal = M.CentroidPrimaryResolutionCount + M.RandomPrimaryResolutionCount + M.NearestPrimaryResolutionCount;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.ProcessEventWithoutProvenanceCount,
+				M.MaterialDestroyedWithoutProcessCount,
+				M.MaterialCreatedWithoutProcessCount,
+				M.TopologyMutationWithoutEventCount,
+				M.MaterialMutationCount,
+				M.RemeshDuringProcessMutationCount,
+				M.TopologyRebuildDuringProcessMutationCount,
+				M.GapFillDuringProcessMutationCount,
+				M.DivergentGenerationDuringProcessMutationCount,
+				M.TerrainBeautyMutationCount,
+				M.OwnershipRepairDuringProcessMutationCount,
+				ResolverTotal,
+				M.bNoForbiddenMutationPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Replay A/B\n\n");
+		Report += TEXT("| fixture | stage2 process hash | replay stage2 hash | v2-3 process hash | replay v2-3 hash | deterministic |\n");
+		Report += TEXT("|---|---|---|---|---|---|\n");
+		for (const FCarrierV2Stage3FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage3Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | `%s` | `%s` | `%s` | %s |\n"),
+				*M.FixtureId,
+				*M.Stage2ProcessStateHash,
+				*M.ReplayStage2ProcessStateHash,
+				*M.ProcessStateHash,
+				*M.ReplayProcessStateHash,
+				M.bReplayDeterministic ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Performance Ladder\n\n");
+		Report += TEXT("| fixture | samples | substrate ms | plate-local ms | motion ms | projection ms | contact ms | process ms | total ms | peak memory mb |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Stage3FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage3Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n"),
+				*M.FixtureId,
+				M.GlobalSampleCount,
+				M.BuildSubstrateMs,
+				M.BuildPlateLocalMs,
+				M.MotionApplyMs,
+				M.ProjectionKernelMs,
+				M.ContactDetectionMs,
+				M.ProcessMutationMs,
+				M.TotalMs,
+				M.PeakMemoryMb);
+		}
+
+		Report += TEXT("\n## Policy Ledger\n\n");
+		Report += TEXT("| policy | authority class | behavior | audit evidence |\n");
+		Report += TEXT("|---|---|---|---|\n");
+		Report += TEXT("| `V2-3-POL-PLATE-MATERIAL-PROFILES` | fixture_input_lab_policy | micro and scale fixtures use explicit plate material profiles so process polarity does not read global owner labels | `process_events`, `plate_id`, material class and age fields |\n");
+		Report += TEXT("| `V2-3-POL-OLDER-OCEANIC-SUBDUCTS` | fixture_oracle | FX-010 requires the older oceanic profile to receive the subducting triangle mark | `older_oceanic_subducting_pass_count` |\n");
+		Report += TEXT("| `V2-3-POL-COLLISION-AS-EVENT-NOT-REPAIR` | source_explicit_process_state | FX-011 records continental collision and suture candidates without topology transfer | `collision_event_count`, zero topology mutation counters |\n");
+		Report += TEXT("| `V2-3-POL-SLAB-PULL-BYPASS` | source_explicit_deferred_feedback | slab pull remains disabled and must report zero axis delta | `slab_pull_enabled=false`, `slab_pull_axis_delta_deg=0` |\n\n");
+
+		Report += TEXT("## Independent Oracle\n\n");
+		Report += TEXT("V2-3 does not compare process output against itself. V2-2 independently supplies accepted moved-geometry contact candidates. V2-3 then applies fixture plate material profiles: oceanic-oceanic contacts mark the older oceanic side as subducting, mixed oceanic/continental contacts mark the oceanic side as subducting, and continental-continental contacts create collision/suture candidate events. Replay A/B must reproduce both the inherited V2-2 process hash and the V2-3 event/mark process hash.\n\n");
+
+		Report += TEXT("## Known Limitations\n\n");
+		Report += TEXT("- V2-3 records process state only; it does not perform Stage 1.5/V2-4 remesh filtering.\n");
+		Report += TEXT("- Continental collision records are candidate/event ledgers, not completed terrane topology transfer.\n");
+		Report += TEXT("- Slab pull is explicitly bypassed in this slice.\n");
+		Report += TEXT("- Scale fixtures still inherit V2-2 source-adjacent contact detection, so they are performance and process-state gates, not the final spatial index.\n");
+		Report += TEXT("- 500k is not attempted by this V2-3 commandlet goal.\n\n");
+
+		Report += TEXT("## Verdict\n\n");
+		Report += FString::Printf(TEXT("Verdict: `%s`\n\n"), *Suite.Verdict);
+		Report += FString::Printf(TEXT("- Micro gate: %s\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 50k gate: %s\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 250k characterization attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
+		if (Suite.bAttempted250k)
+		{
+			Report += FString::Printf(TEXT("- 250k characterization: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
+		}
+		Report += TEXT("\nExplicit user go/no-go is required before V2-4 filtered overlap remesh / Stage 1.5 resampling integration work.\n");
+
+		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
+		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);
+		return Report;
+	}
+
+	TArray<FCarrierV2Stage4Config> FCarrierV2Stage4::MakeMicroFixtureConfigs()
+	{
+		TArray<FCarrierV2Stage4Config> Configs;
+		FCarrierV2Stage3Config SubductionProcess;
+		FCarrierV2Stage3Config CollisionProcess;
+		for (const FCarrierV2Stage3Config& Stage3Config : FCarrierV2Stage3::MakeMicroFixtureConfigs())
+		{
+			if (Stage3Config.FixtureId == TEXT("FX-010"))
+			{
+				SubductionProcess = Stage3Config;
+			}
+			else if (Stage3Config.FixtureId == TEXT("FX-011"))
+			{
+				CollisionProcess = Stage3Config;
+			}
+		}
+
+		FCarrierV2Stage4Config FX012;
+		FX012.ProcessConfig = SubductionProcess;
+		FX012.FixtureId = TEXT("FX-012");
+		FX012.FixtureName = TEXT("FilteredSubductionOverlapSampling");
+		FX012.ExpectedRemeshClass = TEXT("global_tds_filtered_subduction_overlap");
+		FX012.RemeshSamplingPolicyId = TEXT("global_tds_aabb_all_hit_filter_subducting_no_q1q2");
+		FX012.bRequireFilteredSubductingHit = true;
+		FX012.bRequireValidHitAfterFilter = true;
+		FX012.ExpectedMinimumFilteredSubductingHits = 1;
+		FX012.ExpectedMinimumValidHits = 1;
+		Configs.Add(FX012);
+
+		FCarrierV2Stage4Config FX013;
+		FX013.ProcessConfig = CollisionProcess;
+		FX013.FixtureId = TEXT("FX-013");
+		FX013.FixtureName = TEXT("FilteredCollisionGapLedger");
+		FX013.ExpectedRemeshClass = TEXT("global_tds_filtered_collision_gap_ledger");
+		FX013.RemeshSamplingPolicyId = TEXT("global_tds_aabb_all_hit_filter_colliding_no_q1q2");
+		FX013.bRequireFilteredCollidingHit = true;
+		FX013.bRequireValidHitAfterFilter = true;
+		FX013.ExpectedMinimumFilteredCollidingHits = 1;
+		FX013.ExpectedMinimumValidHits = 1;
+		Configs.Add(FX013);
+
+		return Configs;
+	}
+
+	FCarrierV2Stage4Config FCarrierV2Stage4::MakeScaleConfig(const int32 SampleCount, const bool bComparisonScale)
+	{
+		FCarrierV2Stage4Config Config;
+		Config.ProcessConfig = FCarrierV2Stage3::MakeScaleConfig(SampleCount, bComparisonScale);
+		Config.FixtureId = bComparisonScale ? TEXT("SCALE-250K-FILTERED-SAMPLING") : TEXT("SCALE-50K-FILTERED-SAMPLING");
+		Config.FixtureName = bComparisonScale ? TEXT("Scale250kFilteredGlobalSamplingCharacterization") : TEXT("Scale50kFilteredGlobalSamplingGate");
+		Config.ExpectedRemeshClass = TEXT("scale_global_tds_filtered_sampling");
+		Config.RemeshSamplingPolicyId = TEXT("global_tds_aabb_all_hit_filter_scale_no_q1q2");
+		Config.bRequireFilteredSubductingHit = true;
+		Config.bRequireFilteredCollidingHit = true;
+		Config.bRequireValidHitAfterFilter = true;
+		Config.ExpectedMinimumFilteredSubductingHits = 1;
+		Config.ExpectedMinimumFilteredCollidingHits = 1;
+		Config.ExpectedMinimumValidHits = 1;
+		return Config;
+	}
+
+	bool FCarrierV2Stage4::RunFixtureWithReplay(const FCarrierV2Stage4Config& Config, FCarrierV2Stage4FixtureResult& OutResult)
+	{
+		FCarrierV2Stage4FixtureResult Replay;
+		const bool bPrimaryOk = RunStage4FixtureOnce(Config, OutResult);
+		const bool bReplayOk = RunStage4FixtureOnce(Config, Replay);
+
+		OutResult.Metrics.ReplayStage3ProcessStateHash = Replay.Metrics.Stage3ProcessStateHash;
+		OutResult.Metrics.ReplayGlobalSamplingHash = Replay.Metrics.GlobalSamplingHash;
+		OutResult.Metrics.ReplayMetricsHash = Replay.Metrics.MetricsHash;
+		OutResult.Metrics.bReplayDeterministic =
+			bPrimaryOk == bReplayOk &&
+			OutResult.Metrics.Stage3ProcessStateHash == Replay.Metrics.Stage3ProcessStateHash &&
+			OutResult.Metrics.GlobalSamplingHash == Replay.Metrics.GlobalSamplingHash &&
+			OutResult.Metrics.Verdict == Replay.Metrics.Verdict &&
+			OutResult.Metrics.bFixturePass == Replay.Metrics.bFixturePass;
+
+		OutResult.Metrics.bFixturePass = OutResult.Metrics.bFixturePass && OutResult.Metrics.bReplayDeterministic;
+		OutResult.Metrics.bStageGatePass = OutResult.Metrics.bFixturePass;
+		if (!OutResult.Metrics.bReplayDeterministic)
+		{
+			OutResult.Metrics.Verdict = TEXT("FAIL_REPLAY_DETERMINISM");
+			if (OutResult.Error.IsEmpty())
+			{
+				OutResult.Error = TEXT("Replay A/B stage3-process hash, sampling hash, verdict, or fixture pass differed.");
+			}
+		}
+		OutResult.Metrics.MetricsHash = HashToString(HashStage4Metrics(OutResult.Metrics, true));
+		return bPrimaryOk && bReplayOk && OutResult.Metrics.bFixturePass;
+	}
+
+	FString FCarrierV2Stage4::MetricsToJson(const FCarrierV2Stage4FixtureResult& Result)
+	{
+		const FCarrierV2Stage4Metrics& M = Result.Metrics;
+		FString Json = FString::Printf(
+			TEXT("{")
+			TEXT("\"run_id\":%s,")
+			TEXT("\"stage_id\":%s,")
+			TEXT("\"fixture_id\":%s,")
+			TEXT("\"fixture_name\":%s,")
+			TEXT("\"fixture_kind\":%s,")
+			TEXT("\"expected_remesh_class\":%s,")
+			TEXT("\"source_status\":%s,")
+			TEXT("\"remesh_sampling_policy_id\":%s,")
+			TEXT("\"remesh_trigger_reason\":%s,")
+			TEXT("\"sample_count\":%d,")
+			TEXT("\"triangle_count\":%d,")
+			TEXT("\"plate_count\":%d,")
+			TEXT("\"ray_epsilon\":%.12g,")
+			TEXT("\"config_hash\":%s,")
+			TEXT("\"stage3_process_state_hash\":%s,")
+			TEXT("\"remesh_input_hash\":%s,")
+			TEXT("\"global_sampling_hash\":%s,")
+			TEXT("\"metrics_hash\":%s,")
+			TEXT("\"global_sample_count\":%d,")
+			TEXT("\"global_triangle_count\":%d,")
+			TEXT("\"local_plate_vertex_count_sum\":%d,")
+			TEXT("\"local_plate_triangle_count_sum\":%d,")
+			TEXT("\"pretreated_plate_count\":%d,")
+			TEXT("\"fully_subducted_plate_destroyed_count\":%d,")
+			TEXT("\"aabb_mesh_triangle_count\":%d,")
+			TEXT("\"aabb_ray_query_count\":%lld,")
+			TEXT("\"raw_hit_count_total\":%lld,")
+			TEXT("\"filtered_subducting_hit_count\":%d,")
+			TEXT("\"filtered_colliding_hit_count\":%d,")
+			TEXT("\"valid_hit_after_filter_count\":%d,")
+			TEXT("\"zero_valid_hit_count\":%d,")
+			TEXT("\"gap_fill_deferred_count\":%d,")
+			TEXT("\"post_filter_unresolved_multihit_count\":%d,")
+			TEXT("\"post_filter_boundary_only_multihit_count\":%d,")
+			TEXT("\"boundary_degenerate_hit_count\":%d,")
+			TEXT("\"material_interpolation_count\":%d,")
+			TEXT("\"selected_filtered_hit_count\":%d,")
+			TEXT("\"prior_owner_fallback_count\":%d,")
+			TEXT("\"centroid_primary_resolution_count\":%d,")
+			TEXT("\"random_primary_resolution_count\":%d,")
+			TEXT("\"nearest_primary_resolution_count\":%d,")
+			TEXT("\"ownership_repair_during_remesh_count\":%d,")
+			TEXT("\"retention_hysteresis_anchor_count\":%d,")
+			TEXT("\"generated_oceanic_count\":%d,")
+			TEXT("\"q1q2_deferred_count\":%d,")
+			TEXT("\"q1q2_discrete_approx_count\":%d,")
+			TEXT("\"q1q2_prior_owner_lookup_count\":%d,")
+			TEXT("\"topology_rebuild_during_sampling_count\":%d,")
+			TEXT("\"process_state_reset_count\":%d,")
+			TEXT("\"terrain_beauty_mutation_count\":%d,")
+			TEXT("\"material_created_without_gap_fill_count\":%d,")
+			TEXT("\"material_destroyed_without_process_count\":%d,")
+			TEXT("\"inherited_stage3_pass\":%s,")
+			TEXT("\"source_filter_pass\":%s,")
+			TEXT("\"valid_selection_pass\":%s,")
+			TEXT("\"no_forbidden_fallback_pass\":%s,")
+			TEXT("\"deferred_gap_fill_pass\":%s,")
+			TEXT("\"no_premature_topology_pass\":%s,")
+			TEXT("\"replay_deterministic\":%s,")
+			TEXT("\"fixture_pass\":%s,")
+			TEXT("\"stage_gate_pass\":%s,")
+			TEXT("\"verdict\":%s,")
+			TEXT("\"replay_stage3_process_state_hash\":%s,")
+			TEXT("\"replay_global_sampling_hash\":%s,")
+			TEXT("\"replay_metrics_hash\":%s,")
+			TEXT("\"stage3_ms\":%.3f,")
+			TEXT("\"build_substrate_ms\":%.3f,")
+			TEXT("\"build_plate_local_ms\":%.3f,")
+			TEXT("\"motion_apply_ms\":%.3f,")
+			TEXT("\"aabb_build_ms\":%.3f,")
+			TEXT("\"global_sampling_ms\":%.3f,")
+			TEXT("\"metrics_ms\":%.3f,")
+			TEXT("\"total_ms\":%.3f,")
+			TEXT("\"peak_memory_mb\":%.3f,")
+			TEXT("\"sample_records_preview\":["),
+			*JsonString(M.RunId),
+			*JsonString(M.StageId),
+			*JsonString(M.FixtureId),
+			*JsonString(M.FixtureName),
+			*JsonString(M.FixtureKind),
+			*JsonString(M.ExpectedRemeshClass),
+			*JsonString(M.SourceStatus),
+			*JsonString(M.RemeshSamplingPolicyId),
+			*JsonString(M.RemeshTriggerReason),
+			M.SampleCount,
+			M.TriangleCount,
+			M.PlateCount,
+			M.RayEpsilon,
+			*JsonString(M.ConfigHash),
+			*JsonString(M.Stage3ProcessStateHash),
+			*JsonString(M.RemeshInputHash),
+			*JsonString(M.GlobalSamplingHash),
+			*JsonString(M.MetricsHash),
+			M.GlobalSampleCount,
+			M.GlobalTriangleCount,
+			M.LocalPlateVertexCountSum,
+			M.LocalPlateTriangleCountSum,
+			M.PretreatedPlateCount,
+			M.FullySubductedPlateDestroyedCount,
+			M.AabbMeshTriangleCount,
+			M.AabbRayQueryCount,
+			M.RawHitCountTotal,
+			M.FilteredSubductingHitCount,
+			M.FilteredCollidingHitCount,
+			M.ValidHitAfterFilterCount,
+			M.ZeroValidHitCount,
+			M.GapFillDeferredCount,
+			M.PostFilterUnresolvedMultihitCount,
+			M.PostFilterBoundaryOnlyMultihitCount,
+			M.BoundaryDegenerateHitCount,
+			M.MaterialInterpolationCount,
+			M.SelectedFilteredHitCount,
+			M.PriorOwnerFallbackCount,
+			M.CentroidPrimaryResolutionCount,
+			M.RandomPrimaryResolutionCount,
+			M.NearestPrimaryResolutionCount,
+			M.OwnershipRepairDuringRemeshCount,
+			M.RetentionHysteresisAnchorCount,
+			M.GeneratedOceanicCount,
+			M.Q1Q2DeferredCount,
+			M.Q1Q2DiscreteApproxCount,
+			M.Q1Q2PriorOwnerLookupCount,
+			M.TopologyRebuildDuringSamplingCount,
+			M.ProcessStateResetCount,
+			M.TerrainBeautyMutationCount,
+			M.MaterialCreatedWithoutGapFillCount,
+			M.MaterialDestroyedWithoutProcessCount,
+			M.bInheritedStage3Pass ? TEXT("true") : TEXT("false"),
+			M.bSourceFilterPass ? TEXT("true") : TEXT("false"),
+			M.bValidSelectionPass ? TEXT("true") : TEXT("false"),
+			M.bNoForbiddenFallbackPass ? TEXT("true") : TEXT("false"),
+			M.bDeferredGapFillPass ? TEXT("true") : TEXT("false"),
+			M.bNoPrematureTopologyPass ? TEXT("true") : TEXT("false"),
+			M.bReplayDeterministic ? TEXT("true") : TEXT("false"),
+			M.bFixturePass ? TEXT("true") : TEXT("false"),
+			M.bStageGatePass ? TEXT("true") : TEXT("false"),
+			*JsonString(M.Verdict),
+			*JsonString(M.ReplayStage3ProcessStateHash),
+			*JsonString(M.ReplayGlobalSamplingHash),
+			*JsonString(M.ReplayMetricsHash),
+			M.Stage3Ms,
+			M.BuildSubstrateMs,
+			M.BuildPlateLocalMs,
+			M.MotionApplyMs,
+			M.AabbBuildMs,
+			M.GlobalSamplingMs,
+			M.MetricsMs,
+			M.TotalMs,
+			M.PeakMemoryMb);
+
+		const int32 PreviewCount = FMath::Min(16, Result.SampleRecords.Num());
+		for (int32 Index = 0; Index < PreviewCount; ++Index)
+		{
+			if (Index > 0)
+			{
+				Json += TEXT(",");
+			}
+			const FCarrierV2RemeshSampleRecord& Record = Result.SampleRecords[Index];
+			Json += FString::Printf(
+				TEXT("{\"sample_id\":%d,\"raw_hit_count\":%d,\"filtered_subducting_hit_count\":%d,\"filtered_colliding_hit_count\":%d,\"valid_hit_count\":%d,\"selected_plate_id\":%d,\"selected_local_triangle_id\":%d,\"selected_source_triangle_id\":%d,\"selected_continental_fraction\":%.12g,\"zero_valid_hit\":%s,\"post_filter_unresolved_multihit\":%s,\"selected_filtered_hit\":%s,\"selection_provenance\":%s}"),
+				Record.SampleId,
+				Record.RawHitCount,
+				Record.FilteredSubductingHitCount,
+				Record.FilteredCollidingHitCount,
+				Record.ValidHitCount,
+				Record.SelectedPlateId,
+				Record.SelectedLocalTriangleId,
+				Record.SelectedSourceTriangleId,
+				Record.SelectedContinentalFraction,
+				Record.bZeroValidHit ? TEXT("true") : TEXT("false"),
+				Record.bPostFilterUnresolvedMultihit ? TEXT("true") : TEXT("false"),
+				Record.bSelectedFilteredHit ? TEXT("true") : TEXT("false"),
+				*JsonString(Record.SelectionProvenance));
+		}
+		Json += TEXT("]}");
+		return Json;
+	}
+
+	FString FCarrierV2Stage4::BuildCheckpointReport(
+		const FCarrierV2Stage4SuiteResult& Suite,
+		const FString& CommandLine,
+		const FString& CommitSha)
+	{
+		const double Start = FPlatformTime::Seconds();
+		FString Report;
+		Report += TEXT("# CarrierLab V2 Stage 4 Report\n\n");
+		Report += TEXT("Status: generated by `CarrierLabV2Stage4`.\n\n");
+		Report += FString::Printf(TEXT("- Commit: `%s`\n"), CommitSha.IsEmpty() ? TEXT("unknown") : *CommitSha);
+		Report += FString::Printf(TEXT("- Command: `%s`\n"), *CommandLine);
+		Report += FString::Printf(TEXT("- Output root: `%s`\n"), *Suite.OutputRoot);
+		Report += FString::Printf(TEXT("- Metrics JSONL: `%s`\n\n"), *Suite.MetricsPath);
+
+		Report += TEXT("## Scope\n\n");
+		Report += TEXT("V2-4 is the first Stage 1.5 resampling consumer of V2-3 process marks. It samples every global TDS vertex by casting a center-to-vertex ray into an AABB tree built from the current moved plate-local triangles, filters subducting and colliding marked triangles before source selection, barycentrically transfers material only from a surviving single valid hit or boundary-only degenerate hit, and records zero-valid-hit samples as deferred q1/q2/qGamma gap-fill work. It does not create divergent crust, approximate q1/q2, rebuild plate-local topology, reset process state, repair ownership, retain prior owners, or choose non-boundary post-filter multihit winners.\n\n");
+
+		Report += TEXT("## Fixture Gates\n\n");
+		Report += TEXT("| fixture | remesh class | samples | raw hits | filtered subducting | filtered colliding | valid hits | zero valid | unresolved multihit | pass | verdict |\n");
+		Report += TEXT("|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
+		for (const FCarrierV2Stage4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | %d | %lld | %d | %d | %d | %d | %d | %s | `%s` |\n"),
+				*M.FixtureId,
+				*M.ExpectedRemeshClass,
+				M.GlobalSampleCount,
+				M.RawHitCountTotal,
+				M.FilteredSubductingHitCount,
+				M.FilteredCollidingHitCount,
+				M.ValidHitAfterFilterCount,
+				M.ZeroValidHitCount,
+				M.PostFilterUnresolvedMultihitCount,
+				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
+				*M.Verdict);
+		}
+
+		Report += TEXT("\n## Filter And Selection Evidence\n\n");
+		Report += TEXT("| fixture | selected filtered hits | boundary-only multihits | material interpolations | gap-fill deferred | generated oceanic | q1/q2 approximations | source filter | valid selection |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---|---|\n");
+		for (const FCarrierV2Stage4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %s | %s |\n"),
+				*M.FixtureId,
+				M.SelectedFilteredHitCount,
+				M.PostFilterBoundaryOnlyMultihitCount,
+				M.MaterialInterpolationCount,
+				M.GapFillDeferredCount,
+				M.GeneratedOceanicCount,
+				M.Q1Q2DiscreteApproxCount,
+				M.bSourceFilterPass ? TEXT("pass") : TEXT("fail"),
+				M.bValidSelectionPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Hard Guards\n\n");
+		Report += TEXT("| fixture | prior owner fallback | centroid | random | nearest | ownership repair | retention/hysteresis | q1/q2 prior owner | topology rebuild | process reset | terrain beauty | fallback guard |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.PriorOwnerFallbackCount,
+				M.CentroidPrimaryResolutionCount,
+				M.RandomPrimaryResolutionCount,
+				M.NearestPrimaryResolutionCount,
+				M.OwnershipRepairDuringRemeshCount,
+				M.RetentionHysteresisAnchorCount,
+				M.Q1Q2PriorOwnerLookupCount,
+				M.TopologyRebuildDuringSamplingCount,
+				M.ProcessStateResetCount,
+				M.TerrainBeautyMutationCount,
+				M.bNoForbiddenFallbackPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Replay A/B\n\n");
+		Report += TEXT("| fixture | v2-3 process hash | replay v2-3 hash | sampling hash | replay sampling hash | deterministic |\n");
+		Report += TEXT("|---|---|---|---|---|---|\n");
+		for (const FCarrierV2Stage4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | `%s` | `%s` | `%s` | %s |\n"),
+				*M.FixtureId,
+				*M.Stage3ProcessStateHash,
+				*M.ReplayStage3ProcessStateHash,
+				*M.GlobalSamplingHash,
+				*M.ReplayGlobalSamplingHash,
+				M.bReplayDeterministic ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Performance Ladder\n\n");
+		Report += TEXT("| fixture | samples | triangles | stage3 ms | build substrate ms | plate-local ms | motion ms | AABB build ms | sampling ms | total ms | peak memory mb |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Stage4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n"),
+				*M.FixtureId,
+				M.GlobalSampleCount,
+				M.AabbMeshTriangleCount,
+				M.Stage3Ms,
+				M.BuildSubstrateMs,
+				M.BuildPlateLocalMs,
+				M.MotionApplyMs,
+				M.AabbBuildMs,
+				M.GlobalSamplingMs,
+				M.TotalMs,
+				M.PeakMemoryMb);
+		}
+
+		Report += TEXT("\n## Policy Ledger\n\n");
+		Report += TEXT("| policy | authority class | behavior | audit evidence |\n");
+		Report += TEXT("|---|---|---|---|\n");
+		Report += TEXT("| `V2-4-POL-GLOBAL-TDS-SAMPLING-TARGET` | source_explicit | every global TDS vertex is sampled by a center ray through moved plate-local triangles | `aabb_ray_query_count`, `global_sample_count` |\n");
+		Report += TEXT("| `V2-4-POL-PROCESS-MARK-FILTER` | source_explicit | subducting and colliding triangle marks are filtered before source selection | `filtered_subducting_hit_count`, `filtered_colliding_hit_count`, `selected_filtered_hit_count=0` |\n");
+		Report += TEXT("| `V2-4-POL-Q1Q2-DEFERRED` | approved_slice_limit | zero-valid-hit vertices are recorded as deferred gap-fill candidates; no generated oceanic crust is created in this slice | `gap_fill_deferred_count`, `generated_oceanic_count=0` |\n");
+		Report += TEXT("| `V2-4-POL-NO-TOPOLOGY-REBUILD-YET` | approved_slice_limit | plate-local topology is not rebuilt until q1/q2 gap-fill is implemented | `topology_rebuild_during_sampling_count=0`, `process_state_reset_count=0` |\n\n");
+
+		Report += TEXT("## Independent Oracle\n\n");
+		Report += TEXT("V2-4 does not compare filtered sampling output against itself. The input process marks are inherited from the replay-checked V2-3 process state. The sampling oracle is structural: all moved plate-local triangles are inserted into a GeometryCore AABB tree, every global TDS vertex ray collects all intersections, marked subducting/colliding intersections are discarded before valid-hit selection, and any non-boundary multi-hit remaining after filtering is a hard failure instead of being resolved by centroid, nearest, prior owner, random order, retention, or repair.\n\n");
+
+		Report += TEXT("## Known Limitations\n\n");
+		Report += TEXT("- V2-4 intentionally does not implement q1/q2/qGamma divergent gap fill; zero-valid-hit samples are ledgered for V2-5.\n");
+		Report += TEXT("- Because q1/q2 is deferred, V2-4 does not rebuild fresh plate-local topology or reset process state.\n");
+		Report += TEXT("- Boundary-only multi-hits at exact global vertices are counted separately from non-boundary post-filter multihits.\n");
+		Report += TEXT("- Scale fixtures inherit V2-3's deterministic plate material profile policy and are still carrier-kernel gates, not terrain/elevation validation.\n\n");
+
+		Report += TEXT("## Verdict\n\n");
+		Report += FString::Printf(TEXT("Verdict: `%s`\n\n"), *Suite.Verdict);
+		Report += FString::Printf(TEXT("- Micro gate: %s\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 50k gate: %s\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 250k characterization attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
+		if (Suite.bAttempted250k)
+		{
+			Report += FString::Printf(TEXT("- 250k characterization: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
+		}
+		Report += TEXT("\nExplicit user go/no-go is required before V2-5 q1/q2/qGamma divergent gap-fill and topology rebuild work.\n");
+
+		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
+		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);
+		return Report;
+	}
+
+	TArray<FCarrierV2Stage5Config> FCarrierV2Stage5::MakeMicroFixtureConfigs()
+	{
+		TArray<FCarrierV2Stage5Config> Configs;
+		FCarrierV2Stage4Config SubductionSampling;
+		FCarrierV2Stage4Config CollisionSampling;
+		for (const FCarrierV2Stage4Config& Stage4Config : FCarrierV2Stage4::MakeMicroFixtureConfigs())
+		{
+			if (Stage4Config.FixtureId == TEXT("FX-012"))
+			{
+				SubductionSampling = Stage4Config;
+			}
+			else if (Stage4Config.FixtureId == TEXT("FX-013"))
+			{
+				CollisionSampling = Stage4Config;
+			}
+		}
+
+		FCarrierV2Stage5Config FX014;
+		FX014.SamplingConfig = SubductionSampling;
+		FX014.FixtureId = TEXT("FX-014");
+		FX014.FixtureName = TEXT("FilteredSamplingRebuildReset");
+		FX014.ExpectedRemeshClass = TEXT("filtered_sampling_topology_rebuild_reset_no_gap");
+		FX014.RemeshSamplingPolicyId = TEXT("global_tds_aabb_filter_rebuild_reset_no_gap");
+		FX014.bRequireGeneratedOceanic = false;
+		FX014.bRequireContinuousQ1Q2 = false;
+		Configs.Add(FX014);
+
+		FCarrierV2Stage5Config FX015;
+		FX015.SamplingConfig = CollisionSampling;
+		FX015.FixtureId = TEXT("FX-015");
+		FX015.FixtureName = TEXT("ContinuousQ1Q2GapFillRebuildReset");
+		FX015.ExpectedRemeshClass = TEXT("continuous_q1q2_qgamma_gap_fill_topology_rebuild_reset");
+		FX015.RemeshSamplingPolicyId = TEXT("global_tds_aabb_filter_continuous_q1q2_rebuild_reset");
+		FX015.bRequireGeneratedOceanic = true;
+		FX015.bRequireContinuousQ1Q2 = true;
+		FX015.ExpectedMinimumGeneratedOceanic = 1;
+		FX015.ExpectedMinimumQ1Q2Pairs = 1;
+		Configs.Add(FX015);
+
+		return Configs;
+	}
+
+	FCarrierV2Stage5Config FCarrierV2Stage5::MakeScaleConfig(const int32 SampleCount, const bool bComparisonScale)
+	{
+		FCarrierV2Stage5Config Config;
+		Config.SamplingConfig = FCarrierV2Stage4::MakeScaleConfig(SampleCount, bComparisonScale);
+		Config.FixtureId = bComparisonScale ? TEXT("SCALE-250K-Q1Q2-REBUILD") : TEXT("SCALE-50K-Q1Q2-REBUILD");
+		Config.FixtureName = bComparisonScale ? TEXT("Scale250kQ1Q2RebuildCharacterization") : TEXT("Scale50kQ1Q2RebuildGate");
+		Config.ExpectedRemeshClass = TEXT("scale_continuous_q1q2_gap_fill_topology_rebuild_reset");
+		Config.RemeshSamplingPolicyId = TEXT("global_tds_aabb_filter_scale_continuous_q1q2_rebuild_reset");
+		Config.bRequireGeneratedOceanic = true;
+		Config.bRequireContinuousQ1Q2 = true;
+		Config.ExpectedMinimumGeneratedOceanic = 1;
+		Config.ExpectedMinimumQ1Q2Pairs = 1;
+		return Config;
+	}
+
+	bool FCarrierV2Stage5::RunFixtureWithReplay(const FCarrierV2Stage5Config& Config, FCarrierV2Stage5FixtureResult& OutResult)
+	{
+		FCarrierV2Stage5FixtureResult Replay;
+		const bool bPrimaryOk = RunStage5FixtureOnce(Config, OutResult);
+		const bool bReplayOk = RunStage5FixtureOnce(Config, Replay);
+
+		OutResult.Metrics.ReplayStage3ProcessStateHash = Replay.Metrics.Stage3ProcessStateHash;
+		OutResult.Metrics.ReplayGlobalSamplingHash = Replay.Metrics.GlobalSamplingHash;
+		OutResult.Metrics.ReplayGapFillHash = Replay.Metrics.GapFillHash;
+		OutResult.Metrics.ReplayRebuiltTopologyHash = Replay.Metrics.RebuiltTopologyHash;
+		OutResult.Metrics.ReplayMetricsHash = Replay.Metrics.MetricsHash;
+		OutResult.Metrics.bReplayDeterministic =
+			bPrimaryOk == bReplayOk &&
+			OutResult.Metrics.Stage3ProcessStateHash == Replay.Metrics.Stage3ProcessStateHash &&
+			OutResult.Metrics.GlobalSamplingHash == Replay.Metrics.GlobalSamplingHash &&
+			OutResult.Metrics.GapFillHash == Replay.Metrics.GapFillHash &&
+			OutResult.Metrics.RebuiltTopologyHash == Replay.Metrics.RebuiltTopologyHash &&
+			OutResult.Metrics.Verdict == Replay.Metrics.Verdict &&
+			OutResult.Metrics.bFixturePass == Replay.Metrics.bFixturePass;
+
+		OutResult.Metrics.bFixturePass = OutResult.Metrics.bFixturePass && OutResult.Metrics.bReplayDeterministic;
+		OutResult.Metrics.bStageGatePass = OutResult.Metrics.bFixturePass;
+		if (!OutResult.Metrics.bReplayDeterministic)
+		{
+			OutResult.Metrics.Verdict = TEXT("FAIL_REPLAY_DETERMINISM");
+			if (OutResult.Error.IsEmpty())
+			{
+				OutResult.Error = TEXT("Replay A/B process hash, sampling hash, gap-fill hash, rebuilt topology hash, verdict, or fixture pass differed.");
+			}
+		}
+		OutResult.Metrics.MetricsHash = HashToString(HashStage5Metrics(OutResult.Metrics, true));
+		return bPrimaryOk && bReplayOk && OutResult.Metrics.bFixturePass;
+	}
+
+	FString FCarrierV2Stage5::MetricsToJson(const FCarrierV2Stage5FixtureResult& Result)
+	{
+		const FCarrierV2Stage5Metrics& M = Result.Metrics;
+		FString Json = TEXT("{");
+		Json += FString::Printf(TEXT("\"run_id\":%s,"), *JsonString(M.RunId));
+		Json += FString::Printf(TEXT("\"stage_id\":%s,"), *JsonString(M.StageId));
+		Json += FString::Printf(TEXT("\"fixture_id\":%s,"), *JsonString(M.FixtureId));
+		Json += FString::Printf(TEXT("\"fixture_name\":%s,"), *JsonString(M.FixtureName));
+		Json += FString::Printf(TEXT("\"fixture_kind\":%s,"), *JsonString(M.FixtureKind));
+		Json += FString::Printf(TEXT("\"expected_remesh_class\":%s,"), *JsonString(M.ExpectedRemeshClass));
+		Json += FString::Printf(TEXT("\"source_status\":%s,"), *JsonString(M.SourceStatus));
+		Json += FString::Printf(TEXT("\"remesh_sampling_policy_id\":%s,"), *JsonString(M.RemeshSamplingPolicyId));
+		Json += FString::Printf(TEXT("\"triangle_partition_policy_id\":%s,"), *JsonString(M.TrianglePartitionPolicyId));
+		Json += FString::Printf(TEXT("\"remesh_trigger_reason\":%s,"), *JsonString(M.RemeshTriggerReason));
+		Json += FString::Printf(TEXT("\"sample_count\":%d,\"triangle_count\":%d,\"plate_count\":%d,\"ray_epsilon\":%.12g,"), M.SampleCount, M.TriangleCount, M.PlateCount, M.RayEpsilon);
+		Json += FString::Printf(TEXT("\"config_hash\":%s,\"stage3_process_state_hash\":%s,\"remesh_input_hash\":%s,\"global_sampling_hash\":%s,\"gap_fill_hash\":%s,\"rebuilt_topology_hash\":%s,\"metrics_hash\":%s,"),
+			*JsonString(M.ConfigHash),
+			*JsonString(M.Stage3ProcessStateHash),
+			*JsonString(M.RemeshInputHash),
+			*JsonString(M.GlobalSamplingHash),
+			*JsonString(M.GapFillHash),
+			*JsonString(M.RebuiltTopologyHash),
+			*JsonString(M.MetricsHash));
+		Json += FString::Printf(TEXT("\"global_sample_count\":%d,\"global_triangle_count\":%d,\"local_plate_vertex_count_sum\":%d,\"local_plate_triangle_count_sum\":%d,\"pretreated_plate_count\":%d,\"fully_subducted_plate_destroyed_count\":%d,\"boundary_edge_count\":%d,\"aabb_mesh_triangle_count\":%d,\"aabb_ray_query_count\":%lld,\"raw_hit_count_total\":%lld,"),
+			M.GlobalSampleCount,
+			M.GlobalTriangleCount,
+			M.LocalPlateVertexCountSum,
+			M.LocalPlateTriangleCountSum,
+			M.PretreatedPlateCount,
+			M.FullySubductedPlateDestroyedCount,
+			M.BoundaryEdgeCount,
+			M.AabbMeshTriangleCount,
+			M.AabbRayQueryCount,
+			M.RawHitCountTotal);
+		Json += FString::Printf(TEXT("\"filtered_subducting_hit_count\":%d,\"filtered_colliding_hit_count\":%d,\"valid_hit_after_filter_count\":%d,\"zero_valid_hit_count\":%d,\"q1q2_gap_fill_count\":%d,\"q1q2_boundary_query_count\":%d,\"q1q2_boundary_pair_count\":%d,\"q1q2_different_plate_pair_count\":%d,\"qgamma_computed_count\":%d,\"generated_oceanic_count\":%d,\"gap_fill_no_boundary_pair_count\":%d,"),
+			M.FilteredSubductingHitCount,
+			M.FilteredCollidingHitCount,
+			M.ValidHitAfterFilterCount,
+			M.ZeroValidHitCount,
+			M.Q1Q2GapFillCount,
+			M.Q1Q2BoundaryQueryCount,
+			M.Q1Q2BoundaryPairCount,
+			M.Q1Q2DifferentPlatePairCount,
+			M.QGammaComputedCount,
+			M.GeneratedOceanicCount,
+			M.GapFillNoBoundaryPairCount);
+		Json += FString::Printf(TEXT("\"post_filter_unresolved_multihit_count\":%d,\"post_filter_boundary_only_multihit_count\":%d,\"boundary_degenerate_hit_count\":%d,\"material_interpolation_count\":%d,\"selected_filtered_hit_count\":%d,"),
+			M.PostFilterUnresolvedMultihitCount,
+			M.PostFilterBoundaryOnlyMultihitCount,
+			M.BoundaryDegenerateHitCount,
+			M.MaterialInterpolationCount,
+			M.SelectedFilteredHitCount);
+		Json += FString::Printf(TEXT("\"prior_owner_fallback_count\":%d,\"centroid_primary_resolution_count\":%d,\"random_primary_resolution_count\":%d,\"nearest_primary_resolution_count\":%d,\"ownership_repair_during_remesh_count\":%d,\"retention_hysteresis_anchor_count\":%d,\"q1q2_discrete_approx_count\":%d,\"q1q2_prior_owner_lookup_count\":%d,"),
+			M.PriorOwnerFallbackCount,
+			M.CentroidPrimaryResolutionCount,
+			M.RandomPrimaryResolutionCount,
+			M.NearestPrimaryResolutionCount,
+			M.OwnershipRepairDuringRemeshCount,
+			M.RetentionHysteresisAnchorCount,
+			M.Q1Q2DiscreteApproxCount,
+			M.Q1Q2PriorOwnerLookupCount);
+		Json += FString::Printf(TEXT("\"topology_rebuild_count\":%d,\"rebuilt_plate_count\":%d,\"rebuilt_local_vertex_count_sum\":%d,\"rebuilt_local_triangle_count_sum\":%d,\"rebuilt_triangle_assignment_count\":%d,\"mixed_vertex_triangle_count\":%d,\"majority_triangle_assignment_count\":%d,\"three_way_triangle_assignment_count\":%d,\"unassigned_triangle_count\":%d,"),
+			M.TopologyRebuildCount,
+			M.RebuiltPlateCount,
+			M.RebuiltLocalVertexCountSum,
+			M.RebuiltLocalTriangleCountSum,
+			M.RebuiltTriangleAssignmentCount,
+			M.MixedVertexTriangleCount,
+			M.MajorityTriangleAssignmentCount,
+			M.ThreeWayTriangleAssignmentCount,
+			M.UnassignedTriangleCount);
+		Json += FString::Printf(TEXT("\"process_state_reset_count\":%d,\"pre_reset_triangle_mark_count\":%d,\"post_reset_triangle_mark_count\":%d,\"terrain_beauty_mutation_count\":%d,\"material_created_without_gap_fill_count\":%d,\"material_destroyed_without_process_count\":%d,"),
+			M.ProcessStateResetCount,
+			M.PreResetTriangleMarkCount,
+			M.PostResetTriangleMarkCount,
+			M.TerrainBeautyMutationCount,
+			M.MaterialCreatedWithoutGapFillCount,
+			M.MaterialDestroyedWithoutProcessCount);
+		Json += FString::Printf(TEXT("\"inherited_stage3_pass\":%s,\"source_filter_pass\":%s,\"q1q2_gap_fill_pass\":%s,\"topology_rebuild_pass\":%s,\"process_reset_pass\":%s,\"no_forbidden_fallback_pass\":%s,\"replay_deterministic\":%s,\"fixture_pass\":%s,\"stage_gate_pass\":%s,\"verdict\":%s,"),
+			M.bInheritedStage3Pass ? TEXT("true") : TEXT("false"),
+			M.bSourceFilterPass ? TEXT("true") : TEXT("false"),
+			M.bQ1Q2GapFillPass ? TEXT("true") : TEXT("false"),
+			M.bTopologyRebuildPass ? TEXT("true") : TEXT("false"),
+			M.bProcessResetPass ? TEXT("true") : TEXT("false"),
+			M.bNoForbiddenFallbackPass ? TEXT("true") : TEXT("false"),
+			M.bReplayDeterministic ? TEXT("true") : TEXT("false"),
+			M.bFixturePass ? TEXT("true") : TEXT("false"),
+			M.bStageGatePass ? TEXT("true") : TEXT("false"),
+			*JsonString(M.Verdict));
+		Json += FString::Printf(TEXT("\"replay_stage3_process_state_hash\":%s,\"replay_global_sampling_hash\":%s,\"replay_gap_fill_hash\":%s,\"replay_rebuilt_topology_hash\":%s,\"replay_metrics_hash\":%s,"),
+			*JsonString(M.ReplayStage3ProcessStateHash),
+			*JsonString(M.ReplayGlobalSamplingHash),
+			*JsonString(M.ReplayGapFillHash),
+			*JsonString(M.ReplayRebuiltTopologyHash),
+			*JsonString(M.ReplayMetricsHash));
+		Json += FString::Printf(TEXT("\"stage3_ms\":%.3f,\"build_substrate_ms\":%.3f,\"build_plate_local_ms\":%.3f,\"motion_apply_ms\":%.3f,\"aabb_build_ms\":%.3f,\"global_sampling_ms\":%.3f,\"topology_rebuild_ms\":%.3f,\"metrics_ms\":%.3f,\"total_ms\":%.3f,\"peak_memory_mb\":%.3f,\"sample_records_preview\":["),
+			M.Stage3Ms,
+			M.BuildSubstrateMs,
+			M.BuildPlateLocalMs,
+			M.MotionApplyMs,
+			M.AabbBuildMs,
+			M.GlobalSamplingMs,
+			M.TopologyRebuildMs,
+			M.MetricsMs,
+			M.TotalMs,
+			M.PeakMemoryMb);
+
+		const int32 PreviewCount = FMath::Min(16, Result.SampleRecords.Num());
+		for (int32 Index = 0; Index < PreviewCount; ++Index)
+		{
+			if (Index > 0)
+			{
+				Json += TEXT(",");
+			}
+			const FCarrierV2Stage5SampleRecord& Record = Result.SampleRecords[Index];
+			Json += FString::Printf(
+				TEXT("{\"sample_id\":%d,\"raw_hit_count\":%d,\"filtered_subducting_hit_count\":%d,\"filtered_colliding_hit_count\":%d,\"valid_hit_count\":%d,\"selected_plate_id\":%d,\"assigned_plate_id\":%d,\"selected_continental_fraction\":%.12g,\"zero_valid_hit\":%s,\"generated_oceanic\":%s,\"boundary_pair_found\":%s,\"q1_plate_id\":%d,\"q2_plate_id\":%d,\"q1_distance_rad\":%.12g,\"q2_distance_rad\":%.12g,\"qgamma_distance_rad\":%.12g,\"qgamma_alpha\":%.12g,\"selection_provenance\":%s}"),
+				Record.SampleId,
+				Record.RawHitCount,
+				Record.FilteredSubductingHitCount,
+				Record.FilteredCollidingHitCount,
+				Record.ValidHitCount,
+				Record.SelectedPlateId,
+				Record.AssignedPlateId,
+				Record.SelectedContinentalFraction,
+				Record.bZeroValidHit ? TEXT("true") : TEXT("false"),
+				Record.bGeneratedOceanic ? TEXT("true") : TEXT("false"),
+				Record.bBoundaryPairFound ? TEXT("true") : TEXT("false"),
+				Record.Q1PlateId,
+				Record.Q2PlateId,
+				Record.Q1DistanceRad,
+				Record.Q2DistanceRad,
+				Record.QGammaDistanceRad,
+				Record.QGammaAlpha,
+				*JsonString(Record.SelectionProvenance));
+		}
+		Json += TEXT("]}");
+		return Json;
+	}
+
+	FString FCarrierV2Stage5::BuildCheckpointReport(
+		const FCarrierV2Stage5SuiteResult& Suite,
+		const FString& CommandLine,
+		const FString& CommitSha)
+	{
+		const double Start = FPlatformTime::Seconds();
+		FString Report;
+		Report += TEXT("# CarrierLab V2 Stage 5 Report\n\n");
+		Report += TEXT("Status: generated by `CarrierLabV2Stage5`.\n\n");
+		Report += FString::Printf(TEXT("- Commit: `%s`\n"), CommitSha.IsEmpty() ? TEXT("unknown") : *CommitSha);
+		Report += FString::Printf(TEXT("- Command: `%s`\n"), *CommandLine);
+		Report += FString::Printf(TEXT("- Output root: `%s`\n"), *Suite.OutputRoot);
+		Report += FString::Printf(TEXT("- Metrics JSONL: `%s`\n\n"), *Suite.MetricsPath);
+
+		Report += TEXT("## Scope\n\n");
+		Report += TEXT("V2-5 consumes V2-4 filtered global TDS sampling and completes the remaining Stage 1.5 remesh mechanics: zero-valid samples use continuous nearest boundary q1/q2 points from different plates, qGamma midpoint provenance is recorded, new oceanic carrier material is created only through that gap-fill path, and plate-local topology is rebuilt from the resampled global TDS assignments. Process triangle marks are reset after rebuild. This slice does not add elevation, erosion, slab pull, rifting, terrane transfer, editor UI, or terrain beauty.\n\n");
+
+		Report += TEXT("## Fixture Gates\n\n");
+		Report += TEXT("| fixture | remesh class | samples | raw hits | filtered subducting | filtered colliding | valid hits | zero valid | generated oceanic | unassigned triangles | pass | verdict |\n");
+		Report += TEXT("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
+		for (const FCarrierV2Stage5FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage5Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | %d | %lld | %d | %d | %d | %d | %d | %d | %s | `%s` |\n"),
+				*M.FixtureId,
+				*M.ExpectedRemeshClass,
+				M.GlobalSampleCount,
+				M.RawHitCountTotal,
+				M.FilteredSubductingHitCount,
+				M.FilteredCollidingHitCount,
+				M.ValidHitAfterFilterCount,
+				M.ZeroValidHitCount,
+				M.GeneratedOceanicCount,
+				M.UnassignedTriangleCount,
+				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
+				*M.Verdict);
+		}
+
+		Report += TEXT("\n## Q1/Q2 Evidence\n\n");
+		Report += TEXT("| fixture | boundary edges | q1/q2 queries | q1/q2 pairs | different-plate pairs | qGamma computed | no-pair fallback | discrete q1/q2 | prior-owner q1/q2 | gap-fill pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage5FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage5Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.BoundaryEdgeCount,
+				M.Q1Q2BoundaryQueryCount,
+				M.Q1Q2BoundaryPairCount,
+				M.Q1Q2DifferentPlatePairCount,
+				M.QGammaComputedCount,
+				M.GapFillNoBoundaryPairCount,
+				M.Q1Q2DiscreteApproxCount,
+				M.Q1Q2PriorOwnerLookupCount,
+				M.bQ1Q2GapFillPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Rebuild And Reset Evidence\n\n");
+		Report += TEXT("| fixture | rebuilds | rebuilt plates | rebuilt vertices | rebuilt triangles | mixed triangles | majority assignments | three-way assignments | process reset | pre-reset marks | post-reset marks | rebuild pass | reset pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
+		for (const FCarrierV2Stage5FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage5Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s | %s |\n"),
+				*M.FixtureId,
+				M.TopologyRebuildCount,
+				M.RebuiltPlateCount,
+				M.RebuiltLocalVertexCountSum,
+				M.RebuiltLocalTriangleCountSum,
+				M.MixedVertexTriangleCount,
+				M.MajorityTriangleAssignmentCount,
+				M.ThreeWayTriangleAssignmentCount,
+				M.ProcessStateResetCount,
+				M.PreResetTriangleMarkCount,
+				M.PostResetTriangleMarkCount,
+				M.bTopologyRebuildPass ? TEXT("pass") : TEXT("fail"),
+				M.bProcessResetPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Hard Guards\n\n");
+		Report += TEXT("| fixture | selected filtered hits | prior owner fallback | centroid | random | nearest | ownership repair | retention/hysteresis | material without gap fill | terrain beauty | guard pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage5FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage5Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.SelectedFilteredHitCount,
+				M.PriorOwnerFallbackCount,
+				M.CentroidPrimaryResolutionCount,
+				M.RandomPrimaryResolutionCount,
+				M.NearestPrimaryResolutionCount,
+				M.OwnershipRepairDuringRemeshCount,
+				M.RetentionHysteresisAnchorCount,
+				M.MaterialCreatedWithoutGapFillCount,
+				M.TerrainBeautyMutationCount,
+				M.bNoForbiddenFallbackPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Replay A/B\n\n");
+		Report += TEXT("| fixture | v2-3 hash | replay v2-3 hash | sampling hash | replay sampling hash | topology hash | replay topology hash | deterministic |\n");
+		Report += TEXT("|---|---|---|---|---|---|---|---|\n");
+		for (const FCarrierV2Stage5FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage5Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %s |\n"),
+				*M.FixtureId,
+				*M.Stage3ProcessStateHash,
+				*M.ReplayStage3ProcessStateHash,
+				*M.GlobalSamplingHash,
+				*M.ReplayGlobalSamplingHash,
+				*M.RebuiltTopologyHash,
+				*M.ReplayRebuiltTopologyHash,
+				M.bReplayDeterministic ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Performance Ladder\n\n");
+		Report += TEXT("| fixture | samples | triangles | stage3 ms | build substrate ms | plate-local ms | motion ms | AABB build ms | sampling ms | rebuild ms | total ms | peak memory mb |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Stage5FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage5Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n"),
+				*M.FixtureId,
+				M.GlobalSampleCount,
+				M.GlobalTriangleCount,
+				M.Stage3Ms,
+				M.BuildSubstrateMs,
+				M.BuildPlateLocalMs,
+				M.MotionApplyMs,
+				M.AabbBuildMs,
+				M.GlobalSamplingMs,
+				M.TopologyRebuildMs,
+				M.TotalMs,
+				M.PeakMemoryMb);
+		}
+
+		Report += TEXT("\n## Policy Ledger\n\n");
+		Report += TEXT("| policy | authority class | behavior | audit evidence |\n");
+		Report += TEXT("|---|---|---|---|\n");
+		Report += TEXT("| `V2-5-POL-CONTINUOUS-Q1Q2` | source_explicit | zero-valid global TDS samples choose continuous nearest points on two different plate boundary arcs and compute qGamma midpoint provenance | `q1q2_boundary_pair_count`, `q1q2_different_plate_pair_count`, `qgamma_computed_count` |\n");
+		Report += TEXT("| `V2-5-POL-OCEANIC-GAP-ONLY` | source_explicit_carrier_subset | generated oceanic carrier material is created only for zero-valid q1/q2 gap-fill samples | `generated_oceanic_count == zero_valid_hit_count`, `material_created_without_gap_fill_count=0` |\n");
+		Report += TEXT("| `V2-5-POL-TOPOLOGY-REBUILD` | source_explicit | plate-local triangulations are rebuilt from global TDS assignments after resampling | `topology_rebuild_count`, `rebuilt_local_triangle_count_sum` |\n");
+		Report += TEXT("| `V2-5-POL-MIXED-TRIANGLE-PARTITION` | lab_policy_thesis_gap | mixed-vertex global triangles use majority assignment, with plate sample-count then lower-id tiebreak for three-way cases | `mixed_vertex_triangle_count`, `three_way_triangle_assignment_count` |\n");
+		Report += TEXT("| `V2-5-POL-PROCESS-RESET` | source_explicit | process triangle marks are reset after the rebuilt topology is produced | `pre_reset_triangle_mark_count`, `post_reset_triangle_mark_count=0` |\n\n");
+
+		Report += TEXT("## Independent Oracle\n\n");
+		Report += TEXT("V2-5 gates do not accept a self-described remesh. The sampling path must first inherit a replay-passing V2-3 process state, then independently collect all AABB ray intersections, filter marked subducting/colliding hits, and require every zero-valid sample in these fixtures and scale runs to receive a q1/q2 pair from two different boundary plates. The topology gate rebuilds plate-local triangles from the global TDS vertex assignments and hashes the rebuilt per-plate vertices, triangles, material provenance, and process-reset state.\n\n");
+
+		Report += TEXT("## Known Limitations\n\n");
+		Report += TEXT("- V2-5 implements carrier material generation only; elevation, zGamma ridge profile values, erosion, slab pull, rifting, and terrain beauty remain out of scope.\n");
+		Report += TEXT("- The paper does not specify mixed-vertex global triangle partitioning after per-vertex plate assignment; V2-5 names and counts the deterministic lab policy instead of hiding it.\n");
+		Report += TEXT("- Continental persistence still depends on future terrane transfer before remesh; V2-5 does not invent a resampler-side continental rescue path.\n\n");
+
+		Report += TEXT("## Verdict\n\n");
+		Report += FString::Printf(TEXT("Verdict: `%s`\n\n"), *Suite.Verdict);
+		Report += FString::Printf(TEXT("- Micro gate: %s\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 50k gate: %s\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 250k characterization attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
+		if (Suite.bAttempted250k)
+		{
+			Report += FString::Printf(TEXT("- 250k characterization: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
+		}
+		Report += TEXT("\nExplicit user go/no-go is required before any V2-6 carrier-cycle, cadence, rifting, terrain, or editor work.\n");
 
 		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
 		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);
