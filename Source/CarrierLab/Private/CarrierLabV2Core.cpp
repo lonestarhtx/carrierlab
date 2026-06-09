@@ -870,7 +870,31 @@ namespace CarrierLab::V2
 
 		struct FCarrierV2Stage1ProjectionHit
 		{
+			int32 SampleId = INDEX_NONE;
+			int32 PlateId = INDEX_NONE;
+			int32 LocalTriangleId = INDEX_NONE;
+			int32 SourceTriangleId = INDEX_NONE;
+			FVector3d Barycentric = FVector3d::ZeroVector;
+			double HitT = 0.0;
 			bool bBoundaryDegenerate = false;
+			double ContinentalFraction = 0.0;
+		};
+
+		struct FCarrierV2Stage1TreeTriangleRef
+		{
+			int32 PlateId = INDEX_NONE;
+			int32 LocalTriangleId = INDEX_NONE;
+			int32 SourceTriangleId = INDEX_NONE;
+		};
+
+		struct FCarrierV2Stage1PlateQueryRuntime
+		{
+			int32 PlateId = INDEX_NONE;
+			UE::Geometry::FDynamicMesh3 Mesh;
+			TMap<int32, FCarrierV2Stage1TreeTriangleRef> TriangleRefs;
+			TUniquePtr<UE::Geometry::FDynamicMeshAABBTree3> Tree;
+			FVector3d MovedCapCenter = FVector3d(0.0, 0.0, 1.0);
+			double MovedCapRadiusRad = UE_DOUBLE_PI;
 		};
 
 		FVector3d SafeMotionAxis(const FVector3d& Axis)
@@ -931,7 +955,17 @@ namespace CarrierLab::V2
 			HashMixDouble(Hash, Config.PlanetRadiusKm);
 			HashMixDouble(Hash, Config.MotionToleranceKm);
 			HashMixDouble(Hash, Config.UnitLengthTolerance);
+			HashMixDouble(Hash, Config.RayParallelTolerance);
+			HashMixDouble(Hash, Config.RayTMinTolerance);
+			HashMixDouble(Hash, Config.BarycentricSlop);
+			HashMixDouble(Hash, Config.BoundaryBand);
+			HashMixDouble(Hash, Config.MotionOracleToleranceKm);
+			HashMixDouble(Hash, Config.ExpectedMaxStepKernelMs);
 			HashMixInt(Hash, Config.bUseFullTriangleScanForProjection ? 1 : 0);
+			HashMixInt(Hash, Config.bRunBruteforceProjectionOracle ? 1 : 0);
+			HashMixInt(Hash, Config.bUseAngularCapPlateBroadphase ? 1 : 0);
+			HashMixInt(Hash, Config.bRunAllPlateBroadphaseEquivalence ? 1 : 0);
+			HashMixDouble(Hash, Config.BroadphaseAngularMarginRad);
 			for (const FCarrierV2MotionSpec& Motion : Config.PlateMotions)
 			{
 				const FVector3d Axis = SafeMotionAxis(Motion.Axis);
@@ -989,12 +1023,27 @@ namespace CarrierLab::V2
 			HashMixInt(Hash, Metrics.BoundaryPolicySelectedCount);
 			HashMixInt(Hash, Metrics.DivergentCandidateCount);
 			HashMixInt(Hash, Metrics.ConvergentCandidateCount);
+			HashMixInt(Hash, Metrics.ThirdPlateIntrusionCount);
+			HashMixInt(Hash, Metrics.MaterialInterpolationCount);
 			HashMixInt(Hash, Metrics.MotionRepairCount);
 			HashMixInt(Hash, Metrics.RemeshDuringMotionCount);
+			HashMixInt(Hash, Metrics.PrimaryResolverConsumedCount);
 			HashMixInt(Hash, Metrics.ProjectionReadsGlobalOwnerCount);
+			HashMixInt(Hash, Metrics.TreeTriangleCountSum);
+			HashMixInt(Hash, Metrics.RayQueryCount);
+			HashMixInt(Hash, Metrics.AabbHitCountTotal);
+			HashMixInt(Hash, Metrics.BruteForceHitCountTotal);
+			HashMixInt(Hash, Metrics.AabbBruteforceClassificationMismatchCount);
+			HashMixInt(Hash, Metrics.BroadphaseCandidateQueryCount);
+			HashMixInt(Hash, Metrics.BroadphaseSkippedPlateQueryCount);
+			HashMixInt(Hash, Metrics.AllPlateEquivalenceRayQueryCount);
+			HashMixInt(Hash, Metrics.BroadphaseEquivalenceMismatchCount);
 			HashMixInt(Hash, Metrics.RawHitCountTotal);
 			HashMixInt(Hash, Metrics.RayTriangleTestCount);
+			HashMixInt(Hash, Metrics.bAabbBruteforceEquivalencePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bBroadphaseEquivalencePass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bMotionOraclePass ? 1 : 0);
+			HashMixInt(Hash, Metrics.bPerformanceBudgetPass ? 1 : 0);
 			HashMixInt(Hash, Metrics.bProjectionExpectationPass ? 1 : 0);
 			if (bIncludeMetricHash)
 			{
@@ -1016,11 +1065,122 @@ namespace CarrierLab::V2
 			}
 		}
 
-		void TestStage1Triangle(
+		double Stage1TotalMotionAngle(const FCarrierV2Stage1Config& Config, const int32 PlateId)
+		{
+			const FCarrierV2MotionSpec Motion = MotionForPlate(Config, PlateId);
+			return Motion.AngularSpeedRadPerMa * Config.DtMa * static_cast<double>(Config.MotionStepCount);
+		}
+
+		bool IsStage1BoundaryBarycentric(const FVector3d& Barycentric, const double BoundaryBand)
+		{
+			return FMath::Abs(Barycentric.X) <= BoundaryBand ||
+				FMath::Abs(Barycentric.Y) <= BoundaryBand ||
+				FMath::Abs(Barycentric.Z) <= BoundaryBand ||
+				FMath::Abs(1.0 - Barycentric.X) <= BoundaryBand ||
+				FMath::Abs(1.0 - Barycentric.Y) <= BoundaryBand ||
+				FMath::Abs(1.0 - Barycentric.Z) <= BoundaryBand;
+		}
+
+		bool IsStage1InsideBarycentric(const FVector3d& Barycentric, const double Slop)
+		{
+			return Barycentric.X >= -Slop &&
+				Barycentric.Y >= -Slop &&
+				Barycentric.Z >= -Slop &&
+				Barycentric.X <= 1.0 + Slop &&
+				Barycentric.Y <= 1.0 + Slop &&
+				Barycentric.Z <= 1.0 + Slop;
+		}
+
+		bool IntersectStage1RayTriangle(
 			const FVector3d& Direction,
+			const FVector3d& A,
+			const FVector3d& B,
+			const FVector3d& C,
+			const FCarrierV2Stage1Config& Config,
+			FVector3d& OutBarycentric,
+			double& OutT,
+			bool& bOutBoundaryDegenerate)
+		{
+			const FVector3d SafeDirection = Direction.GetSafeNormal();
+			const FVector3d Normal = FVector3d::CrossProduct(B - A, C - A);
+			const double NormalSize = Normal.Size();
+			if (NormalSize <= SMALL_NUMBER)
+			{
+				return false;
+			}
+
+			const double Denom = FVector3d::DotProduct(Normal, SafeDirection);
+			const double NormalizedDenom = FMath::Abs(Denom) / NormalSize;
+			if (NormalizedDenom <= Config.RayParallelTolerance)
+			{
+				return false;
+			}
+
+			const double T = FVector3d::DotProduct(Normal, A) / Denom;
+			if (T <= Config.RayTMinTolerance)
+			{
+				return false;
+			}
+
+			const FVector3d Q = SafeDirection * T;
+			const FVector3d V0 = B - A;
+			const FVector3d V1 = C - A;
+			const FVector3d V2 = Q - A;
+			const double D00 = FVector3d::DotProduct(V0, V0);
+			const double D01 = FVector3d::DotProduct(V0, V1);
+			const double D11 = FVector3d::DotProduct(V1, V1);
+			const double D20 = FVector3d::DotProduct(V2, V0);
+			const double D21 = FVector3d::DotProduct(V2, V1);
+			const double BaryDenom = D00 * D11 - D01 * D01;
+			if (FMath::Abs(BaryDenom) <= SMALL_NUMBER)
+			{
+				return false;
+			}
+
+			const double V = (D11 * D20 - D01 * D21) / BaryDenom;
+			const double W = (D00 * D21 - D01 * D20) / BaryDenom;
+			const double U = 1.0 - V - W;
+			const FVector3d Barycentric(U, V, W);
+			if (!IsStage1InsideBarycentric(Barycentric, Config.BarycentricSlop))
+			{
+				return false;
+			}
+
+			OutBarycentric = Barycentric;
+			OutT = T;
+			bOutBoundaryDegenerate = IsStage1BoundaryBarycentric(Barycentric, Config.BoundaryBand);
+			return true;
+		}
+
+		void AddStage1ProjectionHit(
+			const int32 SampleId,
 			const FCarrierV2Plate& Plate,
 			const FCarrierV2PlateTriangle& Triangle,
-			const double RayEpsilon,
+			const FVector3d& Barycentric,
+			const double HitT,
+			const bool bBoundaryDegenerate,
+			FCarrierV2Stage1Metrics& Metrics,
+			TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
+		{
+			FCarrierV2Stage1ProjectionHit Hit;
+			Hit.SampleId = SampleId;
+			Hit.PlateId = Plate.PlateId;
+			Hit.LocalTriangleId = Triangle.LocalTriangleId;
+			Hit.SourceTriangleId = Triangle.SourceTriangleId;
+			Hit.Barycentric = Barycentric;
+			Hit.HitT = HitT;
+			Hit.bBoundaryDegenerate = bBoundaryDegenerate;
+			Hit.ContinentalFraction = InterpolateContinentalFraction(Plate, Triangle, Barycentric);
+			++Metrics.MaterialInterpolationCount;
+			Hits.Add(Hit);
+		}
+
+		void TestStage1Triangle(
+			const int32 SampleId,
+			const FVector3d& Direction,
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2Plate& Plate,
+			const FCarrierV2PlateTriangle& Triangle,
 			FCarrierV2Stage1Metrics& Metrics,
 			TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
 		{
@@ -1035,20 +1195,332 @@ namespace CarrierLab::V2
 			double HitT = 0.0;
 			bool bBoundaryDegenerate = false;
 			++Metrics.RayTriangleTestCount;
-			if (IntersectRayTriangle(
+			if (IntersectStage1RayTriangle(
 				Direction,
 				Plate.LocalVertices[Triangle.LocalVertexIds[0]].UnitPosition,
 				Plate.LocalVertices[Triangle.LocalVertexIds[1]].UnitPosition,
 				Plate.LocalVertices[Triangle.LocalVertexIds[2]].UnitPosition,
-				RayEpsilon,
+				Config,
 				Barycentric,
 				HitT,
 				bBoundaryDegenerate))
 			{
-				FCarrierV2Stage1ProjectionHit Hit;
-				Hit.bBoundaryDegenerate = bBoundaryDegenerate;
-				Hits.Add(Hit);
+				AddStage1ProjectionHit(SampleId, Plate, Triangle, Barycentric, HitT, bBoundaryDegenerate, Metrics, Hits);
 			}
+		}
+
+		bool BuildStage1PlateQueryRuntimes(
+			const FCarrierV2BuildState& State,
+			TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>>& OutRuntimes,
+			FCarrierV2Stage1Metrics& Metrics,
+			FString& OutError)
+		{
+			OutRuntimes.Reset();
+			const double AabbStart = FPlatformTime::Seconds();
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				TUniquePtr<FCarrierV2Stage1PlateQueryRuntime> Runtime = MakeUnique<FCarrierV2Stage1PlateQueryRuntime>();
+				Runtime->PlateId = Plate.PlateId;
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					if (!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[0]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[1]) ||
+						!Plate.LocalVertices.IsValidIndex(Triangle.LocalVertexIds[2]))
+					{
+						OutError = FString::Printf(
+							TEXT("Milestone 1 AABB mesh build found invalid local triangle %d on plate %d."),
+							Triangle.LocalTriangleId,
+							Plate.PlateId);
+						return false;
+					}
+
+					const int32 A = Runtime->Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[0]].UnitPosition);
+					const int32 B = Runtime->Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[1]].UnitPosition);
+					const int32 C = Runtime->Mesh.AppendVertex(Plate.LocalVertices[Triangle.LocalVertexIds[2]].UnitPosition);
+					const int32 TreeTriangleId = Runtime->Mesh.AppendTriangle(A, B, C, Plate.PlateId);
+					if (TreeTriangleId < 0)
+					{
+						OutError = FString::Printf(
+							TEXT("Milestone 1 AABB mesh append failed for plate %d local triangle %d with result %d."),
+							Plate.PlateId,
+							Triangle.LocalTriangleId,
+							TreeTriangleId);
+						return false;
+					}
+
+					FCarrierV2Stage1TreeTriangleRef Ref;
+					Ref.PlateId = Plate.PlateId;
+					Ref.LocalTriangleId = Triangle.LocalTriangleId;
+					Ref.SourceTriangleId = Triangle.SourceTriangleId;
+					Runtime->TriangleRefs.Add(TreeTriangleId, Ref);
+					++Metrics.TreeTriangleCountSum;
+				}
+
+				if (Runtime->Mesh.TriangleCount() > 0)
+				{
+					Runtime->Tree = MakeUnique<UE::Geometry::FDynamicMeshAABBTree3>(&Runtime->Mesh, true);
+					OutRuntimes.Add(MoveTemp(Runtime));
+				}
+			}
+			Metrics.PlateAabbBuildMs = (FPlatformTime::Seconds() - AabbStart) * 1000.0;
+			return Metrics.TreeTriangleCountSum > 0;
+		}
+
+		double Stage1GeodesicDistanceRad(const FVector3d& A, const FVector3d& B)
+		{
+			return FMath::Acos(FMath::Clamp(FVector3d::DotProduct(A.GetSafeNormal(), B.GetSafeNormal()), -1.0, 1.0));
+		}
+
+		void UpdateStage1MovedBroadphaseCaps(
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2BuildState& State,
+			TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>>& Runtimes)
+		{
+			for (TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>& Runtime : Runtimes)
+			{
+				if (!Runtime.IsValid() || !State.Plates.IsValidIndex(Runtime->PlateId))
+				{
+					continue;
+				}
+
+				const FCarrierV2Plate& Plate = State.Plates[Runtime->PlateId];
+				FVector3d Center = FVector3d::ZeroVector;
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					Center += Vertex.UnitPosition;
+				}
+				Center = Center.GetSafeNormal();
+				if (Center.IsNearlyZero())
+				{
+					Center = Plate.LocalVertices.IsEmpty()
+						? FVector3d(0.0, 0.0, 1.0)
+						: Plate.LocalVertices[0].UnitPosition.GetSafeNormal();
+				}
+
+				double Radius = 0.0;
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					Radius = FMath::Max(Radius, Stage1GeodesicDistanceRad(Center, Vertex.UnitPosition));
+				}
+				Runtime->MovedCapCenter = Center;
+				Runtime->MovedCapRadiusRad = FMath::Min(UE_DOUBLE_PI, Radius + FMath::Max(0.0, Config.BroadphaseAngularMarginRad));
+			}
+		}
+
+		bool Stage1BroadphaseAcceptsSample(
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2SubstrateSample& Sample,
+			const FCarrierV2Stage1PlateQueryRuntime& Runtime)
+		{
+			if (!Config.bUseAngularCapPlateBroadphase)
+			{
+				return true;
+			}
+			return Stage1GeodesicDistanceRad(Sample.UnitPosition, Runtime.MovedCapCenter) <= Runtime.MovedCapRadiusRad;
+		}
+
+		void CollectStage1AabbHits(
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2BuildState& State,
+			const FCarrierV2SubstrateSample& Sample,
+			const TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>>& Runtimes,
+			FCarrierV2Stage1Metrics& Metrics,
+			TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits,
+			const bool bIgnoreBroadphase = false)
+		{
+			for (const TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>& Runtime : Runtimes)
+			{
+				if (!Runtime.IsValid() || !Runtime->Tree.IsValid())
+				{
+					continue;
+				}
+				if (!bIgnoreBroadphase && !Stage1BroadphaseAcceptsSample(Config, Sample, *Runtime))
+				{
+					++Metrics.BroadphaseSkippedPlateQueryCount;
+					continue;
+				}
+				if (Config.bUseAngularCapPlateBroadphase && !bIgnoreBroadphase)
+				{
+					++Metrics.BroadphaseCandidateQueryCount;
+				}
+				if (bIgnoreBroadphase)
+				{
+					++Metrics.AllPlateEquivalenceRayQueryCount;
+				}
+				const FCarrierV2MotionSpec Motion = MotionForPlate(Config, Runtime->PlateId);
+				const FVector3d LocalDirection = RotateActualByGeodeticMotion(
+					Sample.UnitPosition,
+					Motion.Axis,
+					-Stage1TotalMotionAngle(Config, Runtime->PlateId));
+				const FRay3d Ray(FVector3d::ZeroVector, LocalDirection);
+				UE::Geometry::IMeshSpatial::FQueryOptions QueryOptions;
+				QueryOptions.MaxDistance = 2.0;
+				TArray<MeshIntersection::FHitIntersectionResult> RawHits;
+				++Metrics.RayQueryCount;
+				Runtime->Tree->FindAllHitTriangles(Ray, RawHits, QueryOptions);
+				Metrics.AabbHitCountTotal += RawHits.Num();
+
+				for (const MeshIntersection::FHitIntersectionResult& RawHit : RawHits)
+				{
+					if (RawHit.Distance <= Config.RayTMinTolerance ||
+						!IsStage1InsideBarycentric(RawHit.BaryCoords, Config.BarycentricSlop))
+					{
+						continue;
+					}
+					const FCarrierV2Stage1TreeTriangleRef* Ref = Runtime->TriangleRefs.Find(RawHit.TriangleId);
+					if (Ref == nullptr || !State.Plates.IsValidIndex(Ref->PlateId))
+					{
+						continue;
+					}
+					const FCarrierV2Plate& Plate = State.Plates[Ref->PlateId];
+					if (!Plate.LocalTriangles.IsValidIndex(Ref->LocalTriangleId))
+					{
+						continue;
+					}
+					AddStage1ProjectionHit(
+						Sample.SampleId,
+						Plate,
+						Plate.LocalTriangles[Ref->LocalTriangleId],
+						RawHit.BaryCoords,
+						RawHit.Distance,
+						IsStage1BoundaryBarycentric(RawHit.BaryCoords, Config.BoundaryBand),
+						Metrics,
+						Hits);
+				}
+			}
+		}
+
+		void CollectStage1BruteforceHits(
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2BuildState& State,
+			const FCarrierV2SubstrateSample& Sample,
+			FCarrierV2Stage1Metrics& Metrics,
+			TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
+		{
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				const FCarrierV2MotionSpec Motion = MotionForPlate(Config, Plate.PlateId);
+				const FVector3d LocalDirection = RotateActualByGeodeticMotion(
+					Sample.UnitPosition,
+					Motion.Axis,
+					-Stage1TotalMotionAngle(Config, Plate.PlateId));
+				for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
+				{
+					TestStage1Triangle(Sample.SampleId, LocalDirection, Config, Plate, Triangle, Metrics, Hits);
+				}
+			}
+		}
+
+		FString ClassifyStage1HitSet(const TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits)
+		{
+			if (Hits.IsEmpty())
+			{
+				return TEXT("miss");
+			}
+
+			TArray<int32, TInlineAllocator<8>> UniquePlateIds;
+			bool bAnyBoundary = false;
+			bool bAllBoundary = true;
+			for (const FCarrierV2Stage1ProjectionHit& Hit : Hits)
+			{
+				UniquePlateIds.AddUnique(Hit.PlateId);
+				bAnyBoundary = bAnyBoundary || Hit.bBoundaryDegenerate;
+				bAllBoundary = bAllBoundary && Hit.bBoundaryDegenerate;
+			}
+			if (UniquePlateIds.Num() > 2)
+			{
+				return TEXT("third_plate_intrusion");
+			}
+			if (Hits.Num() > 1 && !bAllBoundary)
+			{
+				return TEXT("overlap");
+			}
+			if (bAnyBoundary)
+			{
+				return TEXT("boundary");
+			}
+			return TEXT("single");
+		}
+
+		void AccumulateStage1ProjectionClassification(
+			const TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>>& Hits,
+			FCarrierV2Stage1Metrics& Metrics)
+		{
+			Metrics.RawHitCountTotal += Hits.Num();
+			if (Hits.IsEmpty())
+			{
+				++Metrics.RawMotionMissCount;
+				++Metrics.DivergentCandidateCount;
+				return;
+			}
+
+			TArray<int32, TInlineAllocator<8>> UniquePlateIds;
+			bool bAnyBoundary = false;
+			bool bAllBoundary = true;
+			for (const FCarrierV2Stage1ProjectionHit& Hit : Hits)
+			{
+				UniquePlateIds.AddUnique(Hit.PlateId);
+				bAnyBoundary = bAnyBoundary || Hit.bBoundaryDegenerate;
+				bAllBoundary = bAllBoundary && Hit.bBoundaryDegenerate;
+			}
+			if (bAnyBoundary)
+			{
+				++Metrics.BoundaryDegenerateCount;
+			}
+			if (UniquePlateIds.Num() > 2)
+			{
+				++Metrics.ThirdPlateIntrusionCount;
+			}
+			if (Hits.Num() > 1)
+			{
+				if (bAllBoundary)
+				{
+					++Metrics.BoundaryPolicySelectedCount;
+				}
+				else
+				{
+					++Metrics.RawMotionOverlapCount;
+					++Metrics.ConvergentCandidateCount;
+				}
+			}
+		}
+
+		void ProjectStage1MovedGeometry(
+			const FCarrierV2Stage1Config& Config,
+			const FCarrierV2BuildState& State,
+			const TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>>& Runtimes,
+			FCarrierV2Stage1Metrics& Metrics)
+		{
+			const double ProjectionStart = FPlatformTime::Seconds();
+			for (const FCarrierV2SubstrateSample& Sample : State.Samples)
+			{
+				TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> AabbHits;
+				CollectStage1AabbHits(Config, State, Sample, Runtimes, Metrics, AabbHits);
+				AccumulateStage1ProjectionClassification(AabbHits, Metrics);
+
+				if (Config.bRunAllPlateBroadphaseEquivalence)
+				{
+					TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> AllPlateHits;
+					CollectStage1AabbHits(Config, State, Sample, Runtimes, Metrics, AllPlateHits, true);
+					if (ClassifyStage1HitSet(AabbHits) != ClassifyStage1HitSet(AllPlateHits))
+					{
+						++Metrics.BroadphaseEquivalenceMismatchCount;
+					}
+				}
+
+				if (Config.bRunBruteforceProjectionOracle)
+				{
+					TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> BruteforceHits;
+					CollectStage1BruteforceHits(Config, State, Sample, Metrics, BruteforceHits);
+					Metrics.BruteForceHitCountTotal += BruteforceHits.Num();
+					if (ClassifyStage1HitSet(AabbHits) != ClassifyStage1HitSet(BruteforceHits))
+					{
+						++Metrics.AabbBruteforceClassificationMismatchCount;
+					}
+				}
+			}
+			Metrics.InverseRayProjectionKernelMs = (FPlatformTime::Seconds() - ProjectionStart) * 1000.0;
+			Metrics.ProjectionKernelMs = Metrics.InverseRayProjectionKernelMs;
 		}
 
 		void ProjectStage1MovedGeometry(
@@ -1066,7 +1538,7 @@ namespace CarrierLab::V2
 					{
 						for (const FCarrierV2PlateTriangle& Triangle : Plate.LocalTriangles)
 						{
-							TestStage1Triangle(Sample.UnitPosition, Plate, Triangle, Config.BaseConfig.RayEpsilon, Metrics, Hits);
+							TestStage1Triangle(Sample.SampleId, Sample.UnitPosition, Config, Plate, Triangle, Metrics, Hits);
 						}
 					}
 				}
@@ -1084,48 +1556,20 @@ namespace CarrierLab::V2
 							continue;
 						}
 						TestStage1Triangle(
+							Sample.SampleId,
 							Sample.UnitPosition,
+							Config,
 							Plate,
 							Plate.LocalTriangles[CandidateRef.LocalTriangleId],
-							Config.BaseConfig.RayEpsilon,
 							Metrics,
 							Hits);
 					}
 				}
-
-				Metrics.RawHitCountTotal += Hits.Num();
-				if (Hits.IsEmpty())
-				{
-					++Metrics.RawMotionMissCount;
-					++Metrics.DivergentCandidateCount;
-					continue;
-				}
-
-				bool bAnyBoundary = false;
-				bool bAllBoundary = true;
-				for (const FCarrierV2Stage1ProjectionHit& Hit : Hits)
-				{
-					bAnyBoundary = bAnyBoundary || Hit.bBoundaryDegenerate;
-					bAllBoundary = bAllBoundary && Hit.bBoundaryDegenerate;
-				}
-				if (bAnyBoundary)
-				{
-					++Metrics.BoundaryDegenerateCount;
-				}
-				if (Hits.Num() > 1)
-				{
-					if (bAllBoundary)
-					{
-						++Metrics.BoundaryPolicySelectedCount;
-					}
-					else
-					{
-						++Metrics.RawMotionOverlapCount;
-						++Metrics.ConvergentCandidateCount;
-					}
-				}
+				AccumulateStage1ProjectionClassification(Hits, Metrics);
 			}
 			Metrics.ProjectionKernelMs = (FPlatformTime::Seconds() - ProjectionStart) * 1000.0;
+			Metrics.InverseRayProjectionKernelMs = 0.0;
+			Metrics.bAabbBruteforceEquivalencePass = !Config.bRunBruteforceProjectionOracle;
 		}
 
 		void ApplyStage1MotionAndMeasure(
@@ -1201,11 +1645,23 @@ namespace CarrierLab::V2
 		void FinalizeStage1Verdict(const FCarrierV2Stage1Config& Config, FCarrierV2Stage1Metrics& Metrics)
 		{
 			Metrics.bMotionOraclePass =
-				Metrics.AnalyticMotionMaxErrorKm <= Config.MotionToleranceKm &&
-				Metrics.AnalyticMotionMeanErrorKm <= Config.MotionToleranceKm;
+				Metrics.AnalyticMotionMaxErrorKm <= Config.MotionOracleToleranceKm &&
+				Metrics.AnalyticMotionMeanErrorKm <= Config.MotionOracleToleranceKm;
 			Metrics.bUnitLengthPass = Metrics.UnitLengthMaxError <= Config.UnitLengthTolerance;
 			Metrics.bMaterialAttachmentPass = Metrics.MaterialAttachmentErrorCount == 0;
-			Metrics.bNoRepairOrRemeshPass = Metrics.MotionRepairCount == 0 && Metrics.RemeshDuringMotionCount == 0;
+			Metrics.bPerformanceBudgetPass =
+				Config.ExpectedMaxStepKernelMs <= 0.0 ||
+				Metrics.StepKernelMs <= Config.ExpectedMaxStepKernelMs;
+			Metrics.bAabbBruteforceEquivalencePass =
+				!Config.bRunBruteforceProjectionOracle ||
+				Metrics.AabbBruteforceClassificationMismatchCount == 0;
+			Metrics.bBroadphaseEquivalencePass =
+				!Config.bRunAllPlateBroadphaseEquivalence ||
+				Metrics.BroadphaseEquivalenceMismatchCount == 0;
+			Metrics.bNoRepairOrRemeshPass =
+				Metrics.MotionRepairCount == 0 &&
+				Metrics.RemeshDuringMotionCount == 0 &&
+				Metrics.PrimaryResolverConsumedCount == 0;
 			Metrics.bProjectionExpectationPass = true;
 			if (Config.bRequireNoMotionGapOrOverlap)
 			{
@@ -1227,11 +1683,20 @@ namespace CarrierLab::V2
 					Metrics.RawMotionOverlapCount > 0 &&
 					Metrics.ConvergentCandidateCount > 0;
 			}
+			if (Config.bRequireThirdPlateIntrusion)
+			{
+				Metrics.bProjectionExpectationPass =
+					Metrics.bProjectionExpectationPass &&
+					Metrics.ThirdPlateIntrusionCount > 0;
+			}
 
 			Metrics.bFixturePass =
 				Metrics.bMotionOraclePass &&
 				Metrics.bUnitLengthPass &&
 				Metrics.bMaterialAttachmentPass &&
+				Metrics.bPerformanceBudgetPass &&
+				Metrics.bAabbBruteforceEquivalencePass &&
+				Metrics.bBroadphaseEquivalencePass &&
 				Metrics.bProjectionExpectationPass &&
 				Metrics.bNoRepairOrRemeshPass &&
 				Metrics.ProjectionReadsGlobalOwnerCount == 0;
@@ -1259,6 +1724,12 @@ namespace CarrierLab::V2
 			OutResult.Metrics.MotionToleranceKm = Config.MotionToleranceKm;
 			OutResult.Metrics.UnitLengthTolerance = Config.UnitLengthTolerance;
 			OutResult.Metrics.RayEpsilon = Config.BaseConfig.RayEpsilon;
+			OutResult.Metrics.RayParallelTolerance = Config.RayParallelTolerance;
+			OutResult.Metrics.RayTMinTolerance = Config.RayTMinTolerance;
+			OutResult.Metrics.BarycentricSlop = Config.BarycentricSlop;
+			OutResult.Metrics.BoundaryBand = Config.BoundaryBand;
+			OutResult.Metrics.MotionOracleToleranceKm = Config.MotionOracleToleranceKm;
+			OutResult.Metrics.ExpectedMaxStepKernelMs = Config.ExpectedMaxStepKernelMs;
 			OutResult.Metrics.ConfigHash = HashToString(HashStage1Config(Config));
 
 			const double TotalStart = FPlatformTime::Seconds();
@@ -1279,10 +1750,19 @@ namespace CarrierLab::V2
 			CopyStage1TopologyMetrics(State, OutResult.Metrics);
 			OutResult.Metrics.PreMotionAuthorityHash = HashToString(HashStage1Authority(State, Config));
 
+			TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>> QueryRuntimes;
+			if (!BuildStage1PlateQueryRuntimes(State, QueryRuntimes, OutResult.Metrics, OutResult.Error))
+			{
+				OutResult.Metrics.Verdict = TEXT("FAIL_PLATE_AABB_BUILD");
+				OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+				return false;
+			}
+
 			const double MetricsStart = FPlatformTime::Seconds();
 			ApplyStage1MotionAndMeasure(Config, State, OutResult.Metrics);
 			OutResult.Metrics.PostMotionAuthorityHash = HashToString(HashStage1Authority(State, Config));
-			ProjectStage1MovedGeometry(Config, State, OutResult.Metrics);
+			UpdateStage1MovedBroadphaseCaps(Config, State, QueryRuntimes);
+			ProjectStage1MovedGeometry(Config, State, QueryRuntimes, OutResult.Metrics);
 			OutResult.Metrics.MetricsMs = (FPlatformTime::Seconds() - MetricsStart) * 1000.0 -
 				OutResult.Metrics.MotionApplyMs -
 				OutResult.Metrics.ProjectionKernelMs;
@@ -1291,11 +1771,16 @@ namespace CarrierLab::V2
 				OutResult.Metrics.MetricsMs = 0.0;
 			}
 
+			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			OutResult.Metrics.StepKernelMs =
+				OutResult.Metrics.MotionApplyMs +
+				OutResult.Metrics.PlateAabbBuildMs +
+				OutResult.Metrics.InverseRayProjectionKernelMs;
+			OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			OutResult.Metrics.StepWithDiagnosticsMs = OutResult.Metrics.TotalMs;
 			FinalizeStage1Verdict(Config, OutResult.Metrics);
 			OutResult.Metrics.ProjectionOutputHash = HashToString(HashStage1ProjectionMetrics(OutResult.Metrics, false));
 			OutResult.Metrics.MetricsHash = HashToString(HashStage1ProjectionMetrics(OutResult.Metrics, true));
-			OutResult.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
-			OutResult.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
 			OutResult.bCompleted = true;
 			return true;
 		}
@@ -4640,6 +5125,26 @@ namespace CarrierLab::V2
 		FX006.PlateMotions.Add(SingleMotion);
 		Configs.Add(FX006);
 
+		FCarrierV2Stage1Config FX009;
+		FX009.BaseConfig.FixtureId = TEXT("FX-009");
+		FX009.BaseConfig.FixtureName = TEXT("StableSeamBase");
+		FX009.BaseConfig.SampleCount = 6;
+		FX009.BaseConfig.PlateCount = 2;
+		FX009.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX009.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX009.FixtureId = TEXT("FX-009");
+		FX009.FixtureName = TEXT("StableSeam");
+		FX009.ExpectedMotionClass = TEXT("stable_seam");
+		FX009.MotionStepCount = 2;
+		FX009.DtMa = 1.0;
+		FX009.bRequireNoMotionGapOrOverlap = true;
+		FCarrierV2MotionSpec SeamMotion;
+		SeamMotion.Axis = FVector3d(0.0, 0.0, 1.0);
+		SeamMotion.AngularSpeedRadPerMa = 0.05;
+		FX009.PlateMotions.Add(SeamMotion);
+		FX009.PlateMotions.Add(SeamMotion);
+		Configs.Add(FX009);
+
 		FCarrierV2Stage1Config FX007;
 		FX007.BaseConfig.FixtureId = TEXT("FX-007");
 		FX007.BaseConfig.FixtureName = TEXT("ForcedDivergenceBase");
@@ -4686,6 +5191,54 @@ namespace CarrierLab::V2
 		FX008.PlateMotions.Add(ConvergentB);
 		Configs.Add(FX008);
 
+		FCarrierV2Stage1Config FX010;
+		FX010.BaseConfig.FixtureId = TEXT("FX-010");
+		FX010.BaseConfig.FixtureName = TEXT("ThirdPlateIntrusionBase");
+		FX010.BaseConfig.SampleCount = 6;
+		FX010.BaseConfig.PlateCount = 3;
+		FX010.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX010.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX010.FixtureId = TEXT("FX-010");
+		FX010.FixtureName = TEXT("ThirdPlateIntrusion");
+		FX010.ExpectedMotionClass = TEXT("third_plate_intrusion");
+		FX010.MotionStepCount = 1;
+		FX010.DtMa = 1.0;
+		FX010.bRequireThirdPlateIntrusion = true;
+		FCarrierV2MotionSpec ThirdA;
+		ThirdA.Axis = FVector3d(0.0, 0.0, 1.0);
+		ThirdA.AngularSpeedRadPerMa = 0.1;
+		FCarrierV2MotionSpec ThirdB = ThirdA;
+		FCarrierV2MotionSpec ThirdC = ThirdA;
+		FX010.PlateMotions.Add(ThirdA);
+		FX010.PlateMotions.Add(ThirdB);
+		FX010.PlateMotions.Add(ThirdC);
+		Configs.Add(FX010);
+
+		FCarrierV2Stage1Config FX011;
+		FX011.BaseConfig.FixtureId = TEXT("FX-011");
+		FX011.BaseConfig.FixtureName = TEXT("PerturbedBoundarySliverBase");
+		FX011.BaseConfig.SampleCount = 12;
+		FX011.BaseConfig.PlateCount = 4;
+		FX011.BaseConfig.FixtureKind = ECarrierV2FixtureKind::Positive;
+		FX011.BaseConfig.ExpectedFailureReason = TEXT("none");
+		FX011.BaseConfig.bUseFibonacciSubstrate = true;
+		FX011.FixtureId = TEXT("FX-011");
+		FX011.FixtureName = TEXT("PerturbedBoundarySliver");
+		FX011.ExpectedMotionClass = TEXT("tolerance_stress");
+		FX011.MotionStepCount = 1;
+		FX011.DtMa = 1.0;
+		for (int32 PlateId = 0; PlateId < FX011.BaseConfig.PlateCount; ++PlateId)
+		{
+			FCarrierV2MotionSpec StressMotion;
+			StressMotion.Axis = FVector3d(
+				PlateId == 0 ? 1.0 : 0.3 * static_cast<double>(PlateId),
+				PlateId == 1 ? 1.0 : 0.2,
+				PlateId == 2 ? 1.0 : 0.4).GetSafeNormal();
+			StressMotion.AngularSpeedRadPerMa = (PlateId % 2 == 0 ? 1.0 : -1.0) * (0.02 + 0.005 * static_cast<double>(PlateId));
+			FX011.PlateMotions.Add(StressMotion);
+		}
+		Configs.Add(FX011);
+
 		return Configs;
 	}
 
@@ -4699,8 +5252,13 @@ namespace CarrierLab::V2
 		Config.FixtureName = Config.BaseConfig.FixtureName;
 		Config.ExpectedMotionClass = TEXT("scale_motion");
 		Config.SourceStatus = TEXT("source_explicit_motion_scale_characterization");
-		Config.ProjectionCandidatePolicyId = TEXT("source_adjacent_candidates");
+		Config.ProjectionCandidatePolicyId = bComparisonScale
+			? TEXT("angular_cap_inverse_ray_static_aabb")
+			: TEXT("angular_cap_inverse_ray_static_aabb_with_50k_all_plate_equivalence");
 		Config.bUseFullTriangleScanForProjection = false;
+		Config.bRunBruteforceProjectionOracle = false;
+		Config.bUseAngularCapPlateBroadphase = true;
+		Config.bRunAllPlateBroadphaseEquivalence = !bComparisonScale;
 		Config.bRequireNoMotionGapOrOverlap = false;
 		Config.bRequireDivergentCandidate = false;
 		Config.bRequireConvergentCandidate = false;
@@ -4708,6 +5266,8 @@ namespace CarrierLab::V2
 		Config.DtMa = 1.0;
 		Config.MotionToleranceKm = 1.0e-6;
 		Config.UnitLengthTolerance = 1.0e-10;
+		Config.MotionOracleToleranceKm = 1.0e-6;
+		Config.ExpectedMaxStepKernelMs = 1240.0;
 
 		Config.PlateMotions.Reset();
 		for (int32 PlateId = 0; PlateId < Config.BaseConfig.PlateCount; ++PlateId)
@@ -4780,6 +5340,12 @@ namespace CarrierLab::V2
 			TEXT("\"motion_tolerance_km\":%.12g,")
 			TEXT("\"unit_length_tolerance\":%.12g,")
 			TEXT("\"ray_epsilon\":%.12g,")
+			TEXT("\"ray_parallel_tolerance\":%.12g,")
+			TEXT("\"ray_t_min_tolerance\":%.12g,")
+			TEXT("\"barycentric_slop\":%.12g,")
+			TEXT("\"boundary_band\":%.12g,")
+			TEXT("\"motion_oracle_tolerance_km\":%.12g,")
+			TEXT("\"expected_max_step_kernel_ms\":%.3f,")
 			TEXT("\"config_hash\":%s,")
 			TEXT("\"pre_motion_authority_hash\":%s,")
 			TEXT("\"post_motion_authority_hash\":%s,")
@@ -4802,14 +5368,29 @@ namespace CarrierLab::V2
 			TEXT("\"boundary_policy_selected_count\":%d,")
 			TEXT("\"divergent_candidate_count\":%d,")
 			TEXT("\"convergent_candidate_count\":%d,")
+			TEXT("\"third_plate_intrusion_count\":%d,")
+			TEXT("\"material_interpolation_count\":%d,")
 			TEXT("\"motion_repair_count\":%d,")
 			TEXT("\"remesh_during_motion_count\":%d,")
+			TEXT("\"primary_resolver_consumed_count\":%d,")
 			TEXT("\"projection_reads_global_owner_count\":%d,")
+			TEXT("\"tree_triangle_count_sum\":%d,")
+			TEXT("\"ray_query_count\":%lld,")
+			TEXT("\"aabb_hit_count_total\":%lld,")
+			TEXT("\"bruteforce_hit_count_total\":%lld,")
+			TEXT("\"aabb_bruteforce_classification_mismatch_count\":%d,")
+			TEXT("\"broadphase_candidate_query_count\":%lld,")
+			TEXT("\"broadphase_skipped_plate_query_count\":%lld,")
+			TEXT("\"all_plate_equivalence_ray_query_count\":%lld,")
+			TEXT("\"broadphase_equivalence_mismatch_count\":%d,")
 			TEXT("\"raw_hit_count_total\":%lld,")
 			TEXT("\"ray_triangle_test_count\":%lld,")
+			TEXT("\"aabb_bruteforce_equivalence_pass\":%s,")
+			TEXT("\"broadphase_equivalence_pass\":%s,")
 			TEXT("\"motion_oracle_pass\":%s,")
 			TEXT("\"unit_length_pass\":%s,")
 			TEXT("\"material_attachment_pass\":%s,")
+			TEXT("\"performance_budget_pass\":%s,")
 			TEXT("\"projection_expectation_pass\":%s,")
 			TEXT("\"no_repair_or_remesh_pass\":%s,")
 			TEXT("\"replay_deterministic\":%s,")
@@ -4821,9 +5402,13 @@ namespace CarrierLab::V2
 			TEXT("\"replay_metrics_hash\":%s,")
 			TEXT("\"build_substrate_ms\":%.3f,")
 			TEXT("\"build_plate_local_ms\":%.3f,")
+			TEXT("\"plate_aabb_build_ms\":%.3f,")
 			TEXT("\"motion_apply_ms\":%.3f,")
+			TEXT("\"inverse_ray_projection_kernel_ms\":%.3f,")
 			TEXT("\"projection_kernel_ms\":%.3f,")
 			TEXT("\"metrics_ms\":%.3f,")
+			TEXT("\"step_kernel_ms\":%.3f,")
+			TEXT("\"step_with_diagnostics_ms\":%.3f,")
 			TEXT("\"total_ms\":%.3f,")
 			TEXT("\"peak_memory_mb\":%.3f")
 			TEXT("}"),
@@ -4845,6 +5430,12 @@ namespace CarrierLab::V2
 			M.MotionToleranceKm,
 			M.UnitLengthTolerance,
 			M.RayEpsilon,
+			M.RayParallelTolerance,
+			M.RayTMinTolerance,
+			M.BarycentricSlop,
+			M.BoundaryBand,
+			M.MotionOracleToleranceKm,
+			M.ExpectedMaxStepKernelMs,
 			*JsonString(M.ConfigHash),
 			*JsonString(M.PreMotionAuthorityHash),
 			*JsonString(M.PostMotionAuthorityHash),
@@ -4867,14 +5458,29 @@ namespace CarrierLab::V2
 			M.BoundaryPolicySelectedCount,
 			M.DivergentCandidateCount,
 			M.ConvergentCandidateCount,
+			M.ThirdPlateIntrusionCount,
+			M.MaterialInterpolationCount,
 			M.MotionRepairCount,
 			M.RemeshDuringMotionCount,
+			M.PrimaryResolverConsumedCount,
 			M.ProjectionReadsGlobalOwnerCount,
+			M.TreeTriangleCountSum,
+			M.RayQueryCount,
+			M.AabbHitCountTotal,
+			M.BruteForceHitCountTotal,
+			M.AabbBruteforceClassificationMismatchCount,
+			M.BroadphaseCandidateQueryCount,
+			M.BroadphaseSkippedPlateQueryCount,
+			M.AllPlateEquivalenceRayQueryCount,
+			M.BroadphaseEquivalenceMismatchCount,
 			M.RawHitCountTotal,
 			M.RayTriangleTestCount,
+			M.bAabbBruteforceEquivalencePass ? TEXT("true") : TEXT("false"),
+			M.bBroadphaseEquivalencePass ? TEXT("true") : TEXT("false"),
 			M.bMotionOraclePass ? TEXT("true") : TEXT("false"),
 			M.bUnitLengthPass ? TEXT("true") : TEXT("false"),
 			M.bMaterialAttachmentPass ? TEXT("true") : TEXT("false"),
+			M.bPerformanceBudgetPass ? TEXT("true") : TEXT("false"),
 			M.bProjectionExpectationPass ? TEXT("true") : TEXT("false"),
 			M.bNoRepairOrRemeshPass ? TEXT("true") : TEXT("false"),
 			M.bReplayDeterministic ? TEXT("true") : TEXT("false"),
@@ -4886,9 +5492,13 @@ namespace CarrierLab::V2
 			*JsonString(M.ReplayMetricsHash),
 			M.BuildSubstrateMs,
 			M.BuildPlateLocalMs,
+			M.PlateAabbBuildMs,
 			M.MotionApplyMs,
+			M.InverseRayProjectionKernelMs,
 			M.ProjectionKernelMs,
 			M.MetricsMs,
+			M.StepKernelMs,
+			M.StepWithDiagnosticsMs,
 			M.TotalMs,
 			M.PeakMemoryMb);
 	}
@@ -4900,15 +5510,18 @@ namespace CarrierLab::V2
 	{
 		const double Start = FPlatformTime::Seconds();
 		FString Report;
-		Report += TEXT("# CarrierLab V2 Stage 1 Report\n\n");
-		Report += TEXT("Status: generated by `CarrierLabV2Stage1`.\n\n");
+		Report += TEXT("# CarrierLab Milestone 1 Closeout Report\n\n");
+		Report += TEXT("Status: generated by `CarrierLabV2Stage1` for the Milestone 1 motion checkpoint.\n\n");
 		Report += FString::Printf(TEXT("- Commit: `%s`\n"), CommitSha.IsEmpty() ? TEXT("unknown") : *CommitSha);
 		Report += FString::Printf(TEXT("- Command: `%s`\n"), *CommandLine);
 		Report += FString::Printf(TEXT("- Output root: `%s`\n"), *Suite.OutputRoot);
 		Report += FString::Printf(TEXT("- Metrics JSONL: `%s`\n\n"), *Suite.MetricsPath);
 
 		Report += TEXT("## Scope\n\n");
-		Report += TEXT("V2-1 covers rigid plate-local motion, attached material record preservation, an independent analytic motion oracle, replay determinism, and raw post-motion projection classification. It does not cover remesh, gap filling, contact resolution, subduction, collision, rifting, uplift, erosion, slab pull, editor UI, maps as gates, or ownership repair.\n\n");
+		Report += TEXT("Milestone 1 covers rigid plate-local authority motion, static per-plate AABB trees in plate-local coordinates, inverse-transformed center-ray projection, attached material record preservation, an independent analytic motion oracle, AABB-vs-brute-force micro equivalence, replay determinism, and raw post-motion projection classification. It does not cover remesh, gap filling, q1/q2, qGamma generation, contact resolution, subduction, collision, rifting, uplift, erosion, slab pull, editor UI, maps as gates, or ownership repair.\n\n");
+
+		Report += TEXT("## Query Architecture\n\n");
+		Report += TEXT("Each run builds one static `FDynamicMesh3` plus `FDynamicMeshAABBTree3` per plate from canonical plate-local triangles. For each fixed global substrate sample, the center ray direction is inverse-rotated into candidate plate-local frames and queried against static plate trees. Scale runs use a conservative moved angular-cap broadphase to skip impossible plate trees; the 50k scale gate compares broadphase classification against all-plate AABB classification before 250k relies on the optimized path. Raw hit sets are classified as miss, boundary-only, overlap, or third-plate intrusion without mutating authority or consuming an overlap resolver.\n\n");
 
 		Report += TEXT("## Fixture Gates\n\n");
 		Report += TEXT("| fixture | class | samples | triangles | policy | pass | verdict |\n");
@@ -4925,6 +5538,24 @@ namespace CarrierLab::V2
 				*M.ProjectionCandidatePolicyId,
 				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
 				*M.Verdict);
+		}
+
+		Report += TEXT("\n## Tolerances\n\n");
+		Report += TEXT("| fixture | ray parallel | ray t min | barycentric slop | boundary band | unit length | motion oracle km | max step kernel ms |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %.12g | %.12g | %.12g | %.12g | %.12g | %.12g | %.3f |\n"),
+				*M.FixtureId,
+				M.RayParallelTolerance,
+				M.RayTMinTolerance,
+				M.BarycentricSlop,
+				M.BoundaryBand,
+				M.UnitLengthTolerance,
+				M.MotionOracleToleranceKm,
+				M.ExpectedMaxStepKernelMs);
 		}
 
 		Report += TEXT("\n## Motion Oracle\n\n");
@@ -4944,40 +5575,99 @@ namespace CarrierLab::V2
 				M.bMotionOraclePass ? TEXT("pass") : TEXT("fail"));
 		}
 
-		Report += TEXT("\n## Post-Motion Projection Classification\n\n");
-		Report += TEXT("| fixture | raw misses | raw overlaps | boundary hits | divergent candidates | convergent candidates | repairs | remeshes | expectation pass |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += TEXT("\n## Inverse-Ray Projection Classification\n\n");
+		Report += TEXT("| fixture | ray queries | AABB hits | raw misses | raw overlaps | boundary hits | third-plate | divergent | convergent | expectation pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Stage1Metrics& M = Result.Metrics;
 			Report += FString::Printf(
-				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				TEXT("| `%s` | %lld | %lld | %d | %d | %d | %d | %d | %d | %s |\n"),
 				*M.FixtureId,
+				M.RayQueryCount,
+				M.AabbHitCountTotal,
 				M.RawMotionMissCount,
 				M.RawMotionOverlapCount,
 				M.BoundaryDegenerateCount,
+				M.ThirdPlateIntrusionCount,
 				M.DivergentCandidateCount,
 				M.ConvergentCandidateCount,
-				M.MotionRepairCount,
-				M.RemeshDuringMotionCount,
 				M.bProjectionExpectationPass ? TEXT("pass") : TEXT("fail"));
 		}
 
-		Report += TEXT("\n## Performance Ladder\n\n");
-		Report += TEXT("| fixture | samples | substrate ms | plate-local ms | motion ms | projection ms | metrics ms | total ms | peak memory mb |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		Report += TEXT("\n## AABB Versus Brute Force\n\n");
+		Report += TEXT("| fixture | brute-force hits | brute-force triangle tests | classification mismatches | equivalence pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---|\n");
 		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Stage1Metrics& M = Result.Metrics;
 			Report += FString::Printf(
-				TEXT("| `%s` | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n"),
+				TEXT("| `%s` | %lld | %lld | %d | %s |\n"),
+				*M.FixtureId,
+				M.BruteForceHitCountTotal,
+				M.RayTriangleTestCount,
+				M.AabbBruteforceClassificationMismatchCount,
+				M.bAabbBruteforceEquivalencePass ? TEXT("pass") : TEXT("not-run/fail"));
+		}
+
+		Report += TEXT("\n## Broadphase Equivalence\n\n");
+		Report += TEXT("| fixture | broadphase candidates | broadphase skips | all-plate equivalence queries | mismatches | pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %lld | %lld | %lld | %d | %s |\n"),
+				*M.FixtureId,
+				M.BroadphaseCandidateQueryCount,
+				M.BroadphaseSkippedPlateQueryCount,
+				M.AllPlateEquivalenceRayQueryCount,
+				M.BroadphaseEquivalenceMismatchCount,
+				M.bBroadphaseEquivalencePass ? TEXT("pass") : TEXT("not-run/fail"));
+		}
+
+		Report += TEXT("\n## Forbidden Fallback Counters\n\n");
+		Report += TEXT("| fixture | global-owner reads | motion repair | remesh during motion | primary resolver consumed | material attachment errors | pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			const bool bPass =
+				M.ProjectionReadsGlobalOwnerCount == 0 &&
+				M.MotionRepairCount == 0 &&
+				M.RemeshDuringMotionCount == 0 &&
+				M.PrimaryResolverConsumedCount == 0 &&
+				M.MaterialAttachmentErrorCount == 0;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %s |\n"),
+				*M.FixtureId,
+				M.ProjectionReadsGlobalOwnerCount,
+				M.MotionRepairCount,
+				M.RemeshDuringMotionCount,
+				M.PrimaryResolverConsumedCount,
+				M.MaterialAttachmentErrorCount,
+				bPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Performance Ladder\n\n");
+		Report += TEXT("| fixture | samples | substrate ms | plate-local ms | AABB build ms | motion ms | inverse-ray projection ms | metrics ms | step kernel ms | max step ms | budget pass | total ms | peak memory mb |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n");
+		for (const FCarrierV2Stage1FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Stage1Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %s | %.3f | %.3f |\n"),
 				*M.FixtureId,
 				M.GlobalSampleCount,
 				M.BuildSubstrateMs,
 				M.BuildPlateLocalMs,
+				M.PlateAabbBuildMs,
 				M.MotionApplyMs,
-				M.ProjectionKernelMs,
+				M.InverseRayProjectionKernelMs,
 				M.MetricsMs,
+				M.StepKernelMs,
+				M.ExpectedMaxStepKernelMs,
+				M.bPerformanceBudgetPass ? TEXT("pass") : TEXT("fail"),
 				M.TotalMs,
 				M.PeakMemoryMb);
 		}
@@ -5001,31 +5691,38 @@ namespace CarrierLab::V2
 		Report += TEXT("\n## Policy Ledger\n\n");
 		Report += TEXT("| policy | authority class | behavior | audit evidence |\n");
 		Report += TEXT("|---|---|---|---|\n");
-		Report += TEXT("| `V2-1-POL-FULL-SCAN-MICRO` | diagnostic_only | FX-005 through FX-008 classify moved geometry with exhaustive local triangle scans | `projection_candidate_policy_id=full_triangle_scan` |\n");
-		Report += TEXT("| `V2-1-POL-SOURCE-ADJACENT-SCALE-READOUT` | source_silent_lab_policy | scale fixtures classify only source-adjacent triangle candidates as a performance sanity probe, not final broadphase authority | `projection_candidate_policy_id=source_adjacent_candidates` |\n");
-		Report += TEXT("| `V2-1-POL-NO-REPAIR-NO-REMESH` | source_explicit_stop_condition | gaps and overlaps are counted but not repaired or resampled | `motion_repair_count=0`, `remesh_during_motion_count=0` |\n");
+		Report += TEXT("| `M1-POL-ALL-PLATE-INVERSE-RAY` | source_explicit_query_architecture | every substrate ray is inverse-transformed into every plate-local static AABB tree for the first implementation | `projection_candidate_policy_id=all_plate_inverse_ray_static_aabb` |\n");
+		Report += TEXT("| `M1-POL-ANGULAR-CAP-BROADPHASE` | diagnostic_optimization | scale runs may skip plate trees outside a moved conservative angular cap after 50k all-plate equivalence passes | `broadphase_equivalence_mismatch_count=0` |\n");
+		Report += TEXT("| `M1-POL-BRUTE-FORCE-MICRO-ORACLE` | diagnostic_only | micro fixtures compare AABB classification against exhaustive plate-local triangle scans | `aabb_bruteforce_classification_mismatch_count=0` |\n");
+		Report += TEXT("| `M1-POL-NO-REPAIR-NO-REMESH` | source_explicit_stop_condition | gaps and overlaps are counted but not repaired, resolved, or resampled | `motion_repair_count=0`, `remesh_during_motion_count=0`, `primary_resolver_consumed_count=0` |\n");
 		Report += TEXT("| `V2-1-POL-INDEPENDENT-ROTATION-ORACLE` | source_explicit_formula | implementation applies incremental Rodrigues rotation; oracle recomputes final position from pre-motion snapshots with axis-parallel/perpendicular decomposition | analytic error columns |\n\n");
 
 		Report += TEXT("## Independent Oracle\n\n");
-		Report += TEXT("Motion checks recompute expected final vertex positions from pre-motion snapshots and motion specs, not from mutated post-motion state. Material checks compare source sample ids and material records before and after motion. Projection classification reads moved plate-local triangles and never reads persistent global sample ownership as tectonic authority.\n\n");
+		Report += TEXT("Motion checks recompute expected final vertex positions from pre-motion snapshots and motion specs, not from mutated post-motion state. Material checks compare source sample ids and material records before and after motion. Projection classification reads static plate-local trees through inverse-transformed rays and never reads persistent global sample ownership as tectonic authority.\n\n");
 
 		Report += TEXT("## Known Limitations\n\n");
 		Report += TEXT("- Micro fixtures are correctness microscopes for motion and raw classification, not paper-scale terrain evidence.\n");
-		Report += TEXT("- 50k is the minimum V2-1 scale gate; 250k is characterization unless explicitly made a hard gate.\n");
-		Report += TEXT("- 500k is not attempted by this V2-1 commandlet goal.\n");
-		Report += TEXT("- Scale projection uses source-adjacent candidates, so it is a performance/readout sanity check rather than the final moved-surface spatial index.\n");
-		Report += TEXT("- V2-1 intentionally stops before Stage 1.5 resampling and before any process physics.\n\n");
+		Report += TEXT("- 50k is the minimum paper-scale carrier gate; 250k is a required Milestone 1 performance/comparison gate.\n");
+		Report += TEXT("- 500k is a stretch gate and must be named as attempted or not attempted.\n");
+		Report += TEXT("- Candidate plate selection starts from all plates; scale performance uses angular-cap broadphase only with an explicit 50k all-plate equivalence gate.\n");
+		Report += TEXT("- Milestone 1 intentionally stops before resampling, q1/q2 gap fill, remesh, and process physics.\n\n");
 
 		Report += TEXT("## Verdict\n\n");
 		Report += FString::Printf(TEXT("Verdict: `%s`\n\n"), *Suite.Verdict);
 		Report += FString::Printf(TEXT("- Micro gate: %s\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
 		Report += FString::Printf(TEXT("- 50k gate: %s\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
-		Report += FString::Printf(TEXT("- 250k characterization attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
+		Report += FString::Printf(TEXT("- 250k hard gate attempted: %s\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"));
 		if (Suite.bAttempted250k)
 		{
-			Report += FString::Printf(TEXT("- 250k characterization: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
+			Report += FString::Printf(TEXT("- 250k hard gate: %s\n"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
 		}
-		Report += TEXT("\nExplicit user go/no-go is required before V2-2 or Stage 1.5 work.\n");
+		Report += FString::Printf(TEXT("- 500k stretch attempted: %s\n"), Suite.bAttempted500k ? TEXT("yes") : TEXT("no"));
+		if (Suite.bAttempted500k)
+		{
+			Report += FString::Printf(TEXT("- 500k stretch: %s\n"), Suite.bScale500kPass ? TEXT("pass") : TEXT("fail"));
+		}
+		Report += TEXT("\nRecommendation: prepare the Milestone 2 entry packet only if the verdict is `MILESTONE_1_PASS`; otherwise revise Milestone 1.\n");
+		Report += TEXT("\nExplicit user go/no-go is required before Milestone 2 work.\n");
 
 		const double ReportMs = (FPlatformTime::Seconds() - Start) * 1000.0;
 		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), ReportMs);

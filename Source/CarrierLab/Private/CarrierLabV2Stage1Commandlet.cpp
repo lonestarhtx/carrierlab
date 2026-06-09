@@ -29,7 +29,7 @@ namespace
 		FString ReportPath;
 		if (!FParse::Value(*Params, TEXT("Report="), ReportPath))
 		{
-			ReportPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("docs"), TEXT("checkpoints"), TEXT("v2-stage-1-report.md"));
+			ReportPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("docs"), TEXT("checkpoints"), TEXT("milestone-1-closeout-report.md"));
 		}
 		else if (FPaths::IsRelative(ReportPath))
 		{
@@ -74,7 +74,8 @@ UCarrierLabV2Stage1Commandlet::UCarrierLabV2Stage1Commandlet()
 int32 UCarrierLabV2Stage1Commandlet::Main(const FString& Params)
 {
 	const bool bMicroOnly = Params.Contains(TEXT("-MicroOnly"), ESearchCase::IgnoreCase);
-	const bool bRun250k = Params.Contains(TEXT("-Run250k"), ESearchCase::IgnoreCase);
+	const bool bRun250k = !bMicroOnly && !Params.Contains(TEXT("-Skip250k"), ESearchCase::IgnoreCase);
+	const bool bRun500k = !bMicroOnly && Params.Contains(TEXT("-Run500k"), ESearchCase::IgnoreCase);
 	int32 ScaleSamples = 50000;
 	FParse::Value(*Params, TEXT("ScaleSamples="), ScaleSamples);
 	ScaleSamples = FMath::Max(4, ScaleSamples);
@@ -171,10 +172,32 @@ int32 UCarrierLabV2Stage1Commandlet::Main(const FString& Params)
 			Result250k.Metrics.TotalMs);
 	}
 
+	if (bRun500k && Suite.bAttempted250k && Suite.bScale250kPass)
+	{
+		CarrierLab::V2::FCarrierV2Stage1Config Config500k = CarrierLab::V2::FCarrierV2Stage1::MakeScaleConfig(500000, true);
+		Config500k.BaseConfig.FixtureId = TEXT("SCALE-500K-MOTION");
+		Config500k.BaseConfig.FixtureName = TEXT("Scale500kRigidMotionStretch");
+		Config500k.FixtureId = Config500k.BaseConfig.FixtureId;
+		Config500k.FixtureName = Config500k.BaseConfig.FixtureName;
+		UE_LOG(LogTemp, Display, TEXT("CarrierLab Milestone 1: running %s (%d samples, %d plates, policy=%s)."),
+			*Config500k.FixtureId,
+			Config500k.BaseConfig.SampleCount,
+			Config500k.BaseConfig.PlateCount,
+			*Config500k.ProjectionCandidatePolicyId);
+
+		CarrierLab::V2::FCarrierV2Stage1FixtureResult Result500k;
+		CarrierLab::V2::FCarrierV2Stage1::RunFixtureWithReplay(Config500k, Result500k);
+		Suite.Results.Add(Result500k);
+		Suite.bAttempted500k = true;
+		Suite.bScale500kPass = Result500k.Metrics.bFixturePass;
+		MetricsJsonl += CarrierLab::V2::FCarrierV2Stage1::MetricsToJson(Result500k);
+		MetricsJsonl += TEXT("\n");
+	}
+
 	Suite.bMicroGatePass = bAllMicroPassed;
 	Suite.bScale50kPass = bScale50kPassed;
-	Suite.bStageGatePass = Suite.bMicroGatePass && Suite.bScale50kPass && (!Suite.bAttempted250k || Suite.bScale250kPass);
-	Suite.Verdict = Suite.bStageGatePass ? TEXT("GO_V2_2") : TEXT("REVISE_V2_1");
+	Suite.bStageGatePass = Suite.bMicroGatePass && Suite.bScale50kPass && Suite.bAttempted250k && Suite.bScale250kPass;
+	Suite.Verdict = Suite.bStageGatePass ? TEXT("MILESTONE_1_PASS") : TEXT("MILESTONE_1_REVISE");
 
 	if (!SaveTextFile(MetricsPath, MetricsJsonl))
 	{
