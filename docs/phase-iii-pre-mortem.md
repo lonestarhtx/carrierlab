@@ -92,11 +92,11 @@ Detection:
 - a "remesh-then-step-zero" replay test that asserts step-zero produces no subduction events from any plate pair
 - subduction matrix is a member of the per-event-window state struct, not the plate state struct, to make scope visible at the type level
 
-## 6. Erosion / Dampening Masks Process Bugs
+## 6. Surface Processes Mask Process Bugs
 
-Symptom: IIIG's per-step elevation adjustments smooth out irregularities that would otherwise have surfaced as detectable process bugs in IIIC/IIID/IIIE.
+Symptom: IIII's per-step elevation adjustments, relaxation, or smoothing hide irregularities that would otherwise have surfaced as detectable process bugs in IIIC/IIID/IIIE/IIIG/IIIH.
 
-Likely cause: IIIG lands earlier than planned, or its constants are larger than thesis Table 3.2 specifies, drowning subduction uplift, collision uplift, or ridge profile in numerical noise.
+Likely cause: IIII lands earlier than planned, or its constants are larger than thesis Table 3.2 specifies, drowning subduction uplift, collision uplift, rift bathymetry, or ridge profile in numerical noise.
 
 Evidence:
 
@@ -106,13 +106,13 @@ Evidence:
 
 Detection:
 
-- IIIG is the last sub-phase before validation, never landed earlier
-- IIIG's constants are hardcoded to thesis values; any deviation is a stop condition
-- IIIH validation runs include both IIIG-on and IIIG-off replays; the on/off differential should match the analytical expected per-step adjustment, not exceed it
+- IIII is the last implementation sub-phase before validation, never landed earlier
+- IIII's constants are hardcoded to thesis values; any deviation is a stop condition
+- IIIJ validation runs include both IIII-on and IIII-off replays; the on/off differential should match the analytical expected per-step adjustment, not exceed it
 
 ## 7. Long-Horizon Auth CAF Drifts Despite Per-Event Determinism
 
-Symptom: IIIH's multi-hundred-event run shows monotonic Auth CAF drift rather than equilibrium, even though every individual event reconciles in the ledger.
+Symptom: IIIJ's multi-hundred-event run shows monotonic Auth CAF drift rather than equilibrium, even though every individual event reconciles in the ledger.
 
 Likely cause: a small per-event imbalance compounds. The most likely sources, in order: ridge generation contributes more new oceanic samples than subduction consumes; collision uplift accumulates without a counterbalancing erosion sink; oceanic dampening drifts elevations toward abyssal plain even where ridges should sustain them.
 
@@ -124,7 +124,7 @@ Evidence:
 
 Detection:
 
-- IIIH gate requires Auth CAF stability over the full horizon (defined as max minus min over the second half of the run within a tolerance)
+- IIIJ gate requires Auth CAF stability over the full horizon (defined as max minus min over the second half of the run within a tolerance)
 - per-event continental delta histogram should be roughly symmetric around zero by the second half of the run
 - ridge-generation count vs subduction-consumption count should approximately balance over a full window cycle
 
@@ -173,7 +173,7 @@ Evidence:
 
 - new code in Phase III modifies vertex positions radially
 - visualization actor introduces height-displaced rendering
-- IIIE or IIIG references exemplar-based amplification
+- any Phase III sub-phase references exemplar-based amplification
 
 Detection:
 
@@ -185,8 +185,8 @@ Detection:
 
 Phase III sub-phase checkpoints must demonstrate:
 
-- **Zero-motion**: no subduction tracking events, no collision events, no rifting events, no elevation changes from IIIC/IIID/IIIE/IIIF (IIIG erosion may apply if elevation is non-zero).
-- **Single-plate**: no contacts, no collisions, no subduction matrix entries, no rifting (single plate cannot rift to itself in IIIF; needs at least n=2).
+- **Zero-motion**: no subduction tracking events, no collision events, no rifting events, no elevation changes from IIIC/IIID/IIIE/IIIF/IIIG/IIIH. IIII surface processes may apply if elevation is non-zero, but only in IIII-on runs.
+- **Single-plate**: no contacts, no collisions, no subduction matrix entries, no rifting (single plate cannot rift to itself in IIIG; needs at least n=2).
 - **Forced divergence**: gap-fill/oceanic-generation events fire; no subduction events; no collision events.
 - **Forced convergence (oceanic-continental, fixture polarity)**: subduction tracking with the oceanic plate as under; uplift on continental over-plate; slab pull modifies oceanic plate motion (with slab-pull on).
 - **Forced convergence (oceanic-oceanic, age-differentiated fixture)**: older oceanic plate subducts under younger; polarity flip when ages flip.
@@ -195,7 +195,7 @@ Phase III sub-phase checkpoints must demonstrate:
 - **Same-pair mixed-signal**: a plate pair with both convergent and divergent local evidence; subduction labels apply locally to convergent evidence; gap-fill applies locally to divergent evidence.
 - **Triple junction**: third-plate contacts produce no `Subducting`, `Overriding`, or collision labels; third-plate-out-of-scope counter is non-zero.
 - **Slab-pull on vs off**: identical IIIB hashes in the off case; deterministic but distinct trajectories in the on case.
-- **Multi-event long horizon**: Auth CAF equilibrates rather than monotonically drifts (IIIH gate).
+- **Multi-event long horizon**: Auth CAF equilibrates rather than monotonically drifts (IIIJ gate).
 
 ## Stop Conditions
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ask Claude Desktop"
+  short_description: "Prompt Claude through desktop automation"
+  default_prompt: "Use $ask-claude-desktop to send Claude a focused review prompt and summarize the response."

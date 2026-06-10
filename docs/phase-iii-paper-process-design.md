@@ -8,22 +8,26 @@ Phase I established the core carrier substrate: Stage 0/1 validate plate-local d
 
 Phase II also produced an unexpected piece of evidence in Slice 5.5: the dominant single-hit continental delta is *not* mixed-triangle barycentric smear (only 168 of 23,967 single-hit records, contributing -0.004 of the -0.375 net at 60k). It is *coherent transfer* — continental samples reading from uniformly-oceanic interior triangles of plates that have moved into their position via geodetic motion, and the converse. The asymmetry (loss exceeding gain by ~0.37) is consistent with continental plates losing area at convergent zones because no collision/suture process exists to transfer continental material rather than lose it.
 
-Phase III's job is therefore not to "fix" the carrier by adding clever projection policy. It is to reconstruct the paper processes whose absence shows up as the Slice 5.5 coherent-transfer asymmetry: continental collision (the load-bearing one), persistent subduction state, the full remesh/oceanic-generation operation, rifting, and per-step elevation evolution.
+Phase III's job is therefore not to "fix" the carrier by adding clever projection policy. It is to reconstruct the paper processes whose absence shows up as the Slice 5.5 coherent-transfer asymmetry: continental collision (the load-bearing one), persistent subduction state, the full remesh/oceanic-generation operation, a stable crust-field substrate, rifting/divergence, convergence/uplift cleanup, surface processes, and long-run validation. Rifting remains downstream of the substrate work and is not IIIF.
 
 ## Decision
 
-Build Phase III as eight sub-phases (IIIA–IIIH) sequenced storage → tracking → mutation → topology → events → equilibrium:
+Build Phase III as ten sub-phases (IIIA–IIIJ) sequenced storage → tracking → mutation → topology → remesh → substrate → divergence → cleanup → surface processes → validation:
 
 - **IIIA** — paper crust state schema (storage only, no behavior).
 - **IIIB** — convergence tracking (read-only state, no mutation).
 - **IIIC** — continuous subduction/obduction (mutation, including slab-pull feedback into carrier authority).
 - **IIID** — continental collision (topology mutation; the architectural answer to Slice 5.5).
 - **IIIE** — paper remesh / divergent-zone oceanic crust generation (full §3.3.2.3 remesh integration, including filtering, continuous q1/q2, qGamma, and state reset).
-- **IIIF** — plate rifting (discrete event).
-- **IIIG** — per-step elevation evolution (continental erosion, oceanic dampening, sediment accretion).
-- **IIIH** — tectonic-only long-horizon validation (closes Phase III before any Phase IV amplification work).
+- **IIIF** — crust field substrate (shared field authority and bounds).
+- **IIIG** — rifting / divergence (continental thinning, breakup, new oceanic crust, passive margins, divergent bathymetry).
+- **IIIH** — convergence / uplift cleanup (subduction, obduction, collision, slab pull, and uplift revalidated on the stabilized substrate).
+- **IIII** — surface processes (erosion, sediment, isostatic relaxation, smoothing).
+- **IIIJ** — long-run world validation (closes Phase III before any Phase IV amplification work).
 
-The sequencing is not negotiable: storage must precede tracking; tracking must precede mutation; non-topology mutation must precede topology mutation; topology mutation must precede discrete events; per-step adjustment passes are last because they are global and would mask process bugs if landed earlier.
+The sequencing is not negotiable: storage must precede tracking; tracking must precede mutation; non-topology mutation must precede topology mutation; topology mutation must precede remesh; remesh must precede substrate closure; substrate closure must precede rifting; rifting and convergence/uplift cleanup must precede surface processes. Surface processes are late because they are global and would mask process bugs if landed earlier.
+
+2026-05-17 amendment: IIIF is Crust Field Substrate. IIIE.6.12 exposed that plate/material/projection coherence can pass while crust fields are still impossible (`202+ km` oceanic elevation and `844+ km` global elevation in the diagnosis that motivated IIIF). Therefore IIIF defines shared field authority and bounds before IIIG rifting and before IIII surface processes. IIIF passes with `PASS_IIIF_CRUST_FIELD_SUBSTRATE` and includes a substrate classification map separating continental land, submerged continental crust, oceanic bathymetry, sea-level oceanic clamp, generated oceanic crust, and rifting-pending continental preservation.
 
 ## What The Carrier Continues To Own
 
@@ -71,7 +75,7 @@ Names will evolve in code, but the separations are binding.
 
 - Source plate, destination plate, terrane triangle set, suture ring, uplift influence radius, post-event topology delta. One collision per timestep maximum.
 
-**Rifting event records** (per-event, audit-only):
+**Rifting event records** (per-event, audit-only, owned by IIIG):
 
 - Source plate, fragment count (2–4), Voronoi seeds, fracture warp parameters, new geodetic motions, post-event topology delta.
 
@@ -156,38 +160,71 @@ Names will evolve in code, but the separations are binding.
 - Gap-fill samples no longer contribute to the old "continental destruction" framing. They contribute to a "new oceanic creation" line. Pre-existing continental material overwritten by ridge generation is still tracked as an anomaly; after IIID, that quantity should be near-zero because collision/suture should have moved continental terranes before remesh.
 - The Slice 4/5 ledger schema is extended, not rewritten. Existing categories remain for replay determinism; the new categories add detail and reframe what was previously described as destruction.
 
-**Non-decisions:** IIIE does not implement oceanic crust dampening or global erosion (IIIG). It does not repair Stage 1.5 in isolation; it integrates remeshing with the Phase III tracking/collision state the paper requires.
+**Non-decisions:** IIIE does not implement full rifting/divergence (IIIG) or surface processes (IIII). It does not repair Stage 1.5 in isolation; it integrates remeshing with the Phase III tracking/collision state the paper requires.
 
-### IIIF — Plate Rifting
+**2026-05-17 IIIF boundary:** IIIE can close remesh mechanics, but IIIF owns the crust-field substrate. Crust-field authority must be explicit across plate-local vertices, global samples, remesh records, and visualization. Oceanic age must have a verified lifecycle. Oceanic bathymetry and continental uplift must be bounded before IIIG rifting or IIII surface processes exist.
 
-**Goal:** implement the paper's discrete plate fragmentation model.
+### IIIF — Crust Field Substrate
 
-**Architectural decisions:**
-
-- Rifting is triggered stochastically per timestep with Bernoulli probability `p_i = min(1, p · x̄_C · 𝒜/𝒜₀)` per thesis §3.3.2.2. User-triggered deterministic rifting is also supported.
-- A plate is split into 2–4 sub-plates by Voronoi partitioning of its interior triangles, with warped fracture boundaries (perlin/simplex noise modulating the geodesic distance metric).
-- Sub-plates are constructed by the same duplicate / re-index / re-compact operation as initial plate construction. Source plate is destroyed.
-- Sub-plates are assigned divergent geodetic motions: `w_ij = q_j × c_j`, where `q_j` is the centroid of the other sub-plate centroids.
-- Rifting happens *after* the global remesh per thesis §3.3.2.3, not during.
-
-**Non-decisions:** IIIF does not implement progressive crust tearing. The paper itself treats rifting as discrete fragmentation; the limitation is acknowledged as future work in §3.4.4 of the thesis.
-
-### IIIG — Per-Step Elevation Evolution
-
-**Goal:** implement the §3.3.3 global per-step elevation adjustment pass: continental erosion, oceanic dampening, sediment accretion.
+**Goal:** define the shared field rules that every later tectonic process depends on.
 
 **Architectural decisions:**
 
-- All three are per-step, per-sample, scalar updates to `Elevation`. They are not tied to any contact, label, or event.
+- Plate-local vertices are the authoritative crust records. Global samples are synchronized projections/remesh targets, not independent truth.
+- Elevation, historical elevation, oceanic age, ridge direction, and fold direction must remain finite and coherent across remesh.
+- Oceanic crust must remain at or below sea level unless a later explicitly approved ridge exception exists; any oceanic above-sea sample is a gate failure.
+- Continental uplift is bounded and auditable before IIII surface processes exist.
+- Oceanic age advances, resets to `0` at generated ridges, and survives remesh correctly.
+- Diagnostic maps distinguish continental land, submerged continental crust, oceanic bathymetry, sea-level oceanic clamp, generated oceanic crust, rifting-pending continental preservation, and invalid oceanic land.
+
+**Non-decisions:** IIIF does not implement rifting, erosion, terrain amplification, or new tectonic events. Rifting is IIIG after IIIF is closed.
+
+### IIIG — Rifting / Divergence
+
+**Goal:** promote rifting out of remesh side effects into an explicit tectonic process.
+
+**Architectural decisions:**
+
+- Rifting owns continental thinning, rift-pending state, breakup threshold, passive-margin creation, divergent bathymetry, and ridge age reset.
+- The IIIE `rift_pending` records are treated as provenance and candidates, not as a complete rifting model.
+- Breakup uses the paper's discrete plate-fragmentation model: stochastic trigger probability `p_i = min(1, p · x_bar_C · A/A0)`, 2-4 Voronoi sub-plates with warped fracture boundaries, duplicate/re-index/re-compact topology construction, and divergent geodetic motions.
+- New oceanic crust generated by breakup starts with `OceanicAge = 0`, bounded oceanic bathymetry, and ridge direction consistent with the new spreading axis.
+- Passive margins preserve adjacent continental crust without treating it as generated oceanic material.
+- All rifting operations produce named event records with source plate, fragment count, Voronoi seeds, fracture warp parameters, passive-margin records, new geodetic motions, and post-event topology delta.
+
+**Non-decisions:** IIIG does not clean up convergence/uplift bugs, does not implement erosion/sediment smoothing, and does not use surface processes to hide invalid substrate state.
+
+### IIIH — Convergence / Uplift Cleanup
+
+**Goal:** revalidate subduction, obduction, collision, slab pull, and uplift on the stabilized IIIF substrate after IIIG rifting is introduced.
+
+**Architectural decisions:**
+
+- Existing IIIC/IIID mechanics remain the base implementation, but their outputs must now preserve IIIF invariants.
+- Uplift only applies to valid overriding/continental targets. Oceanic crust must not inherit continental mountain elevation through remesh, rifting, collision, or sample/vertex sync.
+- Subduction, obduction, collision, and slab-pull outputs must include explicit bounds and conservation checks.
+- Collision/suture topology deltas must reconcile continental material, generated oceanic material, and passive-margin state after rifting.
+- Any residual oceanic-above-sea or runaway-uplift condition is a tectonic-process failure, not something IIII surface processes may smooth away.
+
+**Non-decisions:** IIIH does not add erosion, sediment, isostatic relaxation, smoothing, terrain amplification, or long-run acceptance criteria. It is the tectonic cleanup gate before surface processes.
+
+### IIII — Surface Processes
+
+**Goal:** implement the §3.3.3 global per-step elevation adjustment pass and adjacent surface-stability processes: continental erosion, oceanic dampening, sediment accretion, isostatic relaxation, and smoothing.
+
+**Architectural decisions:**
+
+- The paper's three named adjustments are per-step, per-sample scalar updates to `Elevation`. They are not tied to any contact, label, or event.
 - Continental erosion: `z(p, t+δt) = z(p, t) - z(p, t)/z_c · ε_c · δt` for samples with `x_C > 0.5`.
 - Oceanic dampening: `z(p, t+δt) = z(p, t) - (1 - z(p, t)/z_t) · ε_o · δt` for samples with `x_C < 0.5`.
 - Sediment accretion: `z(p, t+δt) = z(p, t) + ε_t · δt` for samples in oceanic trenches (defined by a `DistanceToFront` test against a subduction-front threshold).
 - Constants from thesis Table 3.2: `ε_c = 3 × 10⁻²`, `ε_o = 4 × 10⁻²`, `ε_t = 3 × 10⁻¹` mm/yr.
-- IIIG is the last sub-phase before validation because it is global and continuous: landing it earlier would mask process bugs by smoothing every elevation field every step.
+- Isostatic relaxation and smoothing are explicitly bounded surface-process passes. They cannot be accepted unless running them off still leaves IIIF/IIIG/IIIH tectonic invariants valid.
+- IIII is the last sub-phase before validation because it is global and continuous: landing it earlier would mask process bugs by smoothing every elevation field every step.
 
-**Non-decisions:** IIIG does not implement coherent noise modulation of the adjustment magnitudes (the paper applies low-frequency noise; this is amplification flavor and can defer).
+**Non-decisions:** IIII does not implement coherent noise modulation of the adjustment magnitudes (the paper applies low-frequency noise; this is amplification flavor and can defer). It does not repair invalid uplift or invalid rift bathymetry.
 
-### IIIH — Tectonic-Only Long-Horizon Validation
+### IIIJ — Long-Run World Validation
 
 **Goal:** demonstrate that the Phase III stack is stable over multi-event horizons before Phase IV amplification consumes it.
 
@@ -195,23 +232,25 @@ Names will evolve in code, but the separations are binding.
 
 - Run length: 100–250 events (≈200–500 My with the 2 Ma timestep). The paper's reference `Star Citizen`-comparable scenarios run ~125 My (≈60 events); 250 My is the published example duration. Multi-hundred-event coverage is the target.
 - Resolution coverage: 60k primary + at least one of 100k/250k.
-- Determinism: same-seed replay across the full horizon must produce identical hashes for crust state, subduction tracking, collision events, rifting events, and the material ledger.
-- Equilibrium check: Auth CAF should equilibrate (oscillate within bounded range) rather than monotonically drift. If it drifts, the cause must be named (likely IIIE oceanic-age effects, IIIG erosion, or a residual collision/suture imbalance).
+- Determinism: same-seed replay across the full horizon must produce identical hashes for crust state, subduction tracking, collision events, IIIG rifting events, surface-process outputs, and the material ledger.
+- Equilibrium check: Auth CAF should equilibrate (oscillate within bounded range) rather than monotonically drift. If it drifts, the cause must be named (likely remesh/oceanic-age effects, IIIG rifting imbalance, IIIH convergence/uplift imbalance, or IIII surface-process imbalance).
 - Slice 5.5 evidence revisited: the continental-loss asymmetry from Phase II should be dramatically reduced by IIID's collision implementation. A specific Phase III target quantifies this reduction. If the per-event continental-loss-from-uniform-oceanic-source bucket does not drop by the target amount, advancement pauses for an investigation checkpoint before any interpretation changes.
 - Performance: kernel time per step plus per-event Phase III event time should remain within the paper Table 2 envelope at the tested resolutions.
 
-**Non-decisions:** IIIH does not produce visual outputs. It does not amplify. It does not compare against geophysical observations. Those are Phase IV/V.
+**Non-decisions:** IIIJ does not produce final terrain amplification. It does not compare against geophysical observations. Those are Phase IV/V.
 
 ## Phase III Gates
 
 Phase III as a whole is accepted when:
 
-- All eight sub-phases (IIIA–IIIH) have written checkpoints with passed gates.
-- IIIH's long-horizon run shows tectonic equilibrium (no monotonic Auth CAF drift) at 60k.
+- All ten sub-phases (IIIA–IIIJ) have written checkpoints with passed gates.
+- IIIF Crust Field Substrate has passed with `PASS_IIIF_CRUST_FIELD_SUBSTRATE` before IIIG rifting/divergence begins.
+- IIIH Convergence / Uplift Cleanup has passed before IIII surface processes begin.
+- IIIJ's long-horizon run shows tectonic equilibrium (no monotonic Auth CAF drift) at 60k.
 - Slice 5.5's coherent-transfer continental-loss asymmetry is quantifiably reduced by IIID, with an 80%+ reduction in net continental loss attributable to single-hit transfer to uniform-oceanic source triangles as the initial target. Missing the target is an investigation trigger, not permission to weaken the gate.
 - Same-seed replay produces byte-identical hashes for all Phase III artifacts at all sub-phase boundaries.
 - Performance at 250k remains within paper Table 2 budget for the kernel (Phase III event costs separately reported).
-- All collision and rifting events are named, audited, and reproduce on replay.
+- All collision events and IIIG rifting events are named, audited, and reproduce on replay.
 - No persistent global sample ownership has been introduced. Centroid/random policies remain comparison controls only.
 - The slab-pull feedback off/on differential is documented; same-seed runs with slab-pull off match an IIIB-equivalent baseline.
 
@@ -222,7 +261,7 @@ Every Phase III sub-phase checkpoint must include:
 - Per-sub-phase replay hashes (separate from Phase II hashes).
 - Phase II material ledger continues to reconcile, now extended with paper-remesh categories per IIIE.
 - New crust-field heatmaps in the visualization actor (`Elevation`, `OceanicAge`, `RidgeDirection` magnitude, `FoldDirection` magnitude).
-- Collision and rifting event timelines with per-event topology deltas.
+- Collision event timelines, plus IIIG rifting timelines, with per-event topology deltas.
 - Subduction tracking state snapshots: active triangle count, distance-to-front histogram, subduction matrix density.
 - Slab-pull on/off rotation-axis trajectory comparison.
 - Per-resolution timing breakdown: Phase II baseline kernel + Phase III event costs separately.

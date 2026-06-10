@@ -4,7 +4,7 @@ Status: draft for user review. Phase III implementation may not start until the 
 
 ## Packet Files
 
-- `docs/phase-iii-paper-process-design.md`: ADR-shaped design contract. Eight sub-phases (IIIA–IIIH), authority rules, data model, sub-phase architectural decisions, gates, non-goals.
+- `docs/phase-iii-paper-process-design.md`: ADR-shaped design contract. Ten sub-phases (IIIA–IIIJ), authority rules, data model, sub-phase architectural decisions, gates, non-goals.
 - `docs/phase-iii-pre-mortem.md`: ten ranked failure modes, required negative controls, and stop conditions.
 - `docs/phase-iii-slice-plan.md`: per-sub-phase tiny slices with goals, work items, exit gates, and per-slice checkpoint artifacts.
 - `docs/paper-resampling-extraction.md`: focused paper/thesis extraction for the §3.3.2.3 remesh operation. This supersedes earlier resampling notes where they treated Stage 1.5 as standalone.
@@ -20,25 +20,49 @@ Phase II is closed (commit `4ad8148`, see `docs/phase-ii-closeout.md`). Stage 0/
 
 Phase III is therefore not "fix the carrier" through a projection tie-break. It is "reconstruct the paper processes whose absence produces the Slice 5.5 asymmetry." The architectural answer to continental persistence is continental collision (sub-phase IIID), which transfers continental material before remesh. The architectural answer to thesis-aligned resampling is IIIE, which must implement the full §3.3.2.3 remesh rather than merely extending the old Stage 1.5 lab path.
 
+## 2026-05-17 Direction Update
+
+IIIF is the crust-field substrate/stability layer, not rifting.
+
+Current direction:
+
+- Close IIIE.6.12 as a remesh coherence diagnostic, not as full terrain validation.
+- Define **IIIF: Crust Field Substrate** as the shared field rules later tectonic processes depend on.
+- Promote rifting/divergence into **IIIG**, after IIIF has passed.
+- Reintegrate convergence/uplift cleanup in **IIIH** on top of the stabilized substrate.
+- Keep surface processes in **IIII** so erosion, sediment, isostatic relaxation, and smoothing do not hide invalid tectonic state.
+- Close Phase III with **IIIJ** long-run world validation.
+- The IIIF substrate pass token is `PASS_IIIF_CRUST_FIELD_SUBSTRATE`.
+
+Reason: IIIE.6.12 showed that remesh can preserve plate/material/projection coherence while exposing impossible crust fields (`202+ km` oceanic elevation and `844+ km` global elevation). IIIF diagnosed and bounded that substrate. Rifting now gets its own phase, convergence/uplift gets a cleanup phase, and erosion remains a realism/stability process rather than a patch over broken uplift.
+
 ## Phase III Goal
 
 Reconstruct the paper's full tectonic process layer on top of the measured
-Stage 0/1 carrier substrate and Phase II process scaffolding, in eight
-sub-phases sequenced storage → tracking → mutation → topology → events →
-equilibrium:
+Stage 0/1 carrier substrate and Phase II process scaffolding, in ten
+sub-phases sequenced storage → tracking → mutation → topology → remesh →
+substrate → divergence → cleanup → surface processes → validation:
 
 - IIIA: paper crust state schema (storage only)
 - IIIB: convergence tracking (read-only)
 - IIIC: continuous subduction/obduction (mutation, including slab-pull feedback into carrier authority)
 - IIID: continental collision (topology mutation; the architectural answer to Slice 5.5)
 - IIIE: paper remesh / divergent-zone oceanic crust generation (full §3.3.2.3 integration plus ledger reframe)
-- IIIF: plate rifting (discrete event)
-- IIIG: per-step elevation evolution
-- IIIH: tectonic-only long-horizon validation
+- IIIF: crust field substrate (shared elevation, oceanic age, bathymetry, uplift, and sample/plate-vertex sync rules)
+- IIIG: rifting / divergence
+- IIIH: convergence / uplift cleanup
+- IIII: surface processes (erosion, sediment, isostatic relaxation, smoothing)
+- IIIJ: long-run world validation
+
+IIIF substrate scope:
+
+- IIIF Crust Field Substrate: explicit authority and invariants for elevation, historical elevation, oceanic age, ridge direction, and fold direction across plate-local vertices, global samples, remesh records, and visualization. Its diagnostics must include a crust substrate classification map that separates continental land, continental shelf/submerged crust, oceanic bathymetry, sea-level oceanic clamp, generated oceanic crust, and rifting-pending continental preservation.
 
 The success condition is narrow:
 
 - All sub-phases checkpointed and gated.
+- IIIF reports `PASS_IIIF_CRUST_FIELD_SUBSTRATE` before IIIG rifting begins.
+- IIIH demonstrates bounded convergence/uplift before IIII surface processes begin.
 - Long-horizon Auth CAF equilibrates rather than drifts.
 - Slice 5.5 continental-loss asymmetry quantifiably reduced after IIID, with ≥80% reduction in the uniform-oceanic-source bucket as the target threshold. Missing that threshold pauses advancement for an investigation checkpoint rather than being treated as an automatic design verdict.
 - Slab pull deterministic and bounded.
@@ -59,7 +83,7 @@ The success condition is narrow:
 
 ## Review Questions
 
-1. Is the eight-sub-phase decomposition (IIIA–IIIH) acceptable, with the storage → tracking → mutation → topology → events → equilibrium sequencing as binding?
+1. Is the ten-sub-phase decomposition (IIIA–IIIJ) acceptable, with the storage → tracking → mutation → topology → remesh → substrate → divergence → cleanup → surface processes → validation sequencing as binding?
 2. Do you approve the Stage 1.5 reframing: standalone Stage 1.5 remains foundation characterization, while thesis-aligned remeshing is owned by IIIE after convergence/collision state exists?
 3. Do you approve continental collision (IIID) as the architectural answer to Slice 5.5, with the IIID.8 quantification target (≥80% reduction in uniform-oceanic-source continental loss, investigated if missed rather than tuned around)?
 4. Do you approve slab pull (IIIC.4) as the single allowed process-to-carrier-authority feedback, with the off/on differential gate?
