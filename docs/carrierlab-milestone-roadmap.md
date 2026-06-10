@@ -2,11 +2,10 @@
 
 Date: 2026-06-10
 
-Status: active go-forward structure after the Milestone 3 remediation
-implementation. Milestone 3 remediation (`88421d3`) reports
-`MILESTONE_3_PASS`; external acceptance review is still pending. Do not start
-Milestone 4 implementation until the user gives an explicit go/no-go after that
-review.
+Status: active go-forward structure after the Milestone 3 remediation external
+review. Milestone 3 remediation (`88421d3`) reports `MILESTONE_3_PASS` and was
+accepted by external review. The Milestone 4 entry packet is prepared, but M4
+implementation still requires explicit user go/no-go.
 
 This document replaces the mixed go-forward vocabulary of V2, Stage 1.5, Phase
 IIIB, Phase IIIE, and similar labels. Those names remain in historical reports,
@@ -31,9 +30,9 @@ milestone's entry packet, it waits.
 
 ## Current Position
 
-M0 through M3R are the current foundation chain. M3R is implemented and pushed,
-but Fable's external acceptance review is still in progress. The next local
-work should be a Milestone 4 entry packet, not Milestone 4 implementation.
+M0 through M3R are the current foundation chain. M3R is implemented, pushed, and
+externally accepted. The next local decision is whether to approve the
+Milestone 4 entry packet, not whether to skip directly into M4 implementation.
 
 The milestone structure is:
 
@@ -154,8 +153,8 @@ Forbidden scope:
 
 Current status: M3R implemented and pushed at `88421d3`. The regenerated
 closeout report lives in `docs/checkpoints/milestone-3-closeout-report.md` and
-reports `MILESTONE_3_PASS`. External acceptance review is pending, so M4 entry
-is not yet authorized.
+reports `MILESTONE_3_PASS`. External review accepted M3R and authorized M4
+planning.
 
 ## Milestone 4: Paper Crust Fields And Per-Step Tracking
 
@@ -174,6 +173,8 @@ Entry evidence before implementation:
   distributions.
 
 The characterization run sets M4 gate values. It is not itself a proof of M4.
+
+Entry packet: `docs/checkpoints/milestone-4-entry-packet.md`.
 
 Allowed scope:
 
