@@ -3707,12 +3707,16 @@ namespace CarrierLab::V2
 			int32 SourceTriangleId = INDEX_NONE;
 			int32 LocalVertexA = INDEX_NONE;
 			int32 LocalVertexB = INDEX_NONE;
+			int32 LocalVertexInterior = INDEX_NONE;
 			int32 SourceSampleA = INDEX_NONE;
 			int32 SourceSampleB = INDEX_NONE;
+			int32 SourceSampleInterior = INDEX_NONE;
 			FVector3d A = FVector3d::ZeroVector;
 			FVector3d B = FVector3d::ZeroVector;
+			FVector3d InteriorPoint = FVector3d::ZeroVector;
 			FCarrierV2MaterialRecord MaterialA;
 			FCarrierV2MaterialRecord MaterialB;
+			FCarrierV2MaterialRecord InteriorMaterial;
 		};
 
 		struct FCarrierV2Stage5EdgeAccumulator
@@ -3954,7 +3958,10 @@ namespace CarrierLab::V2
 					{
 						const int32 LocalA = Triangle.LocalVertexIds[EdgeIndex];
 						const int32 LocalB = Triangle.LocalVertexIds[(EdgeIndex + 1) % 3];
-						if (!Plate.LocalVertices.IsValidIndex(LocalA) || !Plate.LocalVertices.IsValidIndex(LocalB))
+						const int32 LocalInterior = Triangle.LocalVertexIds[(EdgeIndex + 2) % 3];
+						if (!Plate.LocalVertices.IsValidIndex(LocalA) ||
+							!Plate.LocalVertices.IsValidIndex(LocalB) ||
+							!Plate.LocalVertices.IsValidIndex(LocalInterior))
 						{
 							continue;
 						}
@@ -3967,12 +3974,16 @@ namespace CarrierLab::V2
 							Accumulator.Edge.SourceTriangleId = Triangle.SourceTriangleId;
 							Accumulator.Edge.LocalVertexA = LocalA;
 							Accumulator.Edge.LocalVertexB = LocalB;
+							Accumulator.Edge.LocalVertexInterior = LocalInterior;
 							Accumulator.Edge.SourceSampleA = Plate.LocalVertices[LocalA].SourceSampleId;
 							Accumulator.Edge.SourceSampleB = Plate.LocalVertices[LocalB].SourceSampleId;
+							Accumulator.Edge.SourceSampleInterior = Plate.LocalVertices[LocalInterior].SourceSampleId;
 							Accumulator.Edge.A = Plate.LocalVertices[LocalA].UnitPosition;
 							Accumulator.Edge.B = Plate.LocalVertices[LocalB].UnitPosition;
+							Accumulator.Edge.InteriorPoint = Plate.LocalVertices[LocalInterior].UnitPosition;
 							Accumulator.Edge.MaterialA = Plate.LocalVertices[LocalA].Material;
 							Accumulator.Edge.MaterialB = Plate.LocalVertices[LocalB].Material;
+							Accumulator.Edge.InteriorMaterial = Plate.LocalVertices[LocalInterior].Material;
 						}
 					}
 				}
@@ -5146,7 +5157,10 @@ namespace CarrierLab::V2
 					{
 						const int32 LocalA = Triangle.LocalVertexIds[EdgeIndex];
 						const int32 LocalB = Triangle.LocalVertexIds[(EdgeIndex + 1) % 3];
-						if (!Plate.LocalVertices.IsValidIndex(LocalA) || !Plate.LocalVertices.IsValidIndex(LocalB))
+						const int32 LocalInterior = Triangle.LocalVertexIds[(EdgeIndex + 2) % 3];
+						if (!Plate.LocalVertices.IsValidIndex(LocalA) ||
+							!Plate.LocalVertices.IsValidIndex(LocalB) ||
+							!Plate.LocalVertices.IsValidIndex(LocalInterior))
 						{
 							continue;
 						}
@@ -5159,12 +5173,16 @@ namespace CarrierLab::V2
 							Accumulator.Edge.SourceTriangleId = Triangle.SourceTriangleId;
 							Accumulator.Edge.LocalVertexA = LocalA;
 							Accumulator.Edge.LocalVertexB = LocalB;
+							Accumulator.Edge.LocalVertexInterior = LocalInterior;
 							Accumulator.Edge.SourceSampleA = Plate.LocalVertices[LocalA].SourceSampleId;
 							Accumulator.Edge.SourceSampleB = Plate.LocalVertices[LocalB].SourceSampleId;
+							Accumulator.Edge.SourceSampleInterior = Plate.LocalVertices[LocalInterior].SourceSampleId;
 							Accumulator.Edge.A = Plate.LocalVertices[LocalA].UnitPosition;
 							Accumulator.Edge.B = Plate.LocalVertices[LocalB].UnitPosition;
+							Accumulator.Edge.InteriorPoint = Plate.LocalVertices[LocalInterior].UnitPosition;
 							Accumulator.Edge.MaterialA = Plate.LocalVertices[LocalA].Material;
 							Accumulator.Edge.MaterialB = Plate.LocalVertices[LocalB].Material;
+							Accumulator.Edge.InteriorMaterial = Plate.LocalVertices[LocalInterior].Material;
 						}
 					}
 				}
@@ -6367,8 +6385,39 @@ namespace CarrierLab::V2
 		HashMixInt(Hash, Config.bAllowFixtureSpecifiedPolarity ? 1 : 0);
 		HashMixInt(Hash, Config.bForceAllOverlapHitsFiltered ? 1 : 0);
 		HashMixInt(Hash, Config.bForceNoFilterLabels ? 1 : 0);
+		HashMixInt(Hash, Config.bScaleCharacterization ? 1 : 0);
+		HashMixInt(Hash, Config.bRequirePinnedM2Baseline ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireFilterInertNoop ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireHolePumpTripwire ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireFilteredSingleSource ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireFilterExhausted ? 1 : 0);
+		HashMixInt(Hash, Config.bRequirePostFilterMultihit ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireTrueDivergentGap ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireDivergenceRejected ? 1 : 0);
+		HashMixInt(Hash, Config.bRequirePolaritySwap ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireOceanOceanAmbiguous ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireContinentalCollisionCandidate ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireThirdPlateIntrusion ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireResolutionInvariantLabels ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireResolvableScale ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireOnlyDivergentContacts ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireOnlyConvergentContacts ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireMixedContactSigns ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireAutoOceanContinentContact ? 1 : 0);
+		HashMixInt(Hash, Config.bRequireScalePumpSafety ? 1 : 0);
+		HashMixInt(Hash, Config.ExpectedMinimumContacts);
+		HashMixInt(Hash, Config.ExpectedMinimumConvergentContacts);
+		HashMixInt(Hash, Config.ExpectedMinimumDivergentContacts);
+		HashMixInt(Hash, Config.ExpectedMinimumOceanContinentContacts);
+		HashMixInt(Hash, Config.ExpectedMinimumFilterLabels);
+		HashMixInt(Hash, Config.ExpectedMinimumFilteredSingleSource);
+		HashMixInt(Hash, Config.ExpectedMinimumDivergentGapFill);
+		HashMixInt(Hash, Config.ExpectedMaximumHoleCountGrowth);
 		HashMixDouble(Hash, Config.OpeningRateTolerance);
 		HashMixDouble(Hash, Config.ContinentalFractionThreshold);
+		HashMixDouble(Hash, Config.PaperResampleCycleBudgetMs);
+		HashMixDouble(Hash, Config.ProcessLaneBudgetMs);
+		HashMixInt(Hash, Config.UnassignedTriangleBudget);
 		for (const FCarrierV2Milestone3PinnedM2Baseline& Baseline : Config.PinnedM2Baselines)
 		{
 			HashMixString(Hash, Baseline.FixtureId);
@@ -6422,14 +6471,43 @@ namespace CarrierLab::V2
 		Direction.Normalize();
 
 		const FVector3d RelativeVelocity =
-			Milestone3TangentialVelocity(Config, PlateB, QGamma) -
-			Milestone3TangentialVelocity(Config, PlateA, QGamma);
+			Milestone3TangentialVelocity(Config, PlateB, PointB) -
+			Milestone3TangentialVelocity(Config, PlateA, PointA);
 		return FVector3d::DotProduct(RelativeVelocity, Direction);
 	}
 
 	double Milestone3EdgeContinentalFraction(const FCarrierV2Stage5BoundaryEdge& Edge)
 	{
-		return 0.5 * (Edge.MaterialA.ContinentalFraction + Edge.MaterialB.ContinentalFraction);
+		return Edge.SourceSampleInterior != INDEX_NONE
+			? Edge.InteriorMaterial.ContinentalFraction
+			: 0.5 * (Edge.MaterialA.ContinentalFraction + Edge.MaterialB.ContinentalFraction);
+	}
+
+	FVector3d Milestone3InteriorProbePoint(const FCarrierV2Stage5BoundaryEdge& Edge)
+	{
+		return Edge.SourceSampleInterior != INDEX_NONE
+			? Edge.InteriorPoint.GetSafeNormal()
+			: (Edge.A + Edge.B).GetSafeNormal();
+	}
+
+	void AccumulateMilestone3SignedOpeningRate(
+		FCarrierV2Milestone3Metrics& Metrics,
+		const double OpeningRate)
+	{
+		++Metrics.SignedOpeningRateSampleCount;
+		if (Metrics.SignedOpeningRateSampleCount == 1)
+		{
+			Metrics.SignedOpeningRateMin = OpeningRate;
+			Metrics.SignedOpeningRateMax = OpeningRate;
+			Metrics.SignedOpeningRateMean = OpeningRate;
+			return;
+		}
+
+		Metrics.SignedOpeningRateMin = FMath::Min(Metrics.SignedOpeningRateMin, OpeningRate);
+		Metrics.SignedOpeningRateMax = FMath::Max(Metrics.SignedOpeningRateMax, OpeningRate);
+		Metrics.SignedOpeningRateMean +=
+			(OpeningRate - Metrics.SignedOpeningRateMean) /
+			static_cast<double>(Metrics.SignedOpeningRateSampleCount);
 	}
 
 	void AddMilestone3Label(
@@ -6595,6 +6673,12 @@ namespace CarrierLab::V2
 		HashMixString(Hash, Metrics.RebuiltTopologyHash);
 		HashMixInt(Hash, Metrics.PinnedM2BaselineMismatchCount);
 		HashMixInt(Hash, Metrics.ContactEvidenceCount);
+		HashMixInt(Hash, Metrics.ConvergentContactCount);
+		HashMixInt(Hash, Metrics.DivergentContactCount);
+		HashMixInt(Hash, Metrics.OceanContinentContactCount);
+		HashMixDouble(Hash, Metrics.SignedOpeningRateMin);
+		HashMixDouble(Hash, Metrics.SignedOpeningRateMax);
+		HashMixDouble(Hash, Metrics.SignedOpeningRateMean);
 		HashMixInt(Hash, Metrics.SubductingTriangleLabelCount);
 		HashMixInt(Hash, Metrics.CollidingTriangleLabelCount);
 		HashMixInt(Hash, Metrics.FilteredSingleSourceWriteCount);
@@ -6602,7 +6686,11 @@ namespace CarrierLab::V2
 		HashMixInt(Hash, Metrics.PostFilterUnresolvedMultihitCount);
 		HashMixInt(Hash, Metrics.Q1Q2DivergentAcceptedCount);
 		HashMixInt(Hash, Metrics.Q1Q2DivergenceRejectedCount);
+		HashMixInt(Hash, Metrics.Q1Q2RejectedByOpeningRateCount);
+		HashMixInt(Hash, Metrics.Q1Q2RejectedByProcessFilterCount);
+		HashMixInt(Hash, Metrics.Q1Q2RejectedBySamePlateCount);
 		HashMixInt(Hash, Metrics.PreviouslyBlockedBecameQ1Q2OceanicCount);
+		HashMixInt(Hash, Metrics.PreviouslyBlockedQ1Q2OceanicNonOpeningCount);
 		HashMixInt(Hash, Metrics.HoleCountGrowth);
 		HashMixInt(Hash, Metrics.UnassignedTriangleCount);
 		HashMixInt(Hash, Metrics.UnsupportedOverlapWriteAttemptCount);
@@ -6746,13 +6834,16 @@ namespace CarrierLab::V2
 			const FVector3d MidA = (EdgeA.A + EdgeA.B).GetSafeNormal();
 			const FVector3d MidB = (EdgeB.A + EdgeB.B).GetSafeNormal();
 			const FVector3d QGamma = (MidA + MidB).GetSafeNormal();
+			const FVector3d ProbeA = Milestone3InteriorProbePoint(EdgeA);
+			const FVector3d ProbeB = Milestone3InteriorProbePoint(EdgeB);
 			const double OpeningRate = Milestone3OpeningRate(
 				Config.CarrierCycleConfig.MotionConfig,
 				EdgeA.PlateId,
 				EdgeB.PlateId,
-				MidA,
-				MidB,
+				ProbeA,
+				ProbeB,
 				QGamma.IsNearlyZero() ? MidA : QGamma);
+			AccumulateMilestone3SignedOpeningRate(Result.Metrics, OpeningRate);
 			const double AContinental = Milestone3EdgeContinentalFraction(EdgeA);
 			const double BContinental = Milestone3EdgeContinentalFraction(EdgeB);
 
@@ -6767,17 +6858,17 @@ namespace CarrierLab::V2
 			Contact.SignedOpeningRate = OpeningRate;
 			Contact.PlateAContinentalFraction = AContinental;
 			Contact.PlateBContinentalFraction = BContinental;
-			Contact.Provenance = TEXT("plate_local_shared_source_edge_motion_sign");
+			Contact.Provenance = TEXT("plate_local_shared_source_edge_interior_probe_signed_opening");
 			if (OpeningRate > Config.OpeningRateTolerance)
-			{
-				Contact.ContactClass = TEXT("convergent");
-				++Result.Metrics.ConvergentContactCount;
-			}
-			else if (OpeningRate < -Config.OpeningRateTolerance)
 			{
 				Contact.ContactClass = TEXT("divergent");
 				Contact.PolarityClass = TEXT("none_divergent_no_filter");
 				++Result.Metrics.DivergentContactCount;
+			}
+			else if (OpeningRate < -Config.OpeningRateTolerance)
+			{
+				Contact.ContactClass = TEXT("convergent");
+				++Result.Metrics.ConvergentContactCount;
 			}
 			else
 			{
@@ -6963,7 +7054,8 @@ namespace CarrierLab::V2
 				Record.Q1Q2OpeningRate = OpeningRate;
 				++Result.Metrics.Q1Q2BoundaryPairCount;
 
-				if (Record.bQ1Q2DifferentPlates && !bBoundaryPairFilteredByProcess && OpeningRate > Config.OpeningRateTolerance)
+				const bool bOpeningBoundaryPair = OpeningRate > Config.OpeningRateTolerance;
+				if (Record.bQ1Q2DifferentPlates && !bBoundaryPairFilteredByProcess && bOpeningBoundaryPair)
 				{
 					const bool bAssignQ2 = Q2.DistanceRad < Q1.DistanceRad;
 					Record.AssignedPlateId = bAssignQ2 ? Q2.PlateId : Q1.PlateId;
@@ -6979,6 +7071,10 @@ namespace CarrierLab::V2
 					{
 						Record.bPreviouslyBlockedBecameQ1Q2Oceanic = true;
 						++Result.Metrics.PreviouslyBlockedBecameQ1Q2OceanicCount;
+						if (!bOpeningBoundaryPair)
+						{
+							++Result.Metrics.PreviouslyBlockedQ1Q2OceanicNonOpeningCount;
+						}
 					}
 					Result.SampleRecords.Add(Record);
 					continue;
@@ -6989,6 +7085,18 @@ namespace CarrierLab::V2
 					? TEXT("deferred_process_filtered_gap_no_q1q2_fallback")
 					: TEXT("deferred_nondivergent_gap_no_oceanic_generation");
 				++Result.Metrics.Q1Q2DivergenceRejectedCount;
+				if (!Record.bQ1Q2DifferentPlates)
+				{
+					++Result.Metrics.Q1Q2RejectedBySamePlateCount;
+				}
+				else if (bBoundaryPairFilteredByProcess)
+				{
+					++Result.Metrics.Q1Q2RejectedByProcessFilterCount;
+				}
+				else if (!bOpeningBoundaryPair)
+				{
+					++Result.Metrics.Q1Q2RejectedByOpeningRateCount;
+				}
 				++Result.Metrics.DeferredNondivergentGapCount;
 				OutBlockedSamples.Add(Sample.SampleId);
 				Result.SampleRecords.Add(Record);
@@ -7221,17 +7329,38 @@ namespace CarrierLab::V2
 			 M.UnassignedTriangleCount == 0);
 		M.bContactEvidencePass =
 			M.ContactEvidenceCount >= Config.ExpectedMinimumContacts &&
-			M.FilterActiveTriangleLabelCount >= Config.ExpectedMinimumFilterLabels;
+			M.FilterActiveTriangleLabelCount >= Config.ExpectedMinimumFilterLabels &&
+			M.ConvergentContactCount >= Config.ExpectedMinimumConvergentContacts &&
+			M.DivergentContactCount >= Config.ExpectedMinimumDivergentContacts &&
+			M.OceanContinentContactCount >= Config.ExpectedMinimumOceanContinentContacts;
+		M.bSignedContactDirectionPass =
+			(!Config.bRequireOnlyDivergentContacts ||
+				(M.DivergentContactCount >= FMath::Max(1, Config.ExpectedMinimumDivergentContacts) &&
+				 M.ConvergentContactCount == 0)) &&
+			(!Config.bRequireOnlyConvergentContacts ||
+				(M.ConvergentContactCount >= FMath::Max(1, Config.ExpectedMinimumConvergentContacts) &&
+				 M.DivergentContactCount == 0)) &&
+			(!Config.bRequireMixedContactSigns ||
+				(M.ConvergentContactCount >= FMath::Max(1, Config.ExpectedMinimumConvergentContacts) &&
+				 M.DivergentContactCount >= FMath::Max(1, Config.ExpectedMinimumDivergentContacts)));
 		M.bProcessFilterEvidencePass =
 			(!Config.bRequireFilteredSingleSource || M.FilteredSingleSourceWriteCount >= FMath::Max(1, Config.ExpectedMinimumFilteredSingleSource)) &&
 			(!Config.bRequireFilterExhausted || M.FilterExhaustedSampleCount > 0) &&
 			(!Config.bRequirePostFilterMultihit || M.PostFilterUnresolvedMultihitCount > 0) &&
-			(!Config.bRequirePolaritySwap || M.FilteredSingleSourceWriteCount > 0);
+			(!Config.bRequirePolaritySwap || M.FilteredSingleSourceWriteCount > 0) &&
+			(!Config.bRequireAutoOceanContinentContact ||
+				M.OceanContinentContactCount >= FMath::Max(1, Config.ExpectedMinimumOceanContinentContacts)) &&
+			(!Config.bRequireResolvableScale ||
+				M.OceanContinentContactCount >= FMath::Max(1, Config.ExpectedMinimumOceanContinentContacts));
 		M.bHolePumpTripwirePass =
 			!Config.bRequireHolePumpTripwire ||
 			(M.PreviouslyBlockedBecameQ1Q2OceanicCount == 0 &&
 			 M.HoleCountGrowth <= Config.ExpectedMaximumHoleCountGrowth &&
 			 (M.FilteredSingleSourceWriteCount > 0 || M.FilterExhaustedSampleCount > 0 || M.PostFilterUnresolvedMultihitCount > 0));
+		M.bScalePumpSafetyPass =
+			!Config.bRequireScalePumpSafety ||
+			(M.PreviouslyBlockedQ1Q2OceanicNonOpeningCount == 0 &&
+			 M.HoleCountGrowth <= Config.ExpectedMaximumHoleCountGrowth);
 		M.bQ1Q2DivergencePass =
 			(!Config.bRequireTrueDivergentGap || M.Q1Q2DivergentAcceptedCount >= FMath::Max(1, Config.ExpectedMinimumDivergentGapFill)) &&
 			(!Config.bRequireDivergenceRejected || M.Q1Q2DivergenceRejectedCount > 0);
@@ -7264,8 +7393,10 @@ namespace CarrierLab::V2
 			M.bPinnedM2BaselinePass &&
 			M.bFilterInertNoopPass &&
 			M.bContactEvidencePass &&
+			M.bSignedContactDirectionPass &&
 			M.bProcessFilterEvidencePass &&
 			M.bHolePumpTripwirePass &&
+			M.bScalePumpSafetyPass &&
 			M.bQ1Q2DivergencePass &&
 			M.bOverlapFilterPolicyPass &&
 			M.bTopologyBudgetPass &&
@@ -7478,8 +7609,10 @@ namespace CarrierLab::V2
 		FX003.bRequireFilteredSingleSource = true;
 		FX003.ExpectedMinimumFilteredSingleSource = 1;
 		FX003.ExpectedMinimumContacts = 1;
+		FX003.ExpectedMinimumConvergentContacts = 1;
 		FX003.ExpectedMinimumFilterLabels = 1;
 		FX003.ExpectedMaximumHoleCountGrowth = 32;
+		FX003.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX003);
 
 		FCarrierV2Milestone3Config FX004 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-004-FilteredSingleSource"), TEXT("FilteredSingleSource"));
@@ -7488,7 +7621,9 @@ namespace CarrierLab::V2
 		FX004.bRequireFilteredSingleSource = true;
 		FX004.ExpectedMinimumFilteredSingleSource = 1;
 		FX004.ExpectedMinimumContacts = 1;
+		FX004.ExpectedMinimumConvergentContacts = 1;
 		FX004.ExpectedMinimumFilterLabels = 1;
+		FX004.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX004);
 
 		FCarrierV2Milestone3Config FX005 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-005-FilterExhausted"), TEXT("FilterExhausted"));
@@ -7497,13 +7632,17 @@ namespace CarrierLab::V2
 		FX005.bForceAllOverlapHitsFiltered = true;
 		FX005.bRequireFilterExhausted = true;
 		FX005.ExpectedMinimumContacts = 1;
+		FX005.ExpectedMinimumConvergentContacts = 1;
 		FX005.ExpectedMinimumFilterLabels = 1;
+		FX005.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX005);
 
 		FCarrierV2Milestone3Config FX006 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-006-PostFilterMultihit"), TEXT("PostFilterMultihit"));
 		FX006.bForceNoFilterLabels = true;
 		FX006.bRequirePostFilterMultihit = true;
 		FX006.ExpectedMinimumContacts = 1;
+		FX006.ExpectedMinimumConvergentContacts = 1;
+		FX006.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX006);
 
 		FCarrierV2Milestone3Config FX007 = MakeMilestone3ConfigFromStage1(TEXT("FX-007"), TEXT("M3-FX-007-TrueDivergentGap"), TEXT("TrueDivergentGap"));
@@ -7523,7 +7662,9 @@ namespace CarrierLab::V2
 		FX009.bAllowFixtureSpecifiedPolarity = true;
 		FX009.bRequirePolaritySwap = true;
 		FX009.ExpectedMinimumContacts = 1;
+		FX009.ExpectedMinimumConvergentContacts = 1;
 		FX009.ExpectedMinimumFilterLabels = 1;
+		FX009.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX009);
 
 		FCarrierV2Milestone3Config FX010 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-010-OceanOceanAmbiguous"), TEXT("OceanOceanAmbiguous"));
@@ -7531,6 +7672,8 @@ namespace CarrierLab::V2
 		FX010.bAllowFixtureSpecifiedPolarity = true;
 		FX010.bRequireOceanOceanAmbiguous = true;
 		FX010.ExpectedMinimumContacts = 1;
+		FX010.ExpectedMinimumConvergentContacts = 1;
+		FX010.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX010);
 
 		FCarrierV2Milestone3Config FX011 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-011-ContinentalCollisionCandidate"), TEXT("ContinentalCollisionCandidate"));
@@ -7538,6 +7681,8 @@ namespace CarrierLab::V2
 		FX011.bAllowFixtureSpecifiedPolarity = true;
 		FX011.bRequireContinentalCollisionCandidate = true;
 		FX011.ExpectedMinimumContacts = 1;
+		FX011.ExpectedMinimumConvergentContacts = 1;
+		FX011.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX011);
 
 		FCarrierV2Milestone3Config FX012 = MakeMilestone3ConfigFromStage1(TEXT("FX-010"), TEXT("M3-FX-012-ThirdPlateIntrusion"), TEXT("ThirdPlateIntrusion"));
@@ -7545,8 +7690,12 @@ namespace CarrierLab::V2
 		FX012.ExpectedMinimumContacts = 1;
 		Configs.Add(FX012);
 
-		FCarrierV2Milestone3Config FX013 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-013-SamePairMixedSignal"), TEXT("SamePairMixedSignal"));
+		FCarrierV2Milestone3Config FX013 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-013-AutoOceanContinentReachability"), TEXT("AutoOceanContinentReachability"));
 		FX013.ExpectedMinimumContacts = 1;
+		FX013.ExpectedMinimumConvergentContacts = 1;
+		FX013.ExpectedMinimumOceanContinentContacts = 1;
+		FX013.bRequireAutoOceanContinentContact = true;
+		FX013.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX013);
 
 		FCarrierV2Milestone3Config FX014 = MakeMilestone3ConfigFromStage1(TEXT("FX-008"), TEXT("M3-FX-014-ResolutionInvariantLabels"), TEXT("ResolutionInvariantLabels"));
@@ -7554,7 +7703,9 @@ namespace CarrierLab::V2
 		FX014.bAllowFixtureSpecifiedPolarity = true;
 		FX014.bRequireResolutionInvariantLabels = true;
 		FX014.ExpectedMinimumContacts = 1;
+		FX014.ExpectedMinimumConvergentContacts = 1;
 		FX014.ExpectedMinimumFilterLabels = 1;
+		FX014.bRequireOnlyConvergentContacts = true;
 		Configs.Add(FX014);
 
 		return Configs;
@@ -7579,10 +7730,16 @@ namespace CarrierLab::V2
 		Config.bScaleCharacterization = true;
 		Config.bRequireResolvableScale = SampleCount <= 250000;
 		Config.ExpectedMinimumContacts = 1;
+		Config.ExpectedMinimumConvergentContacts = 1;
+		Config.ExpectedMinimumDivergentContacts = 1;
+		Config.ExpectedMinimumOceanContinentContacts = 1;
 		Config.ExpectedMinimumFilterLabels = 1;
 		Config.bRequireFilteredSingleSource = SampleCount <= 250000;
 		Config.ExpectedMinimumFilteredSingleSource = 1;
-		Config.ExpectedMaximumHoleCountGrowth = 0;
+		Config.bRequireAutoOceanContinentContact = SampleCount <= 250000;
+		Config.bRequireMixedContactSigns = SampleCount <= 250000;
+		Config.bRequireScalePumpSafety = SampleCount <= 250000;
+		Config.ExpectedMaximumHoleCountGrowth = SampleCount / 50;
 		Config.UnassignedTriangleBudget = SampleCount / 3;
 		Config.PaperResampleCycleBudgetMs = SampleCount >= 500000 ? 7160.0 : 3580.0;
 		return Config;
@@ -7639,6 +7796,10 @@ namespace CarrierLab::V2
 		Json += FString::Printf(TEXT("\"contact_evidence_count\":%d,"), M.ContactEvidenceCount);
 		Json += FString::Printf(TEXT("\"convergent_contact_count\":%d,"), M.ConvergentContactCount);
 		Json += FString::Printf(TEXT("\"divergent_contact_count\":%d,"), M.DivergentContactCount);
+		Json += FString::Printf(TEXT("\"signed_opening_rate_sample_count\":%d,"), M.SignedOpeningRateSampleCount);
+		Json += FString::Printf(TEXT("\"signed_opening_rate_min\":%.12g,"), M.SignedOpeningRateMin);
+		Json += FString::Printf(TEXT("\"signed_opening_rate_max\":%.12g,"), M.SignedOpeningRateMax);
+		Json += FString::Printf(TEXT("\"signed_opening_rate_mean\":%.12g,"), M.SignedOpeningRateMean);
 		Json += FString::Printf(TEXT("\"third_plate_contact_count\":%d,"), M.ThirdPlateContactCount);
 		Json += FString::Printf(TEXT("\"ocean_continent_contact_count\":%d,"), M.OceanContinentContactCount);
 		Json += FString::Printf(TEXT("\"ocean_ocean_ambiguous_contact_count\":%d,"), M.OceanOceanAmbiguousContactCount);
@@ -7655,10 +7816,14 @@ namespace CarrierLab::V2
 		Json += FString::Printf(TEXT("\"post_filter_unresolved_multihit_count\":%d,"), M.PostFilterUnresolvedMultihitCount);
 		Json += FString::Printf(TEXT("\"q1q2_divergent_accepted_count\":%d,"), M.Q1Q2DivergentAcceptedCount);
 		Json += FString::Printf(TEXT("\"q1q2_divergence_rejected_count\":%d,"), M.Q1Q2DivergenceRejectedCount);
+		Json += FString::Printf(TEXT("\"q1q2_rejected_by_opening_rate_count\":%d,"), M.Q1Q2RejectedByOpeningRateCount);
+		Json += FString::Printf(TEXT("\"q1q2_rejected_by_process_filter_count\":%d,"), M.Q1Q2RejectedByProcessFilterCount);
+		Json += FString::Printf(TEXT("\"q1q2_rejected_by_same_plate_count\":%d,"), M.Q1Q2RejectedBySamePlateCount);
 		Json += FString::Printf(TEXT("\"q1q2_gap_fill_count\":%d,"), M.Q1Q2GapFillCount);
 		Json += FString::Printf(TEXT("\"generated_oceanic_count\":%d,"), M.GeneratedOceanicCount);
 		Json += FString::Printf(TEXT("\"previously_blocked_sample_count\":%d,"), M.PreviouslyBlockedSampleCount);
 		Json += FString::Printf(TEXT("\"previously_blocked_became_q1q2_oceanic_count\":%d,"), M.PreviouslyBlockedBecameQ1Q2OceanicCount);
+		Json += FString::Printf(TEXT("\"previously_blocked_q1q2_oceanic_nonopening_count\":%d,"), M.PreviouslyBlockedQ1Q2OceanicNonOpeningCount);
 		Json += FString::Printf(TEXT("\"deferred_nondivergent_gap_count\":%d,"), M.DeferredNondivergentGapCount);
 		Json += FString::Printf(TEXT("\"hole_count_window0\":%d,"), M.HoleCountWindow0);
 		Json += FString::Printf(TEXT("\"hole_count_final\":%d,"), M.HoleCountFinal);
@@ -7683,7 +7848,9 @@ namespace CarrierLab::V2
 		Json += FString::Printf(TEXT("\"replay_resample_decision_hash\":%s,"), *JsonString(M.ReplayResampleDecisionHash));
 		Json += FString::Printf(TEXT("\"replay_rebuilt_topology_hash\":%s,"), *JsonString(M.ReplayRebuiltTopologyHash));
 		Json += FString::Printf(TEXT("\"pinned_m2_baseline_pass\":%s,"), M.bPinnedM2BaselinePass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"signed_contact_direction_pass\":%s,"), M.bSignedContactDirectionPass ? TEXT("true") : TEXT("false"));
 		Json += FString::Printf(TEXT("\"hole_pump_tripwire_pass\":%s,"), M.bHolePumpTripwirePass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"scale_pump_safety_pass\":%s,"), M.bScalePumpSafetyPass ? TEXT("true") : TEXT("false"));
 		Json += FString::Printf(TEXT("\"q1q2_divergence_pass\":%s,"), M.bQ1Q2DivergencePass ? TEXT("true") : TEXT("false"));
 		Json += FString::Printf(TEXT("\"process_filter_evidence_pass\":%s,"), M.bProcessFilterEvidencePass ? TEXT("true") : TEXT("false"));
 		Json += FString::Printf(TEXT("\"topology_budget_pass\":%s,"), M.bTopologyBudgetPass ? TEXT("true") : TEXT("false"));
@@ -7721,13 +7888,13 @@ namespace CarrierLab::V2
 		Report += TEXT("Milestone 3 adds source-grounded contact evidence and conservative process-state labels as filters over the Milestone 2 carrier cycle. It does not add terrain, elevation, uplift, erosion, slab pull, rifting, persistent global ownership, prior-owner retention, or any winner resolver for unresolved multi-hit samples. Process labels are reset at rebuild boundaries and are consumed only as transient filters.\n\n");
 
 		Report += TEXT("## Fixture Gates\n\n");
-		Report += TEXT("| fixture | samples | windows | contacts | labels | filtered writes | exhausted | post-filter multi | q1/q2 accepted/rejected | holes w0/final/growth | unassigned/budget | pass | verdict |\n");
+		Report += TEXT("| fixture | samples | windows | contacts | labels | filtered writes | exhausted | post-filter multi | q1/q2 accepted/rejected | holes w0/final/growth/budget | unassigned/budget | pass | verdict |\n");
 		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
 		for (const FCarrierV2Milestone3FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Milestone3Metrics& M = Result.Metrics;
 			Report += FString::Printf(
-				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d/%d | %d/%d/%d | %d/%d | %s | `%s` |\n"),
+				TEXT("| `%s` | %d | %d | %d | %d | %d | %d | %d | %d/%d | %d/%d/%d/%d | %d/%d | %s | `%s` |\n"),
 				*M.FixtureId,
 				M.GlobalSampleCount,
 				M.LifecycleWindowCount,
@@ -7741,6 +7908,7 @@ namespace CarrierLab::V2
 				M.HoleCountWindow0,
 				M.HoleCountFinal,
 				M.HoleCountGrowth,
+				Result.Config.ExpectedMaximumHoleCountGrowth,
 				M.UnassignedTriangleCount,
 				M.UnassignedTriangleBudget,
 				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
@@ -7748,17 +7916,21 @@ namespace CarrierLab::V2
 		}
 
 		Report += TEXT("\n## Contact And Polarity Evidence\n\n");
-		Report += TEXT("| fixture | polarity mode | convergent | divergent | third-plate | O/C | O/O ambiguous | C/C candidate | subducting labels | colliding labels | contact hash |\n");
-		Report += TEXT("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += TEXT("| fixture | polarity mode | convergent | divergent | opening min/mean/max | sign pass | third-plate | O/C | O/O ambiguous | C/C candidate | subducting labels | colliding labels | contact hash |\n");
+		Report += TEXT("|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---|\n");
 		for (const FCarrierV2Milestone3FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Milestone3Metrics& M = Result.Metrics;
 			Report += FString::Printf(
-				TEXT("| `%s` | `%s` | %d | %d | %d | %d | %d | %d | %d | %d | `%s` |\n"),
+				TEXT("| `%s` | `%s` | %d | %d | %.6g/%.6g/%.6g | %s | %d | %d | %d | %d | %d | %d | `%s` |\n"),
 				*M.FixtureId,
 				*M.PolarityMode,
 				M.ConvergentContactCount,
 				M.DivergentContactCount,
+				M.SignedOpeningRateMin,
+				M.SignedOpeningRateMean,
+				M.SignedOpeningRateMax,
+				M.bSignedContactDirectionPass ? TEXT("pass") : TEXT("fail"),
 				M.ThirdPlateContactCount,
 				M.OceanContinentContactCount,
 				M.OceanOceanAmbiguousContactCount,
@@ -7769,14 +7941,14 @@ namespace CarrierLab::V2
 		}
 
 		Report += TEXT("\n## Filter And Gap Decisions\n\n");
-		Report += TEXT("| fixture | raw hits | filtered subducting | filtered colliding | valid writes | filtered single-source | filter exhausted | unresolved multihit | generated oceanic | prior blocked became oceanic | owner/resolver reads | policy pass |\n");
-		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		Report += TEXT("| fixture | raw hits | filtered subducting | filtered colliding | valid writes | filtered single-source | filter exhausted | unresolved multihit | q1/q2 accepted | rejected opening/process/same | generated oceanic | prior blocked became oceanic | prior blocked non-opening oceanic | owner/resolver reads | policy pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
 		for (const FCarrierV2Milestone3FixtureResult& Result : Suite.Results)
 		{
 			const FCarrierV2Milestone3Metrics& M = Result.Metrics;
 			const int32 OwnerResolvers = M.PriorOwnerReadCount + M.GlobalOwnerReadCount + M.CentroidPrimaryResolutionCount + M.RandomPrimaryResolutionCount + M.NearestPrimaryResolutionCount;
 			Report += FString::Printf(
-				TEXT("| `%s` | %lld | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n"),
+				TEXT("| `%s` | %lld | %d | %d | %d | %d | %d | %d | %d | %d/%d/%d | %d | %d | %d | %d | %s |\n"),
 				*M.FixtureId,
 				M.RawHitCountTotal,
 				M.FilteredSubductingHitCount,
@@ -7785,12 +7957,18 @@ namespace CarrierLab::V2
 				M.FilteredSingleSourceWriteCount,
 				M.FilterExhaustedSampleCount,
 				M.PostFilterUnresolvedMultihitCount,
+				M.Q1Q2DivergentAcceptedCount,
+				M.Q1Q2RejectedByOpeningRateCount,
+				M.Q1Q2RejectedByProcessFilterCount,
+				M.Q1Q2RejectedBySamePlateCount,
 				M.GeneratedOceanicCount,
 				M.PreviouslyBlockedBecameQ1Q2OceanicCount,
+				M.PreviouslyBlockedQ1Q2OceanicNonOpeningCount,
 				OwnerResolvers,
-				(M.bOverlapFilterPolicyPass && M.bNoForbiddenFallbackPass && M.bHolePumpTripwirePass) ? TEXT("pass") : TEXT("fail"));
+				(M.bOverlapFilterPolicyPass && M.bNoForbiddenFallbackPass && M.bHolePumpTripwirePass && M.bScalePumpSafetyPass) ? TEXT("pass") : TEXT("fail"));
 		}
-		Report += TEXT("\nPrior-blocked note: `prior blocked became oceanic` is diagnostic only. M3 does not use previous blocked sample ids as behavior or authority; q1/q2 generation is decided from the current boundary pair, current relative opening, and current process labels. Nonzero scale counts remain a Milestone 4 watch item for persistent ridge/contact identity, not an ownership fallback.\n");
+		Report += TEXT("\nPrior-blocked note: previous blocked sample ids are runner-owned diagnostics only and never feed q1/q2 behavior or authority. M3R gates the dangerous subset, `prior blocked non-opening oceanic`, to zero; nonzero `prior blocked became oceanic` is acceptable only when the current boundary pair is opening and unfiltered. Total hole growth is budgeted, not zeroed, because ocean-ocean age polarity and continental collision material transfer remain explicit M4 work.\n");
+		Report += TEXT("\nM2 carryover note: the historical M2 prior-owner negative control remains relabeled as a source-inspection disclosure, not an active detector. M3R still requires all prior-owner/global-owner/resolver read counters to stay zero.\n");
 
 		Report += TEXT("\n## Pinned M2 Baselines\n\n");
 		Report += TEXT("| fixture | compared | mismatches | pass |\n|---|---:|---:|---|\n");
@@ -7848,6 +8026,7 @@ namespace CarrierLab::V2
 		Report += FString::Printf(TEXT("- Pinned M2 baseline gate: `%s`\n"), Suite.bPinnedM2BaselinePass ? TEXT("pass") : TEXT("fail"));
 		Report += FString::Printf(TEXT("- Micro gate: `%s`\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
 		Report += FString::Printf(TEXT("- 50k scale gate: `%s`\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += TEXT("- M3R hard gates: signed direction controls, auto O/C reachability where configured, q1/q2 rejection split, and non-opening prior-blocked oceanic safety are enforced by fixture predicates, not prose.\n");
 		Report += FString::Printf(TEXT("- 250k attempted: `%s`, pass: `%s`\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
 		Report += FString::Printf(
 			TEXT("- 500k optional characterization attempted: `%s`, pass: `%s`\n"),
