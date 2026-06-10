@@ -1470,6 +1470,293 @@ namespace CarrierLab::V2
 		FString NotAttempted500kReason;
 	};
 
+	struct FCarrierV2Milestone4PinnedM3Baseline
+	{
+		FString FixtureId;
+		FString ExpectedPostCycleAuthorityHash;
+		FString ExpectedContactLabelHash;
+		FString ExpectedResampleDecisionHash;
+		FString ExpectedRebuiltTopologyHash;
+	};
+
+	struct FCarrierV2Milestone4CrustFieldRecord
+	{
+		int32 PlateId = INDEX_NONE;
+		int32 LocalVertexId = INDEX_NONE;
+		int32 SourceSampleId = INDEX_NONE;
+		double ElevationKm = 0.0;
+		double OceanicAgeMa = 0.0;
+		bool bOceanicAgeValid = false;
+		FVector3d RidgeDirection = FVector3d::ZeroVector;
+		FVector3d FoldDirection = FVector3d::ZeroVector;
+		bool bRidgeDirectionValid = false;
+		bool bFoldDirectionValid = false;
+		FString Provenance = TEXT("unset");
+	};
+
+	struct FCarrierV2Milestone4SampleRecord
+	{
+		int32 SampleId = INDEX_NONE;
+		int32 RawHitCount = 0;
+		int32 ValidHitCount = 0;
+		int32 AssignedPlateId = INDEX_NONE;
+		bool bSingleHitWritten = false;
+		bool bGeneratedOceanic = false;
+		bool bDeferred = false;
+		bool bPreviouslyBlockedSample = false;
+		bool bPreviouslyBlockedBecameQ1Q2Oceanic = false;
+		bool bDangerousNonOpeningQ1Q2Oceanic = false;
+		double Q1Q2OpeningRate = 0.0;
+		double RidgeDirectionAngularResidualDeg = 0.0;
+		double ScalarOracleResidual = 0.0;
+		double VectorTangentResidual = 0.0;
+		double VectorNormResidual = 0.0;
+		FString SelectionProvenance = TEXT("unset");
+	};
+
+	struct FCarrierV2Milestone4TrackingRecord
+	{
+		int32 WindowIndex = 0;
+		int32 StepIndex = 0;
+		int32 PlateA = INDEX_NONE;
+		int32 PlateB = INDEX_NONE;
+		int32 LocalTriangleA = INDEX_NONE;
+		int32 LocalTriangleB = INDEX_NONE;
+		uint64 FrontKey = 0;
+		double SignedOpeningRate = 0.0;
+		double StepDistanceKm = 0.0;
+		double AccumulatedDistanceKm = 0.0;
+		double OracleDistanceKm = 0.0;
+		FString TrackingClass = TEXT("unset");
+	};
+
+	struct FCarrierV2Milestone4Config
+	{
+		FCarrierV2Milestone3Config ProcessConfig;
+		FString FixtureId = TEXT("M4-FX-001");
+		FString FixtureName = TEXT("PinnedM3RBaseline");
+		FString FieldStoragePolicyId = TEXT("plate_local_m4_crust_field_layer");
+		FString TrackingPolicyId = TEXT("per_step_rederived_fronts_no_persistent_ids");
+		FString AgePolarityPolicyId = TEXT("ocean_ocean_older_age_subducts_equal_defers");
+		TArray<FCarrierV2Milestone4PinnedM3Baseline> PinnedM3Baselines;
+		bool bRunPinnedM3BaselinesOnly = false;
+		bool bRunM3RCharacterizationOnly = false;
+		bool bEnableFieldStorage = true;
+		bool bUseNeutralFields = false;
+		bool bScaleCharacterization = false;
+		bool bPaperRegimeCharacterization = false;
+		bool bRequirePinnedM3Baseline = false;
+		bool bRequireFieldInertNoop = false;
+		bool bRequireScalarTransfer = false;
+		bool bRequireVectorRotation = false;
+		bool bRequireVectorTangent = false;
+		bool bRequireQ1Q2OceanicFields = false;
+		bool bRequireOceanOceanAgePolarity = false;
+		bool bRequireOceanOceanEqualAgeDeferral = false;
+		bool bRequireOnlyDivergentContacts = false;
+		bool bRequireMixedSignalSamePair = false;
+		bool bRequireDistanceOracle = false;
+		bool bRequireTrackingReset = false;
+		bool bRequireFrontContinuityNoIds = false;
+		bool bRequireScaleFieldCycle = false;
+		bool bRequirePaperRegimeCharacterization = false;
+		int32 ExpectedMinimumFieldTransfers = 0;
+		int32 ExpectedMinimumGeneratedOceanicFields = 0;
+		int32 ExpectedMinimumOceanOceanAgeContacts = 0;
+		int32 ExpectedMinimumEqualAgeDeferrals = 0;
+		int32 ExpectedMinimumDivergentContacts = 0;
+		int32 ExpectedMinimumMixedSignalPairs = 0;
+		int32 ExpectedMinimumActiveFronts = 0;
+		int32 ExpectedMinimumTrackingResets = 0;
+		double ScalarOracleTolerance = 1.0e-9;
+		double VectorOracleTolerance = 1.0e-9;
+		double RidgeDirectionToleranceDeg = 1.0e-4;
+		double TangentTolerance = 1.0e-9;
+		double DistanceOracleToleranceKm = 1.0e-6;
+		double MinimumFrontContinuityRatio = 0.75;
+		double PaperResampleCycleBudgetMs = 3580.0;
+		double ProcessTrackingBudgetMs = 260.0;
+	};
+
+	struct FCarrierV2Milestone4Metrics
+	{
+		FString RunId;
+		FString StageId = TEXT("M4");
+		FString FixtureId;
+		FString FixtureName;
+		FString FixtureKind;
+		FString FieldStoragePolicyId;
+		FString TrackingPolicyId;
+		FString AgePolarityPolicyId;
+		FString ConfigHash;
+		FString M3RBaselineHash;
+		FString PreFieldAuthorityHash;
+		FString PostFieldAuthorityHash;
+		FString VectorFieldHash;
+		FString ProcessTrackingHash;
+		FString ResampleFieldHash;
+		FString RebuiltTopologyHash;
+		FString MetricsHash;
+		FString ReplayPostFieldAuthorityHash;
+		FString ReplayVectorFieldHash;
+		FString ReplayProcessTrackingHash;
+		FString ReplayResampleFieldHash;
+		FString ReplayRebuiltTopologyHash;
+		int32 GlobalSampleCount = 0;
+		int32 GlobalTriangleCount = 0;
+		int32 PlateCount = 0;
+		int32 LifecycleWindowCount = 0;
+		int32 MotionStepCount = 0;
+		double DtMa = 0.0;
+		double TotalMotionMa = 0.0;
+		double V0MmPerYr = 100.0;
+		double VmMmPerYr = 0.0;
+		double CadenceAlpha = 0.0;
+		double CadenceDeltaT = 0.0;
+		int32 PinnedM3BaselineComparedCount = 0;
+		int32 PinnedM3BaselineMismatchCount = 0;
+		int32 FieldVertexCount = 0;
+		int32 FieldTransferSingleSourceCount = 0;
+		int32 FieldTransferQ1Q2Count = 0;
+		int32 FieldTransferDeferredCount = 0;
+		int32 FieldTransferFilterExhaustedCount = 0;
+		int32 FieldTransferUnresolvedCount = 0;
+		double ElevationScalarResidualMax = 0.0;
+		double OceanicAgeScalarResidualMax = 0.0;
+		double AgeAdvanceTotalMa = 0.0;
+		int32 Q1Q2AgeResetCount = 0;
+		int32 InvalidAgeCount = 0;
+		int32 OceanOceanAgePolarityContactCount = 0;
+		int32 OceanOceanOlderSubductingLabelCount = 0;
+		int32 OceanOceanYoungerSubductingLabelCount = 0;
+		int32 OceanOceanEqualAgeDeferralCount = 0;
+		int32 OceanContinentContactCount = 0;
+		int32 ContinentalCollisionCandidateCount = 0;
+		int32 ThirdPlateContactCount = 0;
+		int32 ConvergentContactCount = 0;
+		int32 DivergentContactCount = 0;
+		int32 TransformLowMarginContactCount = 0;
+		int32 MixedSignalSamePairCount = 0;
+		double SignedOpeningRateMin = 0.0;
+		double SignedOpeningRateMax = 0.0;
+		double VectorRotationResidualMax = 0.0;
+		double VectorTangentResidualMax = 0.0;
+		double VectorNormResidualMax = 0.0;
+		double Q1Q2RidgeDirectionResidualDegMax = 0.0;
+		int32 RawHitCountTotal = 0;
+		int32 ValidSingleHitWriteCount = 0;
+		int32 GeneratedOceanicCount = 0;
+		int32 Q1Q2DivergentAcceptedCount = 0;
+		int32 Q1Q2RejectedByOpeningRateCount = 0;
+		int32 Q1Q2RejectedByProcessFilterCount = 0;
+		int32 Q1Q2RejectedBySamePlateCount = 0;
+		int32 PreviouslyBlockedSampleCount = 0;
+		int32 PreviouslyBlockedBecameQ1Q2OceanicCount = 0;
+		int32 DangerousNonOpeningQ1Q2OceanicCount = 0;
+		int32 HoleCountWindow0 = 0;
+		int32 HoleCountFinal = 0;
+		int32 HoleCountGrowth = 0;
+		int32 UnassignedTriangleCount = 0;
+		int32 UnassignedTriangleBudget = 0;
+		int32 ActiveFrontCount = 0;
+		int32 FrontBirthCount = 0;
+		int32 FrontRetirementCount = 0;
+		int32 TrackingResetCount = 0;
+		int32 PersistentFrontIdStoreCount = 0;
+		int32 FrontContinuityMatchedCount = 0;
+		int32 FrontContinuityCandidateCount = 0;
+		double FrontContinuityRatio = 0.0;
+		double DistanceMinKm = 0.0;
+		double DistanceMeanKm = 0.0;
+		double DistanceMaxKm = 0.0;
+		double DistanceOracleResidualKmMax = 0.0;
+		double SubductionMatrixDensity = 0.0;
+		int32 SubductionMatrixEntryCount = 0;
+		int32 SubductionMatrixResetCount = 0;
+		int32 PriorOwnerFallbackCount = 0;
+		int32 GlobalOwnerReadCount = 0;
+		int32 CentroidPrimaryResolutionCount = 0;
+		int32 RandomPrimaryResolutionCount = 0;
+		int32 NearestPrimaryResolutionCount = 0;
+		int32 OwnershipRepairDuringResampleCount = 0;
+		int32 TerrainBeautyMutationCount = 0;
+		int32 SubductionMaterialMutationCount = 0;
+		int32 CollisionMaterialMutationCount = 0;
+		double BuildSubstrateMs = 0.0;
+		double BuildPlateLocalMs = 0.0;
+		double AabbBuildMs = 0.0;
+		double MotionApplyMs = 0.0;
+		double VectorRotationMs = 0.0;
+		double TrackingMs = 0.0;
+		double ContactProcessMs = 0.0;
+		double ResampleFieldMs = 0.0;
+		double TopologyRebuildMs = 0.0;
+		double DiagnosticsMs = 0.0;
+		double FullCarrierCycleMs = 0.0;
+		double TotalMs = 0.0;
+		double PeakMemoryMb = 0.0;
+		bool bPinnedM3BaselinePass = false;
+		bool bFieldInertNoopPass = true;
+		bool bScalarTransferPass = true;
+		bool bVectorRotationPass = true;
+		bool bVectorTangentPass = true;
+		bool bQ1Q2OceanicFieldPass = true;
+		bool bOceanOceanAgePolarityPass = true;
+		bool bOceanOceanEqualAgeDeferralPass = true;
+		bool bSignedContactDirectionPass = true;
+		bool bMixedSignalSamePairPass = true;
+		bool bDistanceOraclePass = true;
+		bool bTrackingResetPass = true;
+		bool bFrontContinuityNoIdsPass = true;
+		bool bPaperRegimeCharacterizationPass = true;
+		bool bScaleFieldCyclePass = true;
+		bool bDangerousPumpAuditPass = true;
+		bool bTopologyBudgetPass = true;
+		bool bHoleGrowthBudgetPass = true;
+		bool bNoForbiddenFallbackPass = true;
+		bool bPerformanceBudgetPass = true;
+		bool bReplayDeterministic = false;
+		bool bFixturePass = false;
+		bool bStageGatePass = false;
+		FString Verdict = TEXT("REVISE_MILESTONE_4_FIXTURE");
+	};
+
+	struct FCarrierV2Milestone4FixtureResult
+	{
+		FCarrierV2Milestone4Config Config;
+		FCarrierV2Milestone4Metrics Metrics;
+		TArray<FCarrierV2Milestone4CrustFieldRecord> FieldRecords;
+		TArray<FCarrierV2Milestone4SampleRecord> SampleRecords;
+		TArray<FCarrierV2Milestone4TrackingRecord> TrackingRecords;
+		TArray<FCarrierV2Milestone3ContactRecord> Contacts;
+		TArray<FCarrierV2Milestone3TriangleLabelRecord> TriangleLabels;
+		TArray<FCarrierV2Plate> RebuiltPlates;
+		bool bCompleted = false;
+		FString Error;
+	};
+
+	struct FCarrierV2Milestone4SuiteResult
+	{
+		TArray<FCarrierV2Milestone4FixtureResult> Results;
+		bool bMicroGatePass = false;
+		bool bPinnedM3BaselinePass = false;
+		bool bPaperRegimeCharacterizationPass = false;
+		bool bScale50kPass = false;
+		bool bAttempted100k = false;
+		bool bScale100kPass = false;
+		bool bAttempted250k = false;
+		bool bScale250kPass = false;
+		bool bAttempted500k = false;
+		bool bScale500kPass = false;
+		bool bStageGatePass = false;
+		FString Verdict = TEXT("REVISE_MILESTONE_4");
+		FString OutputRoot;
+		FString MetricsPath;
+		FString ReportPath;
+		FString NotAttempted100kReason;
+		FString NotAttempted500kReason;
+	};
+
 	struct FCarrierV2FoundationStepperSampleVisual
 	{
 		int32 SampleId = INDEX_NONE;
@@ -1620,6 +1907,20 @@ namespace CarrierLab::V2
 		static FString MetricsToJson(const FCarrierV2Milestone3FixtureResult& Result);
 		static FString BuildCheckpointReport(
 			const FCarrierV2Milestone3SuiteResult& Suite,
+			const FString& CommandLine,
+			const FString& CommitSha);
+	};
+
+	class CARRIERLAB_API FCarrierV2Milestone4
+	{
+	public:
+		static TArray<FCarrierV2Milestone4Config> MakeMicroFixtureConfigs();
+		static FCarrierV2Milestone4Config MakePaperRegimeCharacterizationConfig();
+		static FCarrierV2Milestone4Config MakeScaleConfig(int32 SampleCount, int32 LifecycleWindowCount, bool bComparisonScale);
+		static bool RunFixtureWithReplay(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4FixtureResult& OutResult);
+		static FString MetricsToJson(const FCarrierV2Milestone4FixtureResult& Result);
+		static FString BuildCheckpointReport(
+			const FCarrierV2Milestone4SuiteResult& Suite,
 			const FString& CommandLine,
 			const FString& CommitSha);
 	};

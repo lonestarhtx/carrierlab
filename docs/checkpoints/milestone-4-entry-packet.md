@@ -264,7 +264,7 @@ M4 must explicitly handle the four M3R watch items.
 | `M4-FX-004-VectorRotationOracle` | `r` and `f` rotate with plate motion | independent Rodrigues/tangent oracle matches |
 | `M4-FX-005-VectorInterpolationAndTangent` | interpolated vectors remain tangent and normalized when nonzero | tangent residual and norm gates pass |
 | `M4-FX-006-Q1Q2OceanicFields` | generated q1/q2 crust writes age zero and ridge direction | `a_o=0`, `r` matches `(p-qGamma)x p` |
-| `M4-FX-007-OceanOceanAgePolarity` | younger oceanic side subducts or is labeled according to the approved polarity rule | polarity swaps when ages swap |
+| `M4-FX-007-OceanOceanAgePolarity` | older oceanic side subducts, matching the paper's O/O polarity rule | older-side label count is positive and younger-side label count is zero |
 | `M4-FX-008-OceanOceanEqualAgeDefers` | equal or missing ages do not invent O/O polarity | no filter-active O/O labels |
 | `M4-FX-009-OpeningContactOnly` | genuinely opening contact class is covered at micro scale | divergent contacts > 0 and convergent contacts == 0 |
 | `M4-FX-010-MixedSignalSamePair` | same plate pair can carry convergent and divergent local contacts | both classes present for one pair; filtering remains local |
@@ -363,7 +363,7 @@ investigation note before adding more M4 behavior.
 | `M4-POL-FRONT-CONTINUITY-NO-IDS` | source_implicit | front continuity is measured by re-derived geometry, not persistent identity | no retirement; this is the intended guardrail |
 | `M4-POL-ZERO-FOLD-NEUTRAL` | source_silent | zero `f` is allowed until M5A/M5B adds fold updates | retire or narrow when fold mutation lands |
 | `M4-POL-RIDGE-DIRECTION-FOR-GENERATED-OCEANIC` | source_explicit | q1/q2 generated oceanic sets `r = (p - qGamma) x p` | permanent |
-| `M4-POL-OCEAN-OCEAN-AGE-POLARITY` | source_implicit | O/O polarity uses local oceanic age; equal/missing age defers | permanent unless thesis reread finds sharper rule |
+| `M4-POL-OCEAN-OCEAN-AGE-POLARITY` | source_explicit | O/O polarity uses local oceanic age: older oceanic crust subducts; equal/missing age defers | permanent unless thesis reread finds sharper rule |
 | `M4-POL-HOLE-GROWTH-BREACH-PROTOCOL` | diagnostic | paper-regime breach is classified as expected debt only for O/O/C/C deferral, not dangerous q1/q2 | retire once M5 drains debt |
 | `M4-POL-NONOPENING-PUMP-INDEPENDENT-AUDIT` | diagnostic | dangerous subset is audited from output records, not only from coupled branch counters | may become M5C live gate |
 

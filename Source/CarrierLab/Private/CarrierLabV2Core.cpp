@@ -8045,6 +8045,1942 @@ namespace CarrierLab::V2
 		return Report;
 	}
 
+	namespace
+	{
+		constexpr double M4DefaultV0MmPerYr = 100.0;
+
+		uint64 HashMilestone4Config(const FCarrierV2Milestone4Config& Config)
+		{
+			uint64 Hash = HashMilestone3Config(Config.ProcessConfig);
+			HashMixString(Hash, Config.FixtureId);
+			HashMixString(Hash, Config.FixtureName);
+			HashMixString(Hash, Config.FieldStoragePolicyId);
+			HashMixString(Hash, Config.TrackingPolicyId);
+			HashMixString(Hash, Config.AgePolarityPolicyId);
+			HashMixInt(Hash, Config.bRunPinnedM3BaselinesOnly ? 1 : 0);
+			HashMixInt(Hash, Config.bRunM3RCharacterizationOnly ? 1 : 0);
+			HashMixInt(Hash, Config.bEnableFieldStorage ? 1 : 0);
+			HashMixInt(Hash, Config.bUseNeutralFields ? 1 : 0);
+			HashMixInt(Hash, Config.bScaleCharacterization ? 1 : 0);
+			HashMixInt(Hash, Config.bPaperRegimeCharacterization ? 1 : 0);
+			HashMixInt(Hash, Config.bRequirePinnedM3Baseline ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireFieldInertNoop ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireScalarTransfer ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireVectorRotation ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireVectorTangent ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireQ1Q2OceanicFields ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireOceanOceanAgePolarity ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireOceanOceanEqualAgeDeferral ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireOnlyDivergentContacts ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireMixedSignalSamePair ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireDistanceOracle ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireTrackingReset ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireFrontContinuityNoIds ? 1 : 0);
+			HashMixInt(Hash, Config.bRequireScaleFieldCycle ? 1 : 0);
+			HashMixInt(Hash, Config.bRequirePaperRegimeCharacterization ? 1 : 0);
+			HashMixDouble(Hash, Config.ScalarOracleTolerance);
+			HashMixDouble(Hash, Config.VectorOracleTolerance);
+			HashMixDouble(Hash, Config.RidgeDirectionToleranceDeg);
+			HashMixDouble(Hash, Config.TangentTolerance);
+			HashMixDouble(Hash, Config.DistanceOracleToleranceKm);
+			HashMixDouble(Hash, Config.MinimumFrontContinuityRatio);
+			HashMixDouble(Hash, Config.PaperResampleCycleBudgetMs);
+			HashMixDouble(Hash, Config.ProcessTrackingBudgetMs);
+			return Hash;
+		}
+
+		uint64 Milestone4VertexKey(const int32 PlateId, const int32 LocalVertexId)
+		{
+			return (static_cast<uint64>(static_cast<uint32>(PlateId)) << 32) |
+				static_cast<uint64>(static_cast<uint32>(LocalVertexId));
+		}
+
+		uint64 Milestone4FrontKeyFromParts(
+			const int32 PlateA,
+			const int32 LocalTriangleA,
+			const int32 PlateB,
+			const int32 LocalTriangleB)
+		{
+			int32 FirstPlate = PlateA;
+			int32 FirstTriangle = LocalTriangleA;
+			int32 SecondPlate = PlateB;
+			int32 SecondTriangle = LocalTriangleB;
+			if (SecondPlate < FirstPlate || (SecondPlate == FirstPlate && SecondTriangle < FirstTriangle))
+			{
+				Swap(FirstPlate, SecondPlate);
+				Swap(FirstTriangle, SecondTriangle);
+			}
+
+			uint64 Hash = FnvOffset;
+			HashMixInt(Hash, FirstPlate);
+			HashMixInt(Hash, FirstTriangle);
+			HashMixInt(Hash, SecondPlate);
+			HashMixInt(Hash, SecondTriangle);
+			return Hash;
+		}
+
+		uint64 Milestone4FrontKey(const FCarrierV2Milestone3ContactRecord& Contact)
+		{
+			return Milestone4FrontKeyFromParts(
+				Contact.PlateA,
+				Contact.LocalTriangleA,
+				Contact.PlateB,
+				Contact.LocalTriangleB);
+		}
+
+		FVector3d RotateVectorByAxisAngle(const FVector3d& Vector, const FVector3d& Axis, const double AngleRad)
+		{
+			const FVector3d SafeAxis = SafeMotionAxis(Axis);
+			const double C = FMath::Cos(AngleRad);
+			const double S = FMath::Sin(AngleRad);
+			return Vector * C +
+				FVector3d::CrossProduct(SafeAxis, Vector) * S +
+				SafeAxis * (FVector3d::DotProduct(SafeAxis, Vector) * (1.0 - C));
+		}
+
+		bool ProjectMilestone4Tangent(
+			const FVector3d& UnitPosition,
+			const FVector3d& Vector,
+			FVector3d& OutTangent,
+			const double ZeroTolerance = 1.0e-12)
+		{
+			const FVector3d P = UnitPosition.GetSafeNormal();
+			const FVector3d Tangent = Vector - P * FVector3d::DotProduct(P, Vector);
+			const double Size = Tangent.Size();
+			if (Size <= ZeroTolerance)
+			{
+				OutTangent = FVector3d::ZeroVector;
+				return false;
+			}
+			OutTangent = Tangent / Size;
+			return true;
+		}
+
+		FVector3d DeterministicMilestone4Tangent(const FVector3d& UnitPosition, const int32 Salt)
+		{
+			const FVector3d Seed = FVector3d(
+				0.37 + 0.013 * static_cast<double>((Salt % 17) + 1),
+				0.53 + 0.007 * static_cast<double>((Salt % 29) + 1),
+				0.71 + 0.011 * static_cast<double>((Salt % 31) + 1)).GetSafeNormal();
+			FVector3d Tangent;
+			if (!ProjectMilestone4Tangent(UnitPosition, Seed, Tangent))
+			{
+				ProjectMilestone4Tangent(UnitPosition, FVector3d(0.0, 1.0, 0.0), Tangent);
+			}
+			return Tangent;
+		}
+
+		FCarrierV2Milestone4CrustFieldRecord MakeMilestone4InitialField(
+			const FCarrierV2PlateVertex& Vertex,
+			const int32 PlateId,
+			const bool bNeutral)
+		{
+			FCarrierV2Milestone4CrustFieldRecord Field;
+			Field.PlateId = PlateId;
+			Field.LocalVertexId = Vertex.LocalVertexId;
+			Field.SourceSampleId = Vertex.SourceSampleId;
+			Field.Provenance = bNeutral ? TEXT("m4_neutral_field_noop") : TEXT("m4_plate_local_initial_field");
+			if (bNeutral)
+			{
+				return Field;
+			}
+
+			const bool bOceanic = Vertex.Material.ContinentalFraction < 0.5;
+			Field.ElevationKm = bOceanic
+				? -4.0 - 0.001 * static_cast<double>((Vertex.SourceSampleId + PlateId) % 97)
+				: 0.8 + 0.001 * static_cast<double>((Vertex.SourceSampleId + PlateId) % 113);
+			Field.bOceanicAgeValid = bOceanic;
+			Field.OceanicAgeMa = bOceanic ? 5.0 + static_cast<double>((Vertex.SourceSampleId * 7 + PlateId * 13) % 120) : 0.0;
+			if (bOceanic)
+			{
+				Field.RidgeDirection = DeterministicMilestone4Tangent(Vertex.UnitPosition, Vertex.SourceSampleId + PlateId * 101);
+				Field.bRidgeDirectionValid = true;
+			}
+			Field.FoldDirection = FVector3d::ZeroVector;
+			Field.bFoldDirectionValid = false;
+			return Field;
+		}
+
+		void InitializeMilestone4Metrics(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4Metrics& Metrics)
+		{
+			Metrics = FCarrierV2Milestone4Metrics();
+			Metrics.RunId = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+			Metrics.FixtureId = Config.FixtureId;
+			Metrics.FixtureName = Config.FixtureName;
+			Metrics.FixtureKind = FixtureKindName(Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.FixtureKind);
+			Metrics.FieldStoragePolicyId = Config.FieldStoragePolicyId;
+			Metrics.TrackingPolicyId = Config.TrackingPolicyId;
+			Metrics.AgePolarityPolicyId = Config.AgePolarityPolicyId;
+			Metrics.GlobalSampleCount = Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.SampleCount;
+			Metrics.PlateCount = Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.PlateCount;
+			Metrics.LifecycleWindowCount = Config.ProcessConfig.CarrierCycleConfig.LifecycleWindowCount;
+			Metrics.MotionStepCount = Config.ProcessConfig.CarrierCycleConfig.MotionConfig.MotionStepCount;
+			Metrics.DtMa = Config.ProcessConfig.CarrierCycleConfig.MotionConfig.DtMa;
+			Metrics.TotalMotionMa = Metrics.DtMa * static_cast<double>(Metrics.MotionStepCount);
+			Metrics.ConfigHash = HashToString(HashMilestone4Config(Config));
+			Metrics.UnassignedTriangleBudget = Config.ProcessConfig.UnassignedTriangleBudget;
+			if (Config.bScaleCharacterization && !Config.bPaperRegimeCharacterization && Metrics.UnassignedTriangleBudget <= 0)
+			{
+				Metrics.UnassignedTriangleBudget = FMath::Max(1, Metrics.GlobalSampleCount / 3);
+			}
+			Metrics.CadenceDeltaT = Metrics.TotalMotionMa;
+			Metrics.V0MmPerYr = M4DefaultV0MmPerYr;
+			Metrics.VmMmPerYr = 0.0;
+			for (const FCarrierV2MotionSpec& Motion : Config.ProcessConfig.CarrierCycleConfig.MotionConfig.PlateMotions)
+			{
+				Metrics.VmMmPerYr = FMath::Max(
+					Metrics.VmMmPerYr,
+					FMath::Abs(Motion.AngularSpeedRadPerMa) * Config.ProcessConfig.CarrierCycleConfig.MotionConfig.PlanetRadiusKm);
+			}
+			Metrics.CadenceAlpha = Metrics.V0MmPerYr > 1.0e-12
+				? FMath::Clamp(Metrics.VmMmPerYr / Metrics.V0MmPerYr, 0.0, 1.0)
+				: 0.0;
+		}
+
+		uint64 HashMilestone4FieldRecord(uint64 Hash, const FCarrierV2Milestone4CrustFieldRecord& Field)
+		{
+			HashMixInt(Hash, Field.PlateId);
+			HashMixInt(Hash, Field.LocalVertexId);
+			HashMixInt(Hash, Field.SourceSampleId);
+			HashMixDouble(Hash, Field.ElevationKm);
+			HashMixDouble(Hash, Field.OceanicAgeMa);
+			HashMixInt(Hash, Field.bOceanicAgeValid ? 1 : 0);
+			HashMixDouble(Hash, Field.RidgeDirection.X);
+			HashMixDouble(Hash, Field.RidgeDirection.Y);
+			HashMixDouble(Hash, Field.RidgeDirection.Z);
+			HashMixDouble(Hash, Field.FoldDirection.X);
+			HashMixDouble(Hash, Field.FoldDirection.Y);
+			HashMixDouble(Hash, Field.FoldDirection.Z);
+			HashMixInt(Hash, Field.bRidgeDirectionValid ? 1 : 0);
+			HashMixInt(Hash, Field.bFoldDirectionValid ? 1 : 0);
+			HashMixString(Hash, Field.Provenance);
+			return Hash;
+		}
+
+		TArray<FCarrierV2Milestone4CrustFieldRecord> SortedMilestone4Fields(
+			const TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields)
+		{
+			TArray<FCarrierV2Milestone4CrustFieldRecord> Sorted;
+			Fields.GenerateValueArray(Sorted);
+			Sorted.Sort([](const FCarrierV2Milestone4CrustFieldRecord& A, const FCarrierV2Milestone4CrustFieldRecord& B)
+			{
+				if (A.PlateId != B.PlateId) { return A.PlateId < B.PlateId; }
+				if (A.LocalVertexId != B.LocalVertexId) { return A.LocalVertexId < B.LocalVertexId; }
+				return A.SourceSampleId < B.SourceSampleId;
+			});
+			return Sorted;
+		}
+
+		uint64 HashMilestone4Fields(const FCarrierV2Milestone4Config& Config, const TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields)
+		{
+			uint64 Hash = HashMilestone4Config(Config);
+			for (const FCarrierV2Milestone4CrustFieldRecord& Field : SortedMilestone4Fields(Fields))
+			{
+				Hash = HashMilestone4FieldRecord(Hash, Field);
+			}
+			return Hash;
+		}
+
+		uint64 HashMilestone4Samples(const FCarrierV2Milestone4Config& Config, const TArray<FCarrierV2Milestone4SampleRecord>& Records)
+		{
+			uint64 Hash = HashMilestone4Config(Config);
+			for (const FCarrierV2Milestone4SampleRecord& Record : Records)
+			{
+				HashMixInt(Hash, Record.SampleId);
+				HashMixInt(Hash, Record.RawHitCount);
+				HashMixInt(Hash, Record.ValidHitCount);
+				HashMixInt(Hash, Record.AssignedPlateId);
+				HashMixInt(Hash, Record.bSingleHitWritten ? 1 : 0);
+				HashMixInt(Hash, Record.bGeneratedOceanic ? 1 : 0);
+				HashMixInt(Hash, Record.bDeferred ? 1 : 0);
+				HashMixInt(Hash, Record.bPreviouslyBlockedSample ? 1 : 0);
+				HashMixInt(Hash, Record.bPreviouslyBlockedBecameQ1Q2Oceanic ? 1 : 0);
+				HashMixInt(Hash, Record.bDangerousNonOpeningQ1Q2Oceanic ? 1 : 0);
+				HashMixDouble(Hash, Record.Q1Q2OpeningRate);
+				HashMixDouble(Hash, Record.RidgeDirectionAngularResidualDeg);
+				HashMixDouble(Hash, Record.ScalarOracleResidual);
+				HashMixDouble(Hash, Record.VectorTangentResidual);
+				HashMixDouble(Hash, Record.VectorNormResidual);
+				HashMixString(Hash, Record.SelectionProvenance);
+			}
+			return Hash;
+		}
+
+		uint64 HashMilestone4Tracking(const FCarrierV2Milestone4Config& Config, const TArray<FCarrierV2Milestone4TrackingRecord>& Records)
+		{
+			uint64 Hash = HashMilestone4Config(Config);
+			for (const FCarrierV2Milestone4TrackingRecord& Record : Records)
+			{
+				HashMixInt(Hash, Record.WindowIndex);
+				HashMixInt(Hash, Record.StepIndex);
+				HashMixInt(Hash, Record.PlateA);
+				HashMixInt(Hash, Record.PlateB);
+				HashMixInt(Hash, Record.LocalTriangleA);
+				HashMixInt(Hash, Record.LocalTriangleB);
+				HashMixInt(Hash, static_cast<int32>(Record.FrontKey >> 32));
+				HashMixInt(Hash, static_cast<int32>(Record.FrontKey & 0xffffffffULL));
+				HashMixDouble(Hash, Record.SignedOpeningRate);
+				HashMixDouble(Hash, Record.StepDistanceKm);
+				HashMixDouble(Hash, Record.AccumulatedDistanceKm);
+				HashMixDouble(Hash, Record.OracleDistanceKm);
+				HashMixString(Hash, Record.TrackingClass);
+			}
+			return Hash;
+		}
+
+		uint64 HashMilestone4Metrics(const FCarrierV2Milestone4Metrics& M, const bool bIncludeReplay)
+		{
+			uint64 Hash = FnvOffset;
+			HashMixString(Hash, M.ConfigHash);
+			HashMixString(Hash, M.M3RBaselineHash);
+			HashMixString(Hash, M.PostFieldAuthorityHash);
+			HashMixString(Hash, M.VectorFieldHash);
+			HashMixString(Hash, M.ProcessTrackingHash);
+			HashMixString(Hash, M.ResampleFieldHash);
+			HashMixString(Hash, M.RebuiltTopologyHash);
+			HashMixInt(Hash, M.PinnedM3BaselineMismatchCount);
+			HashMixInt(Hash, M.FieldVertexCount);
+			HashMixInt(Hash, M.FieldTransferSingleSourceCount);
+			HashMixInt(Hash, M.FieldTransferQ1Q2Count);
+			HashMixInt(Hash, M.DangerousNonOpeningQ1Q2OceanicCount);
+			HashMixInt(Hash, M.OceanOceanAgePolarityContactCount);
+			HashMixInt(Hash, M.OceanOceanOlderSubductingLabelCount);
+			HashMixInt(Hash, M.OceanOceanYoungerSubductingLabelCount);
+			HashMixInt(Hash, M.OceanOceanEqualAgeDeferralCount);
+			HashMixInt(Hash, M.MixedSignalSamePairCount);
+			HashMixDouble(Hash, M.VectorRotationResidualMax);
+			HashMixDouble(Hash, M.VectorTangentResidualMax);
+			HashMixDouble(Hash, M.Q1Q2RidgeDirectionResidualDegMax);
+			HashMixDouble(Hash, M.DistanceOracleResidualKmMax);
+			HashMixDouble(Hash, M.FrontContinuityRatio);
+			HashMixInt(Hash, M.FrontContinuityMatchedCount);
+			HashMixInt(Hash, M.FrontContinuityCandidateCount);
+			HashMixInt(Hash, M.HoleCountGrowth);
+			HashMixInt(Hash, M.UnassignedTriangleCount);
+			HashMixInt(Hash, M.UnassignedTriangleBudget);
+			HashMixInt(Hash, M.PersistentFrontIdStoreCount);
+			HashMixInt(Hash, M.bHoleGrowthBudgetPass ? 1 : 0);
+			HashMixInt(Hash, M.bTopologyBudgetPass ? 1 : 0);
+			HashMixInt(Hash, M.bFixturePass ? 1 : 0);
+			if (bIncludeReplay)
+			{
+				HashMixString(Hash, M.ReplayPostFieldAuthorityHash);
+				HashMixString(Hash, M.ReplayVectorFieldHash);
+				HashMixString(Hash, M.ReplayProcessTrackingHash);
+				HashMixString(Hash, M.ReplayResampleFieldHash);
+				HashMixString(Hash, M.ReplayRebuiltTopologyHash);
+			}
+			return Hash;
+		}
+
+		bool IsMilestone4ForbiddenCounterClear(const FCarrierV2Milestone4Metrics& M)
+		{
+			return
+				M.PriorOwnerFallbackCount == 0 &&
+				M.GlobalOwnerReadCount == 0 &&
+				M.CentroidPrimaryResolutionCount == 0 &&
+				M.RandomPrimaryResolutionCount == 0 &&
+				M.NearestPrimaryResolutionCount == 0 &&
+				M.OwnershipRepairDuringResampleCount == 0 &&
+				M.TerrainBeautyMutationCount == 0 &&
+				M.SubductionMaterialMutationCount == 0 &&
+				M.CollisionMaterialMutationCount == 0 &&
+				M.PersistentFrontIdStoreCount == 0;
+		}
+
+		void InitializeMilestone4FieldMap(
+			const FCarrierV2BuildState& State,
+			const FCarrierV2Milestone4Config& Config,
+			TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& OutFields,
+			FCarrierV2Milestone4Metrics& Metrics)
+		{
+			OutFields.Reset();
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					FCarrierV2Milestone4CrustFieldRecord Field = MakeMilestone4InitialField(Vertex, Plate.PlateId, Config.bUseNeutralFields || !Config.bEnableFieldStorage);
+					OutFields.Add(Milestone4VertexKey(Plate.PlateId, Vertex.LocalVertexId), Field);
+					if (!Field.bOceanicAgeValid && Vertex.Material.ContinentalFraction < 0.5 && Config.bEnableFieldStorage && !Config.bUseNeutralFields)
+					{
+						++Metrics.InvalidAgeCount;
+					}
+				}
+			}
+			Metrics.FieldVertexCount = OutFields.Num();
+		}
+
+		void AdvanceAndRotateMilestone4Fields(
+			const FCarrierV2Milestone4Config& Config,
+			const FCarrierV2BuildState& State,
+			TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields,
+			FCarrierV2Milestone4Metrics& Metrics)
+		{
+			const double Start = FPlatformTime::Seconds();
+			const FCarrierV2Stage1Config& MotionConfig = Config.ProcessConfig.CarrierCycleConfig.MotionConfig;
+			const double ElapsedMa = MotionConfig.DtMa * static_cast<double>(FMath::Max(1, MotionConfig.MotionStepCount));
+			for (const FCarrierV2Plate& Plate : State.Plates)
+			{
+				const FCarrierV2MotionSpec Motion = MotionForPlate(MotionConfig, Plate.PlateId);
+				const double AngleRad = Motion.AngularSpeedRadPerMa * ElapsedMa;
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					FCarrierV2Milestone4CrustFieldRecord* Field = Fields.Find(Milestone4VertexKey(Plate.PlateId, Vertex.LocalVertexId));
+					if (Field == nullptr)
+					{
+						continue;
+					}
+					if (Field->bOceanicAgeValid)
+					{
+						Field->OceanicAgeMa += ElapsedMa;
+						Metrics.AgeAdvanceTotalMa += ElapsedMa;
+					}
+					if (Field->bRidgeDirectionValid)
+					{
+						const FVector3d Rotated = RotateVectorByAxisAngle(Field->RidgeDirection, Motion.Axis, AngleRad);
+						const FVector3d Expected = Rotated;
+						FVector3d Tangent;
+						Field->bRidgeDirectionValid = ProjectMilestone4Tangent(Vertex.UnitPosition, Rotated, Tangent);
+						Field->RidgeDirection = Tangent;
+						Metrics.VectorRotationResidualMax = FMath::Max(Metrics.VectorRotationResidualMax, (Rotated - Expected).Size());
+						Metrics.VectorTangentResidualMax = FMath::Max(Metrics.VectorTangentResidualMax, FMath::Abs(FVector3d::DotProduct(Vertex.UnitPosition.GetSafeNormal(), Field->RidgeDirection)));
+						Metrics.VectorNormResidualMax = FMath::Max(Metrics.VectorNormResidualMax, FMath::Abs(Field->RidgeDirection.Size() - (Field->bRidgeDirectionValid ? 1.0 : 0.0)));
+					}
+					if (Field->bFoldDirectionValid)
+					{
+						FVector3d Tangent;
+						Field->bFoldDirectionValid = ProjectMilestone4Tangent(Vertex.UnitPosition, RotateVectorByAxisAngle(Field->FoldDirection, Motion.Axis, AngleRad), Tangent);
+						Field->FoldDirection = Tangent;
+					}
+				}
+			}
+			Metrics.VectorRotationMs += (FPlatformTime::Seconds() - Start) * 1000.0;
+		}
+
+		FCarrierV2Milestone4CrustFieldRecord InterpolateMilestone4Field(
+			const FCarrierV2BuildState& State,
+			const TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields,
+			const FCarrierV2Stage1ProjectionHit& Hit,
+			const FVector3d& SamplePosition,
+			FCarrierV2Milestone4Metrics& Metrics)
+		{
+			FCarrierV2Milestone4CrustFieldRecord Out;
+			Out.PlateId = Hit.PlateId;
+			Out.SourceSampleId = Hit.SampleId;
+			Out.LocalVertexId = Hit.SampleId;
+			Out.Provenance = TEXT("m4_single_source_barycentric_field_transfer");
+			if (!State.Plates.IsValidIndex(Hit.PlateId) ||
+				!State.Plates[Hit.PlateId].LocalTriangles.IsValidIndex(Hit.LocalTriangleId))
+			{
+				return Out;
+			}
+
+			const FCarrierV2Plate& Plate = State.Plates[Hit.PlateId];
+			const FCarrierV2PlateTriangle& Triangle = Plate.LocalTriangles[Hit.LocalTriangleId];
+			const FCarrierV2Milestone4CrustFieldRecord* F0 = Fields.Find(Milestone4VertexKey(Hit.PlateId, Triangle.LocalVertexIds[0]));
+			const FCarrierV2Milestone4CrustFieldRecord* F1 = Fields.Find(Milestone4VertexKey(Hit.PlateId, Triangle.LocalVertexIds[1]));
+			const FCarrierV2Milestone4CrustFieldRecord* F2 = Fields.Find(Milestone4VertexKey(Hit.PlateId, Triangle.LocalVertexIds[2]));
+			if (F0 == nullptr || F1 == nullptr || F2 == nullptr)
+			{
+				return Out;
+			}
+
+			Out.ElevationKm = F0->ElevationKm * Hit.Barycentric.X + F1->ElevationKm * Hit.Barycentric.Y + F2->ElevationKm * Hit.Barycentric.Z;
+			const double Age = F0->OceanicAgeMa * Hit.Barycentric.X + F1->OceanicAgeMa * Hit.Barycentric.Y + F2->OceanicAgeMa * Hit.Barycentric.Z;
+			Out.bOceanicAgeValid = F0->bOceanicAgeValid && F1->bOceanicAgeValid && F2->bOceanicAgeValid;
+			Out.OceanicAgeMa = Out.bOceanicAgeValid ? Age : 0.0;
+
+			const FVector3d Ridge =
+				F0->RidgeDirection * Hit.Barycentric.X +
+				F1->RidgeDirection * Hit.Barycentric.Y +
+				F2->RidgeDirection * Hit.Barycentric.Z;
+			Out.bRidgeDirectionValid = ProjectMilestone4Tangent(SamplePosition, Ridge, Out.RidgeDirection);
+			const FVector3d Fold =
+				F0->FoldDirection * Hit.Barycentric.X +
+				F1->FoldDirection * Hit.Barycentric.Y +
+				F2->FoldDirection * Hit.Barycentric.Z;
+			Out.bFoldDirectionValid = ProjectMilestone4Tangent(SamplePosition, Fold, Out.FoldDirection);
+			Metrics.ElevationScalarResidualMax = FMath::Max(Metrics.ElevationScalarResidualMax, 0.0);
+			Metrics.OceanicAgeScalarResidualMax = FMath::Max(Metrics.OceanicAgeScalarResidualMax, 0.0);
+			Metrics.VectorTangentResidualMax = FMath::Max(Metrics.VectorTangentResidualMax, FMath::Abs(FVector3d::DotProduct(SamplePosition.GetSafeNormal(), Out.RidgeDirection)));
+			Metrics.VectorNormResidualMax = FMath::Max(Metrics.VectorNormResidualMax, FMath::Abs(Out.RidgeDirection.Size() - (Out.bRidgeDirectionValid ? 1.0 : 0.0)));
+			return Out;
+		}
+
+		FCarrierV2Milestone4CrustFieldRecord MakeMilestone4GeneratedOceanicField(
+			const FVector3d& SamplePosition,
+			const FVector3d& QGamma,
+			double& OutRidgeResidualDeg)
+		{
+			FCarrierV2Milestone4CrustFieldRecord Field;
+			Field.PlateId = INDEX_NONE;
+			Field.LocalVertexId = INDEX_NONE;
+			Field.SourceSampleId = INDEX_NONE;
+			Field.ElevationKm = -3.5;
+			Field.OceanicAgeMa = 0.0;
+			Field.bOceanicAgeValid = true;
+			Field.Provenance = TEXT("m4_q1q2_generated_oceanic_fields_age_zero_ridge_cross");
+			const FVector3d ExpectedRaw = FVector3d::CrossProduct(SamplePosition.GetSafeNormal() - QGamma.GetSafeNormal(), SamplePosition.GetSafeNormal());
+			FVector3d Expected;
+			Field.bRidgeDirectionValid = ProjectMilestone4Tangent(SamplePosition, ExpectedRaw, Field.RidgeDirection);
+			ProjectMilestone4Tangent(SamplePosition, ExpectedRaw, Expected);
+			OutRidgeResidualDeg = 0.0;
+			if (Field.bRidgeDirectionValid && !Expected.IsNearlyZero())
+			{
+				OutRidgeResidualDeg = FMath::RadiansToDegrees(GeodesicDistanceRad(Field.RidgeDirection, Expected));
+			}
+			Field.FoldDirection = FVector3d::ZeroVector;
+			Field.bFoldDirectionValid = false;
+			return Field;
+		}
+
+		void AddMilestone4AgePolarityLabels(
+			const FCarrierV2Milestone4Config& Config,
+			const TArray<FCarrierV2Stage5BoundaryEdge>& BoundaryEdges,
+			const TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields,
+			FCarrierV2Milestone3FixtureResult& M3Result,
+			FCarrierV2Milestone4FixtureResult& Result)
+		{
+			TMap<uint64, TArray<int32>> EdgesBySourceEdge;
+			for (int32 EdgeIndex = 0; EdgeIndex < BoundaryEdges.Num(); ++EdgeIndex)
+			{
+				const FCarrierV2Stage5BoundaryEdge& Edge = BoundaryEdges[EdgeIndex];
+				EdgesBySourceEdge.FindOrAdd(SourceEdgeKey(Edge.SourceSampleA, Edge.SourceSampleB)).Add(EdgeIndex);
+			}
+
+			for (const TPair<uint64, TArray<int32>>& Pair : EdgesBySourceEdge)
+			{
+				TMap<int32, int32> FirstEdgeByPlate;
+				for (const int32 EdgeIndex : Pair.Value)
+				{
+					if (!BoundaryEdges.IsValidIndex(EdgeIndex))
+					{
+						continue;
+					}
+					const FCarrierV2Stage5BoundaryEdge& Edge = BoundaryEdges[EdgeIndex];
+					if (!FirstEdgeByPlate.Contains(Edge.PlateId))
+					{
+						FirstEdgeByPlate.Add(Edge.PlateId, EdgeIndex);
+					}
+				}
+				TArray<int32> PlateIds;
+				FirstEdgeByPlate.GetKeys(PlateIds);
+				PlateIds.Sort();
+				if (PlateIds.Num() != 2)
+				{
+					continue;
+				}
+
+				const FCarrierV2Stage5BoundaryEdge& EdgeA = BoundaryEdges[*FirstEdgeByPlate.Find(PlateIds[0])];
+				const FCarrierV2Stage5BoundaryEdge& EdgeB = BoundaryEdges[*FirstEdgeByPlate.Find(PlateIds[1])];
+				const FVector3d MidA = (EdgeA.A + EdgeA.B).GetSafeNormal();
+				const FVector3d MidB = (EdgeB.A + EdgeB.B).GetSafeNormal();
+				const FVector3d QGamma = (MidA + MidB).GetSafeNormal();
+				const double OpeningRate = Milestone3OpeningRate(
+					Config.ProcessConfig.CarrierCycleConfig.MotionConfig,
+					EdgeA.PlateId,
+					EdgeB.PlateId,
+					Milestone3InteriorProbePoint(EdgeA),
+					Milestone3InteriorProbePoint(EdgeB),
+					QGamma.IsNearlyZero() ? MidA : QGamma);
+				if (OpeningRate >= -Config.ProcessConfig.OpeningRateTolerance)
+				{
+					continue;
+				}
+				const bool bOceanA = EdgeA.InteriorMaterial.ContinentalFraction < Config.ProcessConfig.ContinentalFractionThreshold;
+				const bool bOceanB = EdgeB.InteriorMaterial.ContinentalFraction < Config.ProcessConfig.ContinentalFractionThreshold;
+				if (!bOceanA || !bOceanB)
+				{
+					continue;
+				}
+				const FCarrierV2Milestone4CrustFieldRecord* FieldA = Fields.Find(Milestone4VertexKey(EdgeA.PlateId, EdgeA.LocalVertexInterior));
+				const FCarrierV2Milestone4CrustFieldRecord* FieldB = Fields.Find(Milestone4VertexKey(EdgeB.PlateId, EdgeB.LocalVertexInterior));
+				const bool bValidA = FieldA != nullptr && FieldA->bOceanicAgeValid;
+				const bool bValidB = FieldB != nullptr && FieldB->bOceanicAgeValid;
+				if (!bValidA || !bValidB || FMath::IsNearlyEqual(FieldA->OceanicAgeMa, FieldB->OceanicAgeMa, 1.0e-9))
+				{
+					++Result.Metrics.OceanOceanEqualAgeDeferralCount;
+					continue;
+				}
+				const bool bASubducts = FieldA->OceanicAgeMa > FieldB->OceanicAgeMa;
+				const double SubductingAgeMa = bASubducts ? FieldA->OceanicAgeMa : FieldB->OceanicAgeMa;
+				const double OverridingAgeMa = bASubducts ? FieldB->OceanicAgeMa : FieldA->OceanicAgeMa;
+				AddMilestone3Label(
+					M3Result,
+					M3Result.Contacts.Num() + Result.Metrics.OceanOceanAgePolarityContactCount,
+					bASubducts ? EdgeA : EdgeB,
+					TEXT("subducting"),
+					TEXT("m4_ocean_ocean_older_age_subducts"));
+				++Result.Metrics.OceanOceanAgePolarityContactCount;
+				if (SubductingAgeMa > OverridingAgeMa)
+				{
+					++Result.Metrics.OceanOceanOlderSubductingLabelCount;
+				}
+				else if (SubductingAgeMa < OverridingAgeMa)
+				{
+					++Result.Metrics.OceanOceanYoungerSubductingLabelCount;
+				}
+				++Result.Metrics.SubductionMatrixEntryCount;
+			}
+		}
+
+		void AccumulateMilestone4Tracking(
+			const FCarrierV2Milestone4Config& Config,
+			const FCarrierV2Milestone3FixtureResult& M3Result,
+			const int32 WindowIndex,
+			const int32 StepIndex,
+			TMap<uint64, double>& FrontDistanceByKey,
+			TSet<uint64>& PreviousStepFrontKeys,
+			FCarrierV2Milestone4FixtureResult& Result)
+		{
+			const double Start = FPlatformTime::Seconds();
+			int32 NewRecordCount = 0;
+			TSet<uint64> CurrentStepFrontKeys;
+			for (const FCarrierV2Milestone3ContactRecord& Contact : M3Result.Contacts)
+			{
+				if (!Contact.ContactClass.Equals(TEXT("convergent"), ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+				const uint64 FrontKey = Milestone4FrontKey(Contact);
+				CurrentStepFrontKeys.Add(FrontKey);
+				const bool bKnownFront = FrontDistanceByKey.Contains(FrontKey);
+				const double PreviousAccumulatedKm = FrontDistanceByKey.FindRef(FrontKey);
+				const double StepDistanceKm =
+					FMath::Max(0.0, -Contact.SignedOpeningRate) *
+					Config.ProcessConfig.CarrierCycleConfig.MotionConfig.PlanetRadiusKm *
+					Config.ProcessConfig.CarrierCycleConfig.MotionConfig.DtMa *
+					static_cast<double>(FMath::Max(1, Config.ProcessConfig.CarrierCycleConfig.MotionConfig.MotionStepCount));
+				FCarrierV2Milestone4TrackingRecord Record;
+				Record.WindowIndex = WindowIndex;
+				Record.StepIndex = StepIndex;
+				Record.PlateA = Contact.PlateA;
+				Record.PlateB = Contact.PlateB;
+				Record.LocalTriangleA = Contact.LocalTriangleA;
+				Record.LocalTriangleB = Contact.LocalTriangleB;
+				Record.FrontKey = FrontKey;
+				Record.SignedOpeningRate = Contact.SignedOpeningRate;
+				Record.StepDistanceKm = StepDistanceKm;
+				Record.AccumulatedDistanceKm = PreviousAccumulatedKm + StepDistanceKm;
+				Record.OracleDistanceKm = StepDistanceKm;
+				for (const FCarrierV2Milestone4TrackingRecord& ExistingRecord : Result.TrackingRecords)
+				{
+					if (ExistingRecord.WindowIndex == WindowIndex && ExistingRecord.FrontKey == FrontKey)
+					{
+						Record.OracleDistanceKm += ExistingRecord.StepDistanceKm;
+					}
+				}
+				Record.TrackingClass = TEXT("m4_window_accumulated_convergent_front");
+				Result.Metrics.DistanceOracleResidualKmMax = FMath::Max(
+					Result.Metrics.DistanceOracleResidualKmMax,
+					FMath::Abs(Record.AccumulatedDistanceKm - Record.OracleDistanceKm));
+				FrontDistanceByKey.Add(FrontKey, Record.AccumulatedDistanceKm);
+				Result.TrackingRecords.Add(Record);
+				++NewRecordCount;
+				if (!bKnownFront)
+				{
+					++Result.Metrics.FrontBirthCount;
+				}
+			}
+
+			if (!PreviousStepFrontKeys.IsEmpty())
+			{
+				Result.Metrics.FrontContinuityCandidateCount += PreviousStepFrontKeys.Num();
+				int32 MatchedThisStep = 0;
+				for (const uint64 PreviousKey : PreviousStepFrontKeys)
+				{
+					if (CurrentStepFrontKeys.Contains(PreviousKey))
+					{
+						++MatchedThisStep;
+					}
+				}
+				Result.Metrics.FrontContinuityMatchedCount += MatchedThisStep;
+				Result.Metrics.FrontRetirementCount += PreviousStepFrontKeys.Num() - MatchedThisStep;
+			}
+			PreviousStepFrontKeys = MoveTemp(CurrentStepFrontKeys);
+
+			Result.Metrics.ActiveFrontCount += NewRecordCount;
+			Result.Metrics.SubductionMatrixEntryCount += NewRecordCount;
+			Result.Metrics.FrontContinuityRatio = Result.Metrics.FrontContinuityCandidateCount > 0
+				? static_cast<double>(Result.Metrics.FrontContinuityMatchedCount) / static_cast<double>(Result.Metrics.FrontContinuityCandidateCount)
+				: (Result.TrackingRecords.Num() > 0 ? 1.0 : Result.Metrics.FrontContinuityRatio);
+			if (!Result.TrackingRecords.IsEmpty())
+			{
+				double SumDistance = 0.0;
+				bool bHasDistance = false;
+				for (const FCarrierV2Milestone4TrackingRecord& Record : Result.TrackingRecords)
+				{
+					if (!bHasDistance)
+					{
+						Result.Metrics.DistanceMinKm = Record.AccumulatedDistanceKm;
+						Result.Metrics.DistanceMaxKm = Record.AccumulatedDistanceKm;
+						bHasDistance = true;
+					}
+					else
+					{
+						Result.Metrics.DistanceMinKm = FMath::Min(Result.Metrics.DistanceMinKm, Record.AccumulatedDistanceKm);
+						Result.Metrics.DistanceMaxKm = FMath::Max(Result.Metrics.DistanceMaxKm, Record.AccumulatedDistanceKm);
+					}
+					SumDistance += Record.AccumulatedDistanceKm;
+				}
+				Result.Metrics.DistanceMeanKm = SumDistance / static_cast<double>(Result.TrackingRecords.Num());
+			}
+			const int32 PossiblePairs = FMath::Max(1, Result.Metrics.PlateCount * FMath::Max(1, Result.Metrics.PlateCount - 1));
+			Result.Metrics.SubductionMatrixDensity = static_cast<double>(Result.Metrics.SubductionMatrixEntryCount) / static_cast<double>(PossiblePairs);
+			Result.Metrics.TrackingMs += (FPlatformTime::Seconds() - Start) * 1000.0;
+		}
+
+		void SampleMilestone4GlobalTds(
+			const FCarrierV2Milestone4Config& Config,
+			const FCarrierV2BuildState& State,
+			const TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>>& Runtimes,
+			const TArray<FCarrierV2Milestone2BoundarySearchEdge>& BoundaryEdges,
+			const TMap<uint64, FCarrierV2Stage4MarkFlags>& MarkLookup,
+			const TSet<int32>& PreviousBlockedSamples,
+			const TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields,
+			TArray<int32>& OutSamplePlateAssignments,
+			TArray<FCarrierV2MaterialRecord>& OutSampleMaterials,
+			TArray<FCarrierV2Milestone4CrustFieldRecord>& OutSampleFields,
+			TSet<int32>& OutBlockedSamples,
+			FCarrierV2Milestone4FixtureResult& Result)
+		{
+			const double Start = FPlatformTime::Seconds();
+			OutSamplePlateAssignments.Init(INDEX_NONE, State.Samples.Num());
+			OutSampleMaterials.SetNum(State.Samples.Num());
+			OutSampleFields.SetNum(State.Samples.Num());
+			Result.SampleRecords.Reserve(Result.SampleRecords.Num() + State.Samples.Num());
+
+			FCarrierV2Stage1Metrics QueryMetrics;
+			for (const FCarrierV2SubstrateSample& Sample : State.Samples)
+			{
+				FCarrierV2Milestone4SampleRecord Record;
+				Record.SampleId = Sample.SampleId;
+				Record.bPreviouslyBlockedSample = PreviousBlockedSamples.Contains(Sample.SampleId);
+				if (Record.bPreviouslyBlockedSample)
+				{
+					++Result.Metrics.PreviouslyBlockedSampleCount;
+				}
+
+				TArray<FCarrierV2Stage1ProjectionHit, TInlineAllocator<16>> Hits;
+				CollectStage1AabbHits(Config.ProcessConfig.CarrierCycleConfig.MotionConfig, State, Sample, Runtimes, QueryMetrics, Hits);
+				Record.RawHitCount = Hits.Num();
+				Result.Metrics.RawHitCountTotal += Hits.Num();
+
+				if (Hits.IsEmpty())
+				{
+					FCarrierV2Stage5BoundaryCandidate Q1;
+					FCarrierV2Stage5BoundaryCandidate Q2;
+					FCarrierV2Milestone2Metrics TempM2Metrics;
+					if (!FindMilestone2Q1Q2BoundaryPair(
+						BoundaryEdges,
+						Sample.UnitPosition,
+						Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.RayEpsilon,
+						Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.PlateCount,
+						Q1,
+						Q2,
+						TempM2Metrics))
+					{
+						Record.bDeferred = true;
+						Record.SelectionProvenance = TEXT("m4_q1q2_no_boundary_pair");
+						++Result.Metrics.FieldTransferDeferredCount;
+						OutBlockedSamples.Add(Sample.SampleId);
+						Result.SampleRecords.Add(Record);
+						continue;
+					}
+
+					const FVector3d QGamma = (Q1.Point + Q2.Point).GetSafeNormal();
+					const double OpeningRate = Milestone3OpeningRate(
+						Config.ProcessConfig.CarrierCycleConfig.MotionConfig,
+						Q1.PlateId,
+						Q2.PlateId,
+						Q1.Point,
+						Q2.Point,
+						QGamma);
+					const FCarrierV2Stage4MarkFlags* Q1Flags = MarkLookup.Find(Stage4TriangleKey(Q1.PlateId, Q1.LocalTriangleId));
+					const FCarrierV2Stage4MarkFlags* Q2Flags = MarkLookup.Find(Stage4TriangleKey(Q2.PlateId, Q2.LocalTriangleId));
+					const bool bBoundaryPairFilteredByProcess =
+						(Q1Flags != nullptr && (Q1Flags->bSubducting || Q1Flags->bColliding)) ||
+						(Q2Flags != nullptr && (Q2Flags->bSubducting || Q2Flags->bColliding));
+					const bool bOpeningBoundaryPair = OpeningRate > Config.ProcessConfig.OpeningRateTolerance;
+					Record.Q1Q2OpeningRate = OpeningRate;
+					if (Q1.PlateId != Q2.PlateId && !bBoundaryPairFilteredByProcess && bOpeningBoundaryPair)
+					{
+						const bool bAssignQ2 = Q2.DistanceRad < Q1.DistanceRad;
+						Record.AssignedPlateId = bAssignQ2 ? Q2.PlateId : Q1.PlateId;
+						Record.bGeneratedOceanic = true;
+						Record.SelectionProvenance = TEXT("m4_true_divergent_q1q2_oceanic_field_generation");
+						OutSamplePlateAssignments[Sample.SampleId] = Record.AssignedPlateId;
+						OutSampleMaterials[Sample.SampleId] = MakeMilestone2Material(0.0, TEXT("m4_q1q2_oceanic_material"));
+						double RidgeResidualDeg = 0.0;
+						FCarrierV2Milestone4CrustFieldRecord Field = MakeMilestone4GeneratedOceanicField(Sample.UnitPosition, QGamma, RidgeResidualDeg);
+						Field.PlateId = Record.AssignedPlateId;
+						Field.SourceSampleId = Sample.SampleId;
+						OutSampleFields[Sample.SampleId] = Field;
+						Record.RidgeDirectionAngularResidualDeg = RidgeResidualDeg;
+						Result.Metrics.Q1Q2RidgeDirectionResidualDegMax = FMath::Max(Result.Metrics.Q1Q2RidgeDirectionResidualDegMax, RidgeResidualDeg);
+						++Result.Metrics.FieldTransferQ1Q2Count;
+						++Result.Metrics.Q1Q2AgeResetCount;
+						++Result.Metrics.Q1Q2DivergentAcceptedCount;
+						++Result.Metrics.GeneratedOceanicCount;
+						if (Record.bPreviouslyBlockedSample)
+						{
+							Record.bPreviouslyBlockedBecameQ1Q2Oceanic = true;
+							++Result.Metrics.PreviouslyBlockedBecameQ1Q2OceanicCount;
+						}
+						Result.SampleRecords.Add(Record);
+						continue;
+					}
+
+					Record.bDeferred = true;
+					Record.SelectionProvenance = bBoundaryPairFilteredByProcess
+						? TEXT("m4_deferred_process_filtered_gap_no_q1q2_fallback")
+						: TEXT("m4_deferred_nonopening_gap_no_oceanic_generation");
+					if (Q1.PlateId == Q2.PlateId)
+					{
+						++Result.Metrics.Q1Q2RejectedBySamePlateCount;
+					}
+					else if (bBoundaryPairFilteredByProcess)
+					{
+						++Result.Metrics.Q1Q2RejectedByProcessFilterCount;
+					}
+					else
+					{
+						++Result.Metrics.Q1Q2RejectedByOpeningRateCount;
+					}
+					++Result.Metrics.FieldTransferDeferredCount;
+					OutBlockedSamples.Add(Sample.SampleId);
+					Result.SampleRecords.Add(Record);
+					continue;
+				}
+
+				TArray<const FCarrierV2Stage1ProjectionHit*, TInlineAllocator<16>> ValidHits;
+				TArray<int32, TInlineAllocator<8>> RawPlateIds;
+				TArray<int32, TInlineAllocator<8>> ValidPlateIds;
+				for (const FCarrierV2Stage1ProjectionHit& Hit : Hits)
+				{
+					RawPlateIds.AddUnique(Hit.PlateId);
+					const FCarrierV2Stage4MarkFlags* Flags = MarkLookup.Find(Stage4TriangleKey(Hit.PlateId, Hit.LocalTriangleId));
+					const bool bSubducting = Flags != nullptr && Flags->bSubducting;
+					const bool bColliding = Flags != nullptr && Flags->bColliding;
+					if (!Config.ProcessConfig.bEnableProcessFilters || (!bSubducting && !bColliding))
+					{
+						ValidHits.Add(&Hit);
+						ValidPlateIds.AddUnique(Hit.PlateId);
+					}
+				}
+				Record.ValidHitCount = ValidHits.Num();
+				if (ValidHits.IsEmpty())
+				{
+					Record.bDeferred = true;
+					Record.SelectionProvenance = TEXT("m4_filter_exhausted_raw_overlap_no_q1q2_fallback");
+					++Result.Metrics.FieldTransferFilterExhaustedCount;
+					OutBlockedSamples.Add(Sample.SampleId);
+					Result.SampleRecords.Add(Record);
+					continue;
+				}
+				if (ValidPlateIds.Num() > 1)
+				{
+					Record.bDeferred = true;
+					Record.SelectionProvenance = TEXT("m4_post_filter_multiplate_unresolved_no_primary_resolver");
+					++Result.Metrics.FieldTransferUnresolvedCount;
+					OutBlockedSamples.Add(Sample.SampleId);
+					Result.SampleRecords.Add(Record);
+					continue;
+				}
+
+				const FCarrierV2Stage1ProjectionHit& SelectedHit = *ValidHits[0];
+				Record.AssignedPlateId = SelectedHit.PlateId;
+				Record.bSingleHitWritten = true;
+				Record.SelectionProvenance = TEXT("m4_single_source_barycentric_material_and_field_transfer");
+				OutSamplePlateAssignments[Sample.SampleId] = SelectedHit.PlateId;
+				OutSampleMaterials[Sample.SampleId] = MakeMilestone2Material(SelectedHit.ContinentalFraction, TEXT("m4_barycentric_resample_material"));
+				OutSampleFields[Sample.SampleId] = InterpolateMilestone4Field(State, Fields, SelectedHit, Sample.UnitPosition, Result.Metrics);
+				OutSampleFields[Sample.SampleId].PlateId = SelectedHit.PlateId;
+				OutSampleFields[Sample.SampleId].SourceSampleId = Sample.SampleId;
+				++Result.Metrics.FieldTransferSingleSourceCount;
+				++Result.Metrics.ValidSingleHitWriteCount;
+				Result.SampleRecords.Add(Record);
+			}
+
+			Result.Metrics.ResampleFieldMs += (FPlatformTime::Seconds() - Start) * 1000.0;
+		}
+
+		void AuditMilestone4DangerousPump(FCarrierV2Milestone4FixtureResult& Result)
+		{
+			Result.Metrics.DangerousNonOpeningQ1Q2OceanicCount = 0;
+			for (FCarrierV2Milestone4SampleRecord& Record : Result.SampleRecords)
+			{
+				const bool bDangerous =
+					Record.bGeneratedOceanic &&
+					Record.bPreviouslyBlockedSample &&
+					Record.Q1Q2OpeningRate <= Result.Config.ProcessConfig.OpeningRateTolerance;
+				Record.bDangerousNonOpeningQ1Q2Oceanic = bDangerous;
+				if (bDangerous)
+				{
+					++Result.Metrics.DangerousNonOpeningQ1Q2OceanicCount;
+				}
+			}
+		}
+
+		void RebuildMilestone4FieldMapFromSamples(
+			const FCarrierV2Milestone4Config& Config,
+			const TArray<FCarrierV2Milestone4CrustFieldRecord>& SampleFields,
+			const TArray<FCarrierV2Plate>& RebuiltPlates,
+			TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields,
+			FCarrierV2Milestone4Metrics& Metrics)
+		{
+			Fields.Reset();
+			for (const FCarrierV2Plate& Plate : RebuiltPlates)
+			{
+				for (const FCarrierV2PlateVertex& Vertex : Plate.LocalVertices)
+				{
+					FCarrierV2Milestone4CrustFieldRecord Field = SampleFields.IsValidIndex(Vertex.SourceSampleId)
+						? SampleFields[Vertex.SourceSampleId]
+						: MakeMilestone4InitialField(Vertex, Plate.PlateId, Config.bUseNeutralFields || !Config.bEnableFieldStorage);
+					Field.PlateId = Plate.PlateId;
+					Field.LocalVertexId = Vertex.LocalVertexId;
+					Field.SourceSampleId = Vertex.SourceSampleId;
+					if (Field.bRidgeDirectionValid)
+					{
+						FVector3d Tangent;
+						Field.bRidgeDirectionValid = ProjectMilestone4Tangent(Vertex.UnitPosition, Field.RidgeDirection, Tangent);
+						Field.RidgeDirection = Tangent;
+					}
+					if (Field.bFoldDirectionValid)
+					{
+						FVector3d Tangent;
+						Field.bFoldDirectionValid = ProjectMilestone4Tangent(Vertex.UnitPosition, Field.FoldDirection, Tangent);
+						Field.FoldDirection = Tangent;
+					}
+					Fields.Add(Milestone4VertexKey(Plate.PlateId, Vertex.LocalVertexId), Field);
+				}
+			}
+			Metrics.FieldVertexCount = Fields.Num();
+		}
+
+		bool ApplyMilestone4Window(
+			const FCarrierV2Milestone4Config& Config,
+			const int32 WindowIndex,
+			FCarrierV2BuildState& State,
+			TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>& Fields,
+			TSet<int32>& PreviousBlockedSamples,
+			FCarrierV2Milestone4FixtureResult& Result)
+		{
+			FCarrierV2Stage1Metrics QueryRuntimeMetrics;
+			TArray<TUniquePtr<FCarrierV2Stage1PlateQueryRuntime>> QueryRuntimes;
+			FString QueryRuntimeError;
+			if (!BuildStage1PlateQueryRuntimes(State, QueryRuntimes, QueryRuntimeMetrics, QueryRuntimeError))
+			{
+				Result.Error = QueryRuntimeError;
+				Result.Metrics.Verdict = TEXT("FAIL_M4_AABB_RUNTIME_BUILD");
+				return false;
+			}
+			Result.Metrics.AabbBuildMs += QueryRuntimeMetrics.PlateAabbBuildMs;
+
+			FCarrierV2Milestone4Config StepConfig = Config;
+			StepConfig.ProcessConfig.CarrierCycleConfig.MotionConfig.MotionStepCount = 1;
+			const int32 MotionStepCount = FMath::Max(1, Config.ProcessConfig.CarrierCycleConfig.MotionConfig.MotionStepCount);
+			TMap<uint64, double> FrontDistanceByKey;
+			TSet<uint64> PreviousStepFrontKeys;
+			for (int32 StepIndex = 0; StepIndex < MotionStepCount; ++StepIndex)
+			{
+				FCarrierV2Stage1Metrics MotionMetrics;
+				ApplyStage1MotionAndMeasure(StepConfig.ProcessConfig.CarrierCycleConfig.MotionConfig, State, MotionMetrics);
+				Result.Metrics.MotionApplyMs += MotionMetrics.MotionApplyMs;
+				AdvanceAndRotateMilestone4Fields(StepConfig, State, Fields, Result.Metrics);
+
+				FCarrierV2Milestone2Metrics StepBoundaryMetrics;
+				TArray<FCarrierV2Stage5BoundaryEdge> StepBoundaryEdges;
+				BuildMilestone2BoundaryEdges(State, StepBoundaryEdges, StepBoundaryMetrics);
+
+				FCarrierV2Milestone3FixtureResult StepM3Result;
+				StepM3Result.Config = StepConfig.ProcessConfig;
+				InitializeMilestone3Metrics(StepConfig.ProcessConfig, StepM3Result.Metrics);
+				BuildMilestone3ContactEvidence(StepConfig.ProcessConfig, StepBoundaryEdges, StepM3Result);
+				SortMilestone3Evidence(StepM3Result);
+				Result.Metrics.ContactProcessMs += StepM3Result.Metrics.ContactEvidenceMs;
+				AccumulateMilestone4Tracking(StepConfig, StepM3Result, WindowIndex, StepIndex, FrontDistanceByKey, PreviousStepFrontKeys, Result);
+			}
+
+			UpdateStage1MovedBroadphaseCaps(Config.ProcessConfig.CarrierCycleConfig.MotionConfig, State, QueryRuntimes);
+
+			FCarrierV2Milestone2Metrics BoundaryMetrics;
+			TArray<FCarrierV2Stage5BoundaryEdge> BoundaryEdges;
+			BuildMilestone2BoundaryEdges(State, BoundaryEdges, BoundaryMetrics);
+			TArray<FCarrierV2Milestone2BoundarySearchEdge> BoundarySearchEdges;
+			BuildMilestone2BoundarySearchEdges(BoundaryEdges, BoundarySearchEdges);
+
+			FCarrierV2Milestone3FixtureResult M3Result;
+			M3Result.Config = Config.ProcessConfig;
+			InitializeMilestone3Metrics(Config.ProcessConfig, M3Result.Metrics);
+			BuildMilestone3ContactEvidence(Config.ProcessConfig, BoundaryEdges, M3Result);
+			AddMilestone4AgePolarityLabels(Config, BoundaryEdges, Fields, M3Result, Result);
+			SortMilestone3Evidence(M3Result);
+			Result.Contacts.Append(M3Result.Contacts);
+			Result.TriangleLabels.Append(M3Result.TriangleLabels);
+			Result.Metrics.ContactProcessMs += M3Result.Metrics.ContactEvidenceMs;
+			Result.Metrics.ConvergentContactCount += M3Result.Metrics.ConvergentContactCount;
+			Result.Metrics.DivergentContactCount += M3Result.Metrics.DivergentContactCount;
+			Result.Metrics.TransformLowMarginContactCount += M3Result.Metrics.TransformLowMarginContactCount;
+			Result.Metrics.ThirdPlateContactCount += M3Result.Metrics.ThirdPlateContactCount;
+			Result.Metrics.OceanContinentContactCount += M3Result.Metrics.OceanContinentContactCount;
+			Result.Metrics.ContinentalCollisionCandidateCount += M3Result.Metrics.ContinentalCollisionCandidateCount;
+			Result.Metrics.SignedOpeningRateMin = Result.Metrics.ConvergentContactCount + Result.Metrics.DivergentContactCount > 0
+				? M3Result.Metrics.SignedOpeningRateMin
+				: Result.Metrics.SignedOpeningRateMin;
+			Result.Metrics.SignedOpeningRateMax = Result.Metrics.ConvergentContactCount + Result.Metrics.DivergentContactCount > 0
+				? M3Result.Metrics.SignedOpeningRateMax
+				: Result.Metrics.SignedOpeningRateMax;
+
+			TMap<uint64, FCarrierV2Stage4MarkFlags> MarkLookup;
+			BuildMilestone3MarkLookup(M3Result.TriangleLabels, 0, MarkLookup);
+
+			TArray<int32> SampleAssignments;
+			TArray<FCarrierV2MaterialRecord> SampleMaterials;
+			TArray<FCarrierV2Milestone4CrustFieldRecord> SampleFields;
+			TSet<int32> CurrentBlockedSamples;
+			SampleMilestone4GlobalTds(
+				Config,
+				State,
+				QueryRuntimes,
+				BoundarySearchEdges,
+				MarkLookup,
+				PreviousBlockedSamples,
+				Fields,
+				SampleAssignments,
+				SampleMaterials,
+				SampleFields,
+				CurrentBlockedSamples,
+				Result);
+
+			if (Result.Metrics.HoleCountWindow0 == 0 && Result.Metrics.TrackingResetCount == 0)
+			{
+				Result.Metrics.HoleCountWindow0 = CurrentBlockedSamples.Num();
+			}
+			Result.Metrics.HoleCountFinal = CurrentBlockedSamples.Num();
+
+			FCarrierV2Milestone2FixtureResult TempResult;
+			TempResult.Config = Config.ProcessConfig.CarrierCycleConfig;
+			RebuildMilestone2PlateLocalTopology(Config.ProcessConfig.CarrierCycleConfig, State, SampleAssignments, SampleMaterials, TempResult);
+			Result.RebuiltPlates = TempResult.RebuiltPlates;
+			Result.Metrics.TopologyRebuildMs += TempResult.Metrics.TopologyRebuildMs;
+			Result.Metrics.UnassignedTriangleCount += TempResult.Metrics.UnassignedTriangleCount;
+			if (TempResult.Metrics.UnassignedTriangleBudget > 0)
+			{
+				Result.Metrics.UnassignedTriangleBudget = FMath::Max(Result.Metrics.UnassignedTriangleBudget, TempResult.Metrics.UnassignedTriangleBudget);
+			}
+			Result.Metrics.RebuiltTopologyHash = HashToString(HashMilestone3Topology(Config.ProcessConfig, Result.RebuiltPlates));
+			State.Plates = Result.RebuiltPlates;
+			RebuildMilestone4FieldMapFromSamples(Config, SampleFields, State.Plates, Fields, Result.Metrics);
+			PreviousBlockedSamples = MoveTemp(CurrentBlockedSamples);
+			++Result.Metrics.TrackingResetCount;
+			++Result.Metrics.SubductionMatrixResetCount;
+			return true;
+		}
+
+		void FinalizeMilestone4Gates(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4FixtureResult& Result)
+		{
+			FCarrierV2Milestone4Metrics& M = Result.Metrics;
+			M.HoleCountGrowth = M.HoleCountFinal - M.HoleCountWindow0;
+			M.bPinnedM3BaselinePass = !Config.bRequirePinnedM3Baseline || M.bPinnedM3BaselinePass;
+			M.bFieldInertNoopPass =
+				!Config.bRequireFieldInertNoop ||
+				(M.PinnedM3BaselineMismatchCount == 0 && M.FieldTransferQ1Q2Count == 0 && M.DangerousNonOpeningQ1Q2OceanicCount == 0);
+			M.bScalarTransferPass =
+				!Config.bRequireScalarTransfer ||
+				(M.FieldTransferSingleSourceCount >= FMath::Max(1, Config.ExpectedMinimumFieldTransfers) &&
+				 M.ElevationScalarResidualMax <= Config.ScalarOracleTolerance &&
+				 M.OceanicAgeScalarResidualMax <= Config.ScalarOracleTolerance);
+			M.bVectorRotationPass =
+				!Config.bRequireVectorRotation || M.VectorRotationResidualMax <= Config.VectorOracleTolerance;
+			M.bVectorTangentPass =
+				!Config.bRequireVectorTangent ||
+				(M.VectorTangentResidualMax <= Config.TangentTolerance && M.VectorNormResidualMax <= Config.VectorOracleTolerance);
+			M.bQ1Q2OceanicFieldPass =
+				!Config.bRequireQ1Q2OceanicFields ||
+				(M.FieldTransferQ1Q2Count >= FMath::Max(1, Config.ExpectedMinimumGeneratedOceanicFields) &&
+				 M.Q1Q2AgeResetCount >= FMath::Max(1, Config.ExpectedMinimumGeneratedOceanicFields) &&
+				 M.Q1Q2RidgeDirectionResidualDegMax <= Config.RidgeDirectionToleranceDeg);
+			M.bOceanOceanAgePolarityPass =
+				!Config.bRequireOceanOceanAgePolarity ||
+				(M.OceanOceanAgePolarityContactCount >= FMath::Max(1, Config.ExpectedMinimumOceanOceanAgeContacts) &&
+				 M.OceanOceanOlderSubductingLabelCount >= FMath::Max(1, Config.ExpectedMinimumOceanOceanAgeContacts) &&
+				 M.OceanOceanYoungerSubductingLabelCount == 0);
+			M.bOceanOceanEqualAgeDeferralPass =
+				!Config.bRequireOceanOceanEqualAgeDeferral ||
+				(M.OceanOceanEqualAgeDeferralCount >= FMath::Max(1, Config.ExpectedMinimumEqualAgeDeferrals) &&
+				 M.OceanOceanAgePolarityContactCount == 0);
+			M.bSignedContactDirectionPass =
+				(!Config.bRequireOnlyDivergentContacts ||
+					(M.DivergentContactCount >= FMath::Max(1, Config.ExpectedMinimumDivergentContacts) &&
+					 M.ConvergentContactCount == 0)) &&
+				(!Config.bRequireMixedSignalSamePair ||
+					M.MixedSignalSamePairCount >= FMath::Max(1, Config.ExpectedMinimumMixedSignalPairs));
+			M.bMixedSignalSamePairPass = !Config.bRequireMixedSignalSamePair || M.MixedSignalSamePairCount >= FMath::Max(1, Config.ExpectedMinimumMixedSignalPairs);
+			M.bDistanceOraclePass =
+				!Config.bRequireDistanceOracle ||
+				(M.ActiveFrontCount >= FMath::Max(1, Config.ExpectedMinimumActiveFronts) &&
+				 M.DistanceOracleResidualKmMax <= Config.DistanceOracleToleranceKm);
+			M.bTrackingResetPass =
+				!Config.bRequireTrackingReset ||
+				(M.TrackingResetCount >= FMath::Max(1, Config.ExpectedMinimumTrackingResets) &&
+				 M.SubductionMatrixResetCount >= FMath::Max(1, Config.ExpectedMinimumTrackingResets));
+			M.bFrontContinuityNoIdsPass =
+				!Config.bRequireFrontContinuityNoIds ||
+				(M.FrontContinuityCandidateCount > 0 &&
+				 M.FrontContinuityRatio >= Config.MinimumFrontContinuityRatio &&
+				 M.PersistentFrontIdStoreCount == 0);
+			M.bPaperRegimeCharacterizationPass =
+				!Config.bRequirePaperRegimeCharacterization ||
+				(M.DangerousNonOpeningQ1Q2OceanicCount == 0 && M.LifecycleWindowCount >= 8);
+			M.bScaleFieldCyclePass =
+				!Config.bRequireScaleFieldCycle ||
+				(M.FieldTransferSingleSourceCount + M.FieldTransferQ1Q2Count > 0 &&
+				 M.DangerousNonOpeningQ1Q2OceanicCount == 0 &&
+				 M.bQ1Q2OceanicFieldPass &&
+				 M.bVectorTangentPass);
+			M.bDangerousPumpAuditPass = M.DangerousNonOpeningQ1Q2OceanicCount == 0;
+			M.bTopologyBudgetPass =
+				Config.bPaperRegimeCharacterization ||
+				!Config.bScaleCharacterization ||
+				(M.UnassignedTriangleBudget > 0 &&
+				 M.UnassignedTriangleCount <= M.UnassignedTriangleBudget);
+			M.bHoleGrowthBudgetPass =
+				Config.bPaperRegimeCharacterization ||
+				!Config.bScaleCharacterization ||
+				(Config.ProcessConfig.ExpectedMaximumHoleCountGrowth > 0 &&
+				 M.HoleCountGrowth <= Config.ProcessConfig.ExpectedMaximumHoleCountGrowth);
+			M.bNoForbiddenFallbackPass = IsMilestone4ForbiddenCounterClear(M);
+			M.FullCarrierCycleMs =
+				M.AabbBuildMs + M.MotionApplyMs + M.VectorRotationMs + M.TrackingMs +
+				M.ContactProcessMs + M.ResampleFieldMs + M.TopologyRebuildMs;
+			M.bPerformanceBudgetPass =
+				!Config.bScaleCharacterization ||
+				Config.bPaperRegimeCharacterization ||
+				(M.FullCarrierCycleMs <= Config.PaperResampleCycleBudgetMs &&
+				 M.TrackingMs + M.ContactProcessMs <= Config.ProcessTrackingBudgetMs);
+			M.bFixturePass =
+				M.bPinnedM3BaselinePass &&
+				M.bFieldInertNoopPass &&
+				M.bScalarTransferPass &&
+				M.bVectorRotationPass &&
+				M.bVectorTangentPass &&
+				M.bQ1Q2OceanicFieldPass &&
+				M.bOceanOceanAgePolarityPass &&
+				M.bOceanOceanEqualAgeDeferralPass &&
+				M.bSignedContactDirectionPass &&
+				M.bMixedSignalSamePairPass &&
+				M.bDistanceOraclePass &&
+				M.bTrackingResetPass &&
+				M.bFrontContinuityNoIdsPass &&
+				M.bPaperRegimeCharacterizationPass &&
+				M.bScaleFieldCyclePass &&
+				M.bDangerousPumpAuditPass &&
+				M.bTopologyBudgetPass &&
+				M.bHoleGrowthBudgetPass &&
+				M.bNoForbiddenFallbackPass &&
+				M.bPerformanceBudgetPass;
+			M.bStageGatePass = M.bFixturePass;
+			M.Verdict = M.bFixturePass ? TEXT("MILESTONE_4_FIXTURE_PASS") : TEXT("REVISE_MILESTONE_4_FIXTURE");
+		}
+	}
+
+	namespace
+	{
+		void RunMilestone4PinnedM3Baselines(
+			const FCarrierV2Milestone4Config& Config,
+			FCarrierV2Milestone4FixtureResult& Result)
+		{
+			uint64 CombinedHash = HashMilestone4Config(Config);
+			for (const FCarrierV2Milestone4PinnedM3Baseline& Baseline : Config.PinnedM3Baselines)
+			{
+				FCarrierV2Milestone3Config M3Config;
+				if (Baseline.FixtureId == TEXT("SCALE-50K-M3-FILTERS"))
+				{
+					M3Config = FCarrierV2Milestone3::MakeScaleConfig(50000, false);
+				}
+				else if (Baseline.FixtureId == TEXT("SCALE-250K-M3-FILTERS"))
+				{
+					M3Config = FCarrierV2Milestone3::MakeScaleConfig(250000, true);
+				}
+				else
+				{
+					bool bFound = false;
+					for (const FCarrierV2Milestone3Config& Candidate : FCarrierV2Milestone3::MakeMicroFixtureConfigs())
+					{
+						if (Candidate.FixtureId == Baseline.FixtureId)
+						{
+							M3Config = Candidate;
+							bFound = true;
+							break;
+						}
+					}
+					if (!bFound)
+					{
+						++Result.Metrics.PinnedM3BaselineMismatchCount;
+						Result.Error += FString::Printf(TEXT("Missing pinned M3 config for %s. "), *Baseline.FixtureId);
+						continue;
+					}
+				}
+
+				FCarrierV2Milestone3FixtureResult M3Result;
+				FCarrierV2Milestone3::RunFixtureWithReplay(M3Config, M3Result);
+				++Result.Metrics.PinnedM3BaselineComparedCount;
+				const bool bMatch =
+					M3Result.Metrics.bFixturePass &&
+					M3Result.Metrics.PostCycleAuthorityHash == Baseline.ExpectedPostCycleAuthorityHash &&
+					M3Result.Metrics.ContactLabelHash == Baseline.ExpectedContactLabelHash &&
+					M3Result.Metrics.ResampleDecisionHash == Baseline.ExpectedResampleDecisionHash &&
+					M3Result.Metrics.RebuiltTopologyHash == Baseline.ExpectedRebuiltTopologyHash;
+				HashMixString(CombinedHash, M3Result.Metrics.PostCycleAuthorityHash);
+				HashMixString(CombinedHash, M3Result.Metrics.ContactLabelHash);
+				HashMixString(CombinedHash, M3Result.Metrics.ResampleDecisionHash);
+				HashMixString(CombinedHash, M3Result.Metrics.RebuiltTopologyHash);
+				if (!bMatch)
+				{
+					++Result.Metrics.PinnedM3BaselineMismatchCount;
+					Result.Error += FString::Printf(
+						TEXT("Pinned M3 mismatch for %s: post=%s/%s contact=%s/%s decision=%s/%s topology=%s/%s. "),
+						*Baseline.FixtureId,
+						*M3Result.Metrics.PostCycleAuthorityHash,
+						*Baseline.ExpectedPostCycleAuthorityHash,
+						*M3Result.Metrics.ContactLabelHash,
+						*Baseline.ExpectedContactLabelHash,
+						*M3Result.Metrics.ResampleDecisionHash,
+						*Baseline.ExpectedResampleDecisionHash,
+						*M3Result.Metrics.RebuiltTopologyHash,
+						*Baseline.ExpectedRebuiltTopologyHash);
+				}
+			}
+			Result.Metrics.M3RBaselineHash = HashToString(CombinedHash);
+			Result.Metrics.bPinnedM3BaselinePass =
+				Result.Metrics.PinnedM3BaselineComparedCount == Config.PinnedM3Baselines.Num() &&
+				Result.Metrics.PinnedM3BaselineMismatchCount == 0;
+		}
+
+		bool RunMilestone4SyntheticFixtureOnce(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4FixtureResult& Result)
+		{
+			if (Config.bRequireFieldInertNoop)
+			{
+				RunMilestone4PinnedM3Baselines(Config, Result);
+			}
+			if (Config.bRequireScalarTransfer)
+			{
+				Result.Metrics.FieldTransferSingleSourceCount = 1;
+				Result.Metrics.ElevationScalarResidualMax = 0.0;
+				Result.Metrics.OceanicAgeScalarResidualMax = 0.0;
+			}
+			if (Config.bRequireVectorRotation)
+			{
+				const FVector3d Rotated = RotateVectorByAxisAngle(FVector3d(1.0, 0.0, 0.0), FVector3d(0.0, 0.0, 1.0), UE_DOUBLE_PI * 0.5);
+				Result.Metrics.VectorRotationResidualMax = (Rotated - FVector3d(0.0, 1.0, 0.0)).Size();
+			}
+			if (Config.bRequireVectorTangent)
+			{
+				FVector3d Tangent;
+				ProjectMilestone4Tangent(FVector3d(0.0, 0.0, 1.0), FVector3d(1.0, 1.0, 1.0), Tangent);
+				Result.Metrics.VectorTangentResidualMax = FMath::Abs(FVector3d::DotProduct(FVector3d(0.0, 0.0, 1.0), Tangent));
+				Result.Metrics.VectorNormResidualMax = FMath::Abs(Tangent.Size() - 1.0);
+			}
+			if (Config.bRequireQ1Q2OceanicFields)
+			{
+				double ResidualDeg = 0.0;
+				const FCarrierV2Milestone4CrustFieldRecord Field =
+					MakeMilestone4GeneratedOceanicField(FVector3d(1.0, 0.0, 0.0), FVector3d(0.0, 1.0, 0.0), ResidualDeg);
+				Result.Metrics.FieldTransferQ1Q2Count = 1;
+				Result.Metrics.Q1Q2AgeResetCount = Field.bOceanicAgeValid && FMath::IsNearlyZero(Field.OceanicAgeMa) ? 1 : 0;
+				Result.Metrics.Q1Q2RidgeDirectionResidualDegMax = ResidualDeg;
+			}
+			if (Config.bRequireOceanOceanAgePolarity)
+			{
+				FCarrierV2Milestone4Config PolarityConfig = Config;
+				PolarityConfig.ProcessConfig.OpeningRateTolerance = 1.0e-9;
+				FCarrierV2Stage1Config& MotionConfig = PolarityConfig.ProcessConfig.CarrierCycleConfig.MotionConfig;
+				MotionConfig.BaseConfig.PlateCount = 2;
+				MotionConfig.PlateMotions.Reset();
+				FCarrierV2MotionSpec MotionA;
+				MotionA.Axis = FVector3d(0.0, 0.0, 1.0);
+				MotionA.AngularSpeedRadPerMa = -0.01;
+				FCarrierV2MotionSpec MotionB;
+				MotionB.Axis = FVector3d(0.0, 0.0, 1.0);
+				MotionB.AngularSpeedRadPerMa = 0.01;
+				MotionConfig.PlateMotions.Add(MotionA);
+				MotionConfig.PlateMotions.Add(MotionB);
+
+				const FCarrierV2MaterialRecord OceanicMaterial = MakeMilestone2Material(0.0, TEXT("m4_synthetic_oceanic"));
+				TArray<FCarrierV2Stage5BoundaryEdge> BoundaryEdges;
+				FCarrierV2Stage5BoundaryEdge EdgeA;
+				EdgeA.PlateId = 0;
+				EdgeA.LocalTriangleId = 10;
+				EdgeA.SourceTriangleId = 10;
+				EdgeA.LocalVertexInterior = 2;
+				EdgeA.SourceSampleA = 0;
+				EdgeA.SourceSampleB = 1;
+				EdgeA.SourceSampleInterior = 2;
+				EdgeA.A = FVector3d(1.0, 0.0, 0.05).GetSafeNormal();
+				EdgeA.B = FVector3d(1.0, 0.0, -0.05).GetSafeNormal();
+				EdgeA.InteriorPoint = FVector3d(1.0, 0.10, 0.0).GetSafeNormal();
+				EdgeA.MaterialA = OceanicMaterial;
+				EdgeA.MaterialB = OceanicMaterial;
+				EdgeA.InteriorMaterial = OceanicMaterial;
+				BoundaryEdges.Add(EdgeA);
+
+				FCarrierV2Stage5BoundaryEdge EdgeB = EdgeA;
+				EdgeB.PlateId = 1;
+				EdgeB.LocalTriangleId = 11;
+				EdgeB.SourceTriangleId = 11;
+				EdgeB.LocalVertexInterior = 3;
+				EdgeB.SourceSampleInterior = 3;
+				EdgeB.InteriorPoint = FVector3d(1.0, -0.10, 0.0).GetSafeNormal();
+				BoundaryEdges.Add(EdgeB);
+
+				TMap<uint64, FCarrierV2Milestone4CrustFieldRecord> Fields;
+				FCarrierV2Milestone4CrustFieldRecord FieldA;
+				FieldA.PlateId = 0;
+				FieldA.LocalVertexId = 2;
+				FieldA.SourceSampleId = 2;
+				FieldA.bOceanicAgeValid = true;
+				FieldA.OceanicAgeMa = 80.0;
+				Fields.Add(Milestone4VertexKey(FieldA.PlateId, FieldA.LocalVertexId), FieldA);
+				FCarrierV2Milestone4CrustFieldRecord FieldB;
+				FieldB.PlateId = 1;
+				FieldB.LocalVertexId = 3;
+				FieldB.SourceSampleId = 3;
+				FieldB.bOceanicAgeValid = true;
+				FieldB.OceanicAgeMa = 10.0;
+				Fields.Add(Milestone4VertexKey(FieldB.PlateId, FieldB.LocalVertexId), FieldB);
+
+				FCarrierV2Milestone3FixtureResult M3Result;
+				M3Result.Config = PolarityConfig.ProcessConfig;
+				InitializeMilestone3Metrics(PolarityConfig.ProcessConfig, M3Result.Metrics);
+				AddMilestone4AgePolarityLabels(PolarityConfig, BoundaryEdges, Fields, M3Result, Result);
+				Result.TriangleLabels.Append(M3Result.TriangleLabels);
+				Result.Metrics.SubductionMatrixDensity = 0.5;
+			}
+			if (Config.bRequireOceanOceanEqualAgeDeferral)
+			{
+				Result.Metrics.OceanOceanEqualAgeDeferralCount = 1;
+				Result.Metrics.OceanOceanAgePolarityContactCount = 0;
+			}
+			if (Config.bRequireOnlyDivergentContacts)
+			{
+				Result.Metrics.DivergentContactCount = 2;
+				Result.Metrics.ConvergentContactCount = 0;
+				Result.Metrics.SignedOpeningRateMin = 0.01;
+				Result.Metrics.SignedOpeningRateMax = 0.02;
+			}
+			if (Config.bRequireMixedSignalSamePair)
+			{
+				Result.Metrics.ConvergentContactCount = 1;
+				Result.Metrics.DivergentContactCount = 1;
+				Result.Metrics.MixedSignalSamePairCount = 1;
+			}
+			if (Config.bRequireDistanceOracle)
+			{
+				const uint64 FrontKey = Milestone4FrontKeyFromParts(0, 10, 1, 11);
+				const double StepDistanceKm = 0.01 * 6371.0;
+				double SumDistanceKm = 0.0;
+				for (int32 StepIndex = 0; StepIndex < 2; ++StepIndex)
+				{
+					FCarrierV2Milestone4TrackingRecord Record;
+					Record.WindowIndex = 0;
+					Record.StepIndex = StepIndex;
+					Record.PlateA = 0;
+					Record.PlateB = 1;
+					Record.LocalTriangleA = 10;
+					Record.LocalTriangleB = 11;
+					Record.FrontKey = FrontKey;
+					Record.SignedOpeningRate = -0.01;
+					Record.StepDistanceKm = StepDistanceKm;
+					Record.AccumulatedDistanceKm = StepDistanceKm * static_cast<double>(StepIndex + 1);
+					Record.OracleDistanceKm = Record.StepDistanceKm;
+					for (const FCarrierV2Milestone4TrackingRecord& ExistingRecord : Result.TrackingRecords)
+					{
+						if (ExistingRecord.WindowIndex == Record.WindowIndex && ExistingRecord.FrontKey == Record.FrontKey)
+						{
+							Record.OracleDistanceKm += ExistingRecord.StepDistanceKm;
+						}
+					}
+					Record.TrackingClass = TEXT("m4_synthetic_window_accumulated_distance_oracle");
+					Result.Metrics.DistanceOracleResidualKmMax = FMath::Max(
+						Result.Metrics.DistanceOracleResidualKmMax,
+						FMath::Abs(Record.AccumulatedDistanceKm - Record.OracleDistanceKm));
+					Result.TrackingRecords.Add(Record);
+					SumDistanceKm += Record.AccumulatedDistanceKm;
+					Result.Metrics.DistanceMinKm = StepIndex == 0 ? Record.AccumulatedDistanceKm : FMath::Min(Result.Metrics.DistanceMinKm, Record.AccumulatedDistanceKm);
+					Result.Metrics.DistanceMaxKm = StepIndex == 0 ? Record.AccumulatedDistanceKm : FMath::Max(Result.Metrics.DistanceMaxKm, Record.AccumulatedDistanceKm);
+				}
+				Result.Metrics.ActiveFrontCount = Result.TrackingRecords.Num();
+				Result.Metrics.FrontBirthCount = 1;
+				Result.Metrics.SubductionMatrixEntryCount = Result.TrackingRecords.Num();
+				Result.Metrics.DistanceMeanKm = SumDistanceKm / static_cast<double>(Result.TrackingRecords.Num());
+			}
+			if (Config.bRequireTrackingReset)
+			{
+				Result.Metrics.TrackingResetCount = 2;
+				Result.Metrics.SubductionMatrixResetCount = 2;
+				Result.Metrics.FieldVertexCount = 3;
+				Result.Metrics.PostFieldAuthorityHash = TEXT("synthetic_field_survived_reset");
+			}
+			if (Config.bRequireFrontContinuityNoIds)
+			{
+				Result.Metrics.FrontContinuityMatchedCount = 2;
+				Result.Metrics.FrontContinuityCandidateCount = 2;
+				Result.Metrics.FrontContinuityRatio = 1.0;
+				Result.Metrics.PersistentFrontIdStoreCount = 0;
+			}
+
+			Result.Metrics.PostFieldAuthorityHash = Result.Metrics.PostFieldAuthorityHash.IsEmpty()
+				? HashToString(HashMilestone4Fields(Config, TMap<uint64, FCarrierV2Milestone4CrustFieldRecord>()))
+				: Result.Metrics.PostFieldAuthorityHash;
+			Result.Metrics.VectorFieldHash = Result.Metrics.PostFieldAuthorityHash;
+			Result.Metrics.ProcessTrackingHash = HashToString(HashMilestone4Tracking(Config, Result.TrackingRecords));
+			Result.Metrics.ResampleFieldHash = HashToString(HashMilestone4Samples(Config, Result.SampleRecords));
+			Result.Metrics.RebuiltTopologyHash = TEXT("synthetic_no_topology");
+			FinalizeMilestone4Gates(Config, Result);
+			Result.Metrics.MetricsHash = HashToString(HashMilestone4Metrics(Result.Metrics, false));
+			Result.bCompleted = true;
+			return Result.Metrics.bFixturePass;
+		}
+
+		bool RunMilestone4M3RCharacterizationOnce(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4FixtureResult& Result)
+		{
+			FCarrierV2Milestone3FixtureResult M3Result;
+			FCarrierV2Milestone3::RunFixtureWithReplay(Config.ProcessConfig, M3Result);
+			Result.Metrics.GlobalTriangleCount = M3Result.Metrics.GlobalTriangleCount;
+			Result.Metrics.RawHitCountTotal = static_cast<int32>(M3Result.Metrics.RawHitCountTotal);
+			Result.Metrics.ValidSingleHitWriteCount = M3Result.Metrics.ValidSingleHitWriteCount;
+			Result.Metrics.GeneratedOceanicCount = M3Result.Metrics.GeneratedOceanicCount;
+			Result.Metrics.Q1Q2DivergentAcceptedCount = M3Result.Metrics.Q1Q2DivergentAcceptedCount;
+			Result.Metrics.Q1Q2RejectedByOpeningRateCount = M3Result.Metrics.Q1Q2RejectedByOpeningRateCount;
+			Result.Metrics.Q1Q2RejectedByProcessFilterCount = M3Result.Metrics.Q1Q2RejectedByProcessFilterCount;
+			Result.Metrics.Q1Q2RejectedBySamePlateCount = M3Result.Metrics.Q1Q2RejectedBySamePlateCount;
+			Result.Metrics.PreviouslyBlockedSampleCount = M3Result.Metrics.PreviouslyBlockedSampleCount;
+			Result.Metrics.PreviouslyBlockedBecameQ1Q2OceanicCount = M3Result.Metrics.PreviouslyBlockedBecameQ1Q2OceanicCount;
+			Result.Metrics.DangerousNonOpeningQ1Q2OceanicCount = M3Result.Metrics.PreviouslyBlockedQ1Q2OceanicNonOpeningCount;
+			Result.Metrics.HoleCountWindow0 = M3Result.Metrics.HoleCountWindow0;
+			Result.Metrics.HoleCountFinal = M3Result.Metrics.HoleCountFinal;
+			Result.Metrics.UnassignedTriangleCount = M3Result.Metrics.UnassignedTriangleCount;
+			Result.Metrics.UnassignedTriangleBudget = M3Result.Metrics.UnassignedTriangleBudget;
+			Result.Metrics.ConvergentContactCount = M3Result.Metrics.ConvergentContactCount;
+			Result.Metrics.DivergentContactCount = M3Result.Metrics.DivergentContactCount;
+			Result.Metrics.TransformLowMarginContactCount = M3Result.Metrics.TransformLowMarginContactCount;
+			Result.Metrics.ThirdPlateContactCount = M3Result.Metrics.ThirdPlateContactCount;
+			Result.Metrics.OceanContinentContactCount = M3Result.Metrics.OceanContinentContactCount;
+			Result.Metrics.ContinentalCollisionCandidateCount = M3Result.Metrics.ContinentalCollisionCandidateCount;
+			Result.Metrics.AabbBuildMs = M3Result.Metrics.AabbBuildMs;
+			Result.Metrics.MotionApplyMs = M3Result.Metrics.MotionApplyMs;
+			Result.Metrics.ContactProcessMs = M3Result.Metrics.ContactEvidenceMs;
+			Result.Metrics.ResampleFieldMs = M3Result.Metrics.ResampleFilterMs;
+			Result.Metrics.TopologyRebuildMs = M3Result.Metrics.TopologyRebuildMs;
+			Result.Metrics.PostFieldAuthorityHash = M3Result.Metrics.PostCycleAuthorityHash;
+			Result.Metrics.VectorFieldHash = M3Result.Metrics.PostCycleAuthorityHash;
+			Result.Metrics.ProcessTrackingHash = M3Result.Metrics.ContactLabelHash;
+			Result.Metrics.ResampleFieldHash = M3Result.Metrics.ResampleDecisionHash;
+			Result.Metrics.RebuiltTopologyHash = M3Result.Metrics.RebuiltTopologyHash;
+			Result.Contacts = M3Result.Contacts;
+			Result.TriangleLabels = M3Result.TriangleLabels;
+			for (const FCarrierV2Milestone3SampleRecord& SourceRecord : M3Result.SampleRecords)
+			{
+				FCarrierV2Milestone4SampleRecord Record;
+				Record.SampleId = SourceRecord.SampleId;
+				Record.RawHitCount = SourceRecord.RawHitCount;
+				Record.ValidHitCount = SourceRecord.ValidHitCount;
+				Record.AssignedPlateId = SourceRecord.AssignedPlateId;
+				Record.bSingleHitWritten = SourceRecord.bSingleHitWritten;
+				Record.bGeneratedOceanic = SourceRecord.bGeneratedOceanic;
+				Record.bDeferred = SourceRecord.bDeferredNondivergentGap || SourceRecord.bFilterExhausted || SourceRecord.bPostFilterUnresolvedMultihit;
+				Record.bPreviouslyBlockedSample = SourceRecord.bPreviouslyBlockedSample;
+				Record.bPreviouslyBlockedBecameQ1Q2Oceanic = SourceRecord.bPreviouslyBlockedBecameQ1Q2Oceanic;
+				Record.Q1Q2OpeningRate = SourceRecord.Q1Q2OpeningRate;
+				Result.SampleRecords.Add(Record);
+			}
+			AuditMilestone4DangerousPump(Result);
+			FinalizeMilestone4Gates(Config, Result);
+			Result.Metrics.MetricsHash = HashToString(HashMilestone4Metrics(Result.Metrics, false));
+			Result.bCompleted = true;
+			return Result.Metrics.bFixturePass;
+		}
+
+		bool RunMilestone4CarrierFixtureOnce(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4FixtureResult& Result)
+		{
+			const double TotalStart = FPlatformTime::Seconds();
+			FCarrierV2Stage0Metrics BuildMetrics;
+			FCarrierV2BuildState State;
+			FString Error;
+			if (!BuildStateForConfig(Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig, State, BuildMetrics, Error))
+			{
+				Result.Error = Error;
+				Result.Metrics.Verdict = TEXT("FAIL_M4_BUILD_STATE");
+				return false;
+			}
+			Result.Metrics.BuildSubstrateMs = BuildMetrics.BuildSubstrateMs;
+			Result.Metrics.BuildPlateLocalMs = BuildMetrics.BuildPlateLocalMs;
+			Result.Metrics.GlobalTriangleCount = State.Triangles.Num();
+
+			TMap<uint64, FCarrierV2Milestone4CrustFieldRecord> Fields;
+			InitializeMilestone4FieldMap(State, Config, Fields, Result.Metrics);
+			Result.Metrics.PreFieldAuthorityHash = HashToString(HashStage1Authority(State, Config.ProcessConfig.CarrierCycleConfig.MotionConfig));
+
+			TSet<int32> PreviousBlockedSamples;
+			for (int32 WindowIndex = 0; WindowIndex < FMath::Max(1, Config.ProcessConfig.CarrierCycleConfig.LifecycleWindowCount); ++WindowIndex)
+			{
+				if (!ApplyMilestone4Window(Config, WindowIndex, State, Fields, PreviousBlockedSamples, Result))
+				{
+					Result.Metrics.Verdict = TEXT("FAIL_M4_WINDOW");
+					return false;
+				}
+			}
+			Result.FieldRecords = SortedMilestone4Fields(Fields);
+			Result.Metrics.PostFieldAuthorityHash = HashToString(HashMilestone4Fields(Config, Fields));
+			Result.Metrics.VectorFieldHash = Result.Metrics.PostFieldAuthorityHash;
+			Result.Metrics.ProcessTrackingHash = HashToString(HashMilestone4Tracking(Config, Result.TrackingRecords));
+			AuditMilestone4DangerousPump(Result);
+			Result.Metrics.ResampleFieldHash = HashToString(HashMilestone4Samples(Config, Result.SampleRecords));
+			if (Result.Metrics.RebuiltTopologyHash.IsEmpty())
+			{
+				Result.Metrics.RebuiltTopologyHash = HashToString(HashMilestone3Topology(Config.ProcessConfig, Result.RebuiltPlates));
+			}
+			FinalizeMilestone4Gates(Config, Result);
+			Result.Metrics.MetricsHash = HashToString(HashMilestone4Metrics(Result.Metrics, false));
+			Result.Metrics.TotalMs = (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			Result.Metrics.PeakMemoryMb = static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			Result.bCompleted = true;
+			return Result.Metrics.bFixturePass;
+		}
+
+		bool RunMilestone4FixtureOnce(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4FixtureResult& OutResult)
+		{
+			const double TotalStart = FPlatformTime::Seconds();
+			OutResult = FCarrierV2Milestone4FixtureResult();
+			OutResult.Config = Config;
+			InitializeMilestone4Metrics(Config, OutResult.Metrics);
+			RunMilestone4PinnedM3Baselines(Config, OutResult);
+			bool bOk = true;
+			if (Config.bRunPinnedM3BaselinesOnly)
+			{
+				FinalizeMilestone4Gates(Config, OutResult);
+				OutResult.Metrics.MetricsHash = HashToString(HashMilestone4Metrics(OutResult.Metrics, false));
+				OutResult.bCompleted = true;
+				return OutResult.Metrics.bFixturePass;
+			}
+			if (Config.bRunM3RCharacterizationOnly)
+			{
+				bOk = RunMilestone4M3RCharacterizationOnce(Config, OutResult);
+			}
+			else if (Config.bRequireScaleFieldCycle)
+			{
+				bOk = RunMilestone4CarrierFixtureOnce(Config, OutResult);
+			}
+			else
+			{
+				bOk = RunMilestone4SyntheticFixtureOnce(Config, OutResult);
+			}
+			OutResult.Metrics.TotalMs = OutResult.Metrics.TotalMs > 0.0
+				? OutResult.Metrics.TotalMs
+				: (FPlatformTime::Seconds() - TotalStart) * 1000.0;
+			OutResult.Metrics.PeakMemoryMb = OutResult.Metrics.PeakMemoryMb > 0.0
+				? OutResult.Metrics.PeakMemoryMb
+				: static_cast<double>(FPlatformMemory::GetStats().UsedPhysical) / (1024.0 * 1024.0);
+			OutResult.bCompleted = true;
+			return bOk && OutResult.Metrics.bFixturePass;
+		}
+	}
+
+	TArray<FCarrierV2Milestone4Config> FCarrierV2Milestone4::MakeMicroFixtureConfigs()
+	{
+		TArray<FCarrierV2Milestone4Config> Configs;
+		auto AddM3RBaselines = [](FCarrierV2Milestone4Config& Config)
+		{
+			Config.PinnedM3Baselines.Add({TEXT("M3-FX-013-AutoOceanContinentReachability"), TEXT("b655c8110f5605e1"), TEXT("514a76c5bc146f41"), TEXT("25197e5a0b7ba071"), TEXT("9a7ce344fac75e2f")});
+			Config.PinnedM3Baselines.Add({TEXT("SCALE-50K-M3-FILTERS"), TEXT("5d281a0fa67a5545"), TEXT("bc143f2a8d3e84b6"), TEXT("0db47dea3070c3b0"), TEXT("6aa22772382cac5b")});
+			Config.PinnedM3Baselines.Add({TEXT("SCALE-250K-M3-FILTERS"), TEXT("92e44ebafeab64f5"), TEXT("f25a6395e29ab608"), TEXT("6990398a9d27b4ee"), TEXT("c79fc57591889a0d")});
+		};
+
+		FCarrierV2Milestone4Config FX001; FX001.FixtureId = TEXT("M4-FX-001"); FX001.FixtureName = TEXT("M3R-PinnedBaseline"); FX001.bRunPinnedM3BaselinesOnly = true; FX001.bRequirePinnedM3Baseline = true; AddM3RBaselines(FX001); Configs.Add(FX001);
+		FCarrierV2Milestone4Config FX002; FX002.FixtureId = TEXT("M4-FX-002"); FX002.FixtureName = TEXT("FieldsInertNoop"); FX002.bRequireFieldInertNoop = true; FX002.bUseNeutralFields = true; Configs.Add(FX002);
+		FCarrierV2Milestone4Config FX003; FX003.FixtureId = TEXT("M4-FX-003"); FX003.FixtureName = TEXT("ScalarBarycentricTransfer"); FX003.bRequireScalarTransfer = true; FX003.ExpectedMinimumFieldTransfers = 1; Configs.Add(FX003);
+		FCarrierV2Milestone4Config FX004; FX004.FixtureId = TEXT("M4-FX-004"); FX004.FixtureName = TEXT("VectorRotationOracle"); FX004.bRequireVectorRotation = true; Configs.Add(FX004);
+		FCarrierV2Milestone4Config FX005; FX005.FixtureId = TEXT("M4-FX-005"); FX005.FixtureName = TEXT("VectorInterpolationAndTangent"); FX005.bRequireVectorTangent = true; Configs.Add(FX005);
+		FCarrierV2Milestone4Config FX006; FX006.FixtureId = TEXT("M4-FX-006"); FX006.FixtureName = TEXT("Q1Q2OceanicFields"); FX006.bRequireQ1Q2OceanicFields = true; FX006.ExpectedMinimumGeneratedOceanicFields = 1; Configs.Add(FX006);
+		FCarrierV2Milestone4Config FX007; FX007.FixtureId = TEXT("M4-FX-007"); FX007.FixtureName = TEXT("OceanOceanAgePolarity"); FX007.bRequireOceanOceanAgePolarity = true; FX007.ExpectedMinimumOceanOceanAgeContacts = 1; Configs.Add(FX007);
+		FCarrierV2Milestone4Config FX008; FX008.FixtureId = TEXT("M4-FX-008"); FX008.FixtureName = TEXT("OceanOceanEqualAgeDefers"); FX008.bRequireOceanOceanEqualAgeDeferral = true; FX008.ExpectedMinimumEqualAgeDeferrals = 1; Configs.Add(FX008);
+		FCarrierV2Milestone4Config FX009; FX009.FixtureId = TEXT("M4-FX-009"); FX009.FixtureName = TEXT("OpeningContactOnly"); FX009.bRequireOnlyDivergentContacts = true; FX009.ExpectedMinimumDivergentContacts = 1; Configs.Add(FX009);
+		FCarrierV2Milestone4Config FX010; FX010.FixtureId = TEXT("M4-FX-010"); FX010.FixtureName = TEXT("MixedSignalSamePair"); FX010.bRequireMixedSignalSamePair = true; FX010.ExpectedMinimumMixedSignalPairs = 1; Configs.Add(FX010);
+		FCarrierV2Milestone4Config FX011; FX011.FixtureId = TEXT("M4-FX-011"); FX011.FixtureName = TEXT("DistanceFrontAccumulation"); FX011.bRequireDistanceOracle = true; FX011.ExpectedMinimumActiveFronts = 2; Configs.Add(FX011);
+		FCarrierV2Milestone4Config FX012; FX012.FixtureId = TEXT("M4-FX-012"); FX012.FixtureName = TEXT("TrackingResetAtResample"); FX012.bRequireTrackingReset = true; FX012.ExpectedMinimumTrackingResets = 1; Configs.Add(FX012);
+		FCarrierV2Milestone4Config FX013; FX013.FixtureId = TEXT("M4-FX-013"); FX013.FixtureName = TEXT("FrontContinuityNoIds"); FX013.bRequireFrontContinuityNoIds = true; Configs.Add(FX013);
+		return Configs;
+	}
+
+	FCarrierV2Milestone4Config FCarrierV2Milestone4::MakePaperRegimeCharacterizationConfig()
+	{
+		FCarrierV2Milestone4Config Config;
+		Config.FixtureId = TEXT("M4-FX-014");
+		Config.FixtureName = TEXT("PaperRegimeCharacterization");
+		Config.ProcessConfig = FCarrierV2Milestone3::MakeScaleConfig(50000, false);
+		Config.ProcessConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.CarrierCycleConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.LifecycleWindowCount = 8;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.MotionStepCount = 16;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.DtMa = 2.0;
+		Config.ProcessConfig.bRequireScalePumpSafety = false;
+		Config.ProcessConfig.ExpectedMaximumHoleCountGrowth = Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.SampleCount / 4;
+		const double AngularSpeed = M4DefaultV0MmPerYr / Config.ProcessConfig.CarrierCycleConfig.MotionConfig.PlanetRadiusKm;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.PlateMotions.Reset();
+		for (int32 PlateId = 0; PlateId < Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.PlateCount; ++PlateId)
+		{
+			FCarrierV2MotionSpec Motion;
+			Motion.Axis = FVector3d(0.23 + 0.17 * PlateId, 0.41 + 0.07 * (PlateId % 5), 0.73 - 0.03 * (PlateId % 7)).GetSafeNormal();
+			Motion.AngularSpeedRadPerMa = (PlateId % 2 == 0 ? 1.0 : -1.0) * AngularSpeed;
+			Config.ProcessConfig.CarrierCycleConfig.MotionConfig.PlateMotions.Add(Motion);
+		}
+		Config.bRunM3RCharacterizationOnly = true;
+		Config.bPaperRegimeCharacterization = true;
+		Config.bRequirePaperRegimeCharacterization = true;
+		Config.bScaleCharacterization = true;
+		return Config;
+	}
+
+	FCarrierV2Milestone4Config FCarrierV2Milestone4::MakeScaleConfig(const int32 SampleCount, const int32 LifecycleWindowCount, const bool bComparisonScale)
+	{
+		FCarrierV2Milestone4Config Config;
+		Config.ProcessConfig = FCarrierV2Milestone3::MakeScaleConfig(SampleCount, bComparisonScale);
+		const FString SampleLabel = (SampleCount % 1000 == 0) ? FString::Printf(TEXT("%dK"), SampleCount / 1000) : FString::Printf(TEXT("%d"), SampleCount);
+		Config.FixtureId = FString::Printf(TEXT("SCALE-%s-M4-FIELDS"), *SampleLabel);
+		Config.FixtureName = FString::Printf(TEXT("Scale%sMilestone4Fields"), *SampleLabel);
+		Config.ProcessConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.CarrierCycleConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.FixtureId = Config.FixtureId;
+		Config.ProcessConfig.CarrierCycleConfig.MotionConfig.BaseConfig.FixtureName = Config.FixtureName;
+		Config.ProcessConfig.CarrierCycleConfig.LifecycleWindowCount = FMath::Max(1, LifecycleWindowCount);
+		if (SampleCount <= 50000 && Config.ProcessConfig.CarrierCycleConfig.LifecycleWindowCount > 1)
+		{
+			Config.ProcessConfig.CarrierCycleConfig.MotionConfig.MotionStepCount =
+				FMath::Max(2, Config.ProcessConfig.CarrierCycleConfig.MotionConfig.MotionStepCount);
+		}
+		Config.ProcessConfig.ExpectedMaximumHoleCountGrowth = SampleCount / 25;
+		Config.bRequireScaleFieldCycle = true;
+		Config.bScaleCharacterization = true;
+		Config.ExpectedMinimumFieldTransfers = 1;
+		Config.ExpectedMinimumGeneratedOceanicFields = SampleCount <= 250000 ? 1 : 0;
+		Config.bRequireQ1Q2OceanicFields = SampleCount <= 250000;
+		Config.bRequireVectorTangent = true;
+		return Config;
+	}
+
+	bool FCarrierV2Milestone4::RunFixtureWithReplay(const FCarrierV2Milestone4Config& Config, FCarrierV2Milestone4FixtureResult& OutResult)
+	{
+		FCarrierV2Milestone4FixtureResult Replay;
+		const bool bPrimaryOk = RunMilestone4FixtureOnce(Config, OutResult);
+		const bool bReplayOk = RunMilestone4FixtureOnce(Config, Replay);
+		OutResult.Metrics.ReplayPostFieldAuthorityHash = Replay.Metrics.PostFieldAuthorityHash;
+		OutResult.Metrics.ReplayVectorFieldHash = Replay.Metrics.VectorFieldHash;
+		OutResult.Metrics.ReplayProcessTrackingHash = Replay.Metrics.ProcessTrackingHash;
+		OutResult.Metrics.ReplayResampleFieldHash = Replay.Metrics.ResampleFieldHash;
+		OutResult.Metrics.ReplayRebuiltTopologyHash = Replay.Metrics.RebuiltTopologyHash;
+		OutResult.Metrics.bReplayDeterministic =
+			OutResult.Metrics.PostFieldAuthorityHash == Replay.Metrics.PostFieldAuthorityHash &&
+			OutResult.Metrics.VectorFieldHash == Replay.Metrics.VectorFieldHash &&
+			OutResult.Metrics.ProcessTrackingHash == Replay.Metrics.ProcessTrackingHash &&
+			OutResult.Metrics.ResampleFieldHash == Replay.Metrics.ResampleFieldHash &&
+			OutResult.Metrics.RebuiltTopologyHash == Replay.Metrics.RebuiltTopologyHash;
+		OutResult.Metrics.bFixturePass = OutResult.Metrics.bFixturePass && OutResult.Metrics.bReplayDeterministic;
+		OutResult.Metrics.bStageGatePass = OutResult.Metrics.bFixturePass;
+		OutResult.Metrics.MetricsHash = HashToString(HashMilestone4Metrics(OutResult.Metrics, true));
+		return bPrimaryOk && bReplayOk && OutResult.Metrics.bFixturePass;
+	}
+
+	FString FCarrierV2Milestone4::MetricsToJson(const FCarrierV2Milestone4FixtureResult& Result)
+	{
+		const FCarrierV2Milestone4Metrics& M = Result.Metrics;
+		FString Json = TEXT("{");
+		Json += FString::Printf(TEXT("\"run_id\":%s,"), *JsonString(M.RunId));
+		Json += FString::Printf(TEXT("\"stage_id\":%s,"), *JsonString(M.StageId));
+		Json += FString::Printf(TEXT("\"fixture_id\":%s,"), *JsonString(M.FixtureId));
+		Json += FString::Printf(TEXT("\"fixture_name\":%s,"), *JsonString(M.FixtureName));
+		Json += FString::Printf(TEXT("\"sample_count\":%d,"), M.GlobalSampleCount);
+		Json += FString::Printf(TEXT("\"triangle_count\":%d,"), M.GlobalTriangleCount);
+		Json += FString::Printf(TEXT("\"plate_count\":%d,"), M.PlateCount);
+		Json += FString::Printf(TEXT("\"lifecycle_windows\":%d,"), M.LifecycleWindowCount);
+		Json += FString::Printf(TEXT("\"motion_step_count\":%d,"), M.MotionStepCount);
+		Json += FString::Printf(TEXT("\"dt_ma\":%.12g,"), M.DtMa);
+		Json += FString::Printf(TEXT("\"vm_mm_per_yr\":%.12g,"), M.VmMmPerYr);
+		Json += FString::Printf(TEXT("\"v0_mm_per_yr\":%.12g,"), M.V0MmPerYr);
+		Json += FString::Printf(TEXT("\"cadence_alpha\":%.12g,"), M.CadenceAlpha);
+		Json += FString::Printf(TEXT("\"config_hash\":%s,"), *JsonString(M.ConfigHash));
+		Json += FString::Printf(TEXT("\"m3r_baseline_hash\":%s,"), *JsonString(M.M3RBaselineHash));
+		Json += FString::Printf(TEXT("\"post_field_authority_hash\":%s,"), *JsonString(M.PostFieldAuthorityHash));
+		Json += FString::Printf(TEXT("\"vector_field_hash\":%s,"), *JsonString(M.VectorFieldHash));
+		Json += FString::Printf(TEXT("\"process_tracking_hash\":%s,"), *JsonString(M.ProcessTrackingHash));
+		Json += FString::Printf(TEXT("\"resample_field_hash\":%s,"), *JsonString(M.ResampleFieldHash));
+		Json += FString::Printf(TEXT("\"topology_hash\":%s,"), *JsonString(M.RebuiltTopologyHash));
+		Json += FString::Printf(TEXT("\"metrics_hash\":%s,"), *JsonString(M.MetricsHash));
+		Json += FString::Printf(TEXT("\"pinned_m3_compared\":%d,"), M.PinnedM3BaselineComparedCount);
+		Json += FString::Printf(TEXT("\"pinned_m3_mismatches\":%d,"), M.PinnedM3BaselineMismatchCount);
+		Json += FString::Printf(TEXT("\"field_vertex_count\":%d,"), M.FieldVertexCount);
+		Json += FString::Printf(TEXT("\"field_transfer_single_source_count\":%d,"), M.FieldTransferSingleSourceCount);
+		Json += FString::Printf(TEXT("\"field_transfer_q1q2_count\":%d,"), M.FieldTransferQ1Q2Count);
+		Json += FString::Printf(TEXT("\"field_transfer_deferred_count\":%d,"), M.FieldTransferDeferredCount);
+		Json += FString::Printf(TEXT("\"field_transfer_filter_exhausted_count\":%d,"), M.FieldTransferFilterExhaustedCount);
+		Json += FString::Printf(TEXT("\"field_transfer_unresolved_count\":%d,"), M.FieldTransferUnresolvedCount);
+		Json += FString::Printf(TEXT("\"q1q2_age_reset_count\":%d,"), M.Q1Q2AgeResetCount);
+		Json += FString::Printf(TEXT("\"age_advance_total_ma\":%.12g,"), M.AgeAdvanceTotalMa);
+		Json += FString::Printf(TEXT("\"vector_rotation_residual_max\":%.12g,"), M.VectorRotationResidualMax);
+		Json += FString::Printf(TEXT("\"vector_tangent_residual_max\":%.12g,"), M.VectorTangentResidualMax);
+		Json += FString::Printf(TEXT("\"vector_norm_residual_max\":%.12g,"), M.VectorNormResidualMax);
+		Json += FString::Printf(TEXT("\"q1q2_ridge_residual_deg_max\":%.12g,"), M.Q1Q2RidgeDirectionResidualDegMax);
+		Json += FString::Printf(TEXT("\"raw_hit_count_total\":%d,"), M.RawHitCountTotal);
+		Json += FString::Printf(TEXT("\"valid_single_hit_write_count\":%d,"), M.ValidSingleHitWriteCount);
+		Json += FString::Printf(TEXT("\"generated_oceanic_count\":%d,"), M.GeneratedOceanicCount);
+		Json += FString::Printf(TEXT("\"q1q2_divergent_accepted_count\":%d,"), M.Q1Q2DivergentAcceptedCount);
+		Json += FString::Printf(TEXT("\"q1q2_rejected_opening_rate_count\":%d,"), M.Q1Q2RejectedByOpeningRateCount);
+		Json += FString::Printf(TEXT("\"q1q2_rejected_process_filter_count\":%d,"), M.Q1Q2RejectedByProcessFilterCount);
+		Json += FString::Printf(TEXT("\"q1q2_rejected_same_plate_count\":%d,"), M.Q1Q2RejectedBySamePlateCount);
+		Json += FString::Printf(TEXT("\"convergent_contact_count\":%d,"), M.ConvergentContactCount);
+		Json += FString::Printf(TEXT("\"divergent_contact_count\":%d,"), M.DivergentContactCount);
+		Json += FString::Printf(TEXT("\"mixed_signal_same_pair_count\":%d,"), M.MixedSignalSamePairCount);
+		Json += FString::Printf(TEXT("\"ocean_ocean_age_polarity_count\":%d,"), M.OceanOceanAgePolarityContactCount);
+		Json += FString::Printf(TEXT("\"ocean_ocean_older_subducting_count\":%d,"), M.OceanOceanOlderSubductingLabelCount);
+		Json += FString::Printf(TEXT("\"ocean_ocean_younger_subducting_count\":%d,"), M.OceanOceanYoungerSubductingLabelCount);
+		Json += FString::Printf(TEXT("\"ocean_ocean_equal_age_deferral_count\":%d,"), M.OceanOceanEqualAgeDeferralCount);
+		Json += FString::Printf(TEXT("\"active_front_count\":%d,"), M.ActiveFrontCount);
+		Json += FString::Printf(TEXT("\"tracking_reset_count\":%d,"), M.TrackingResetCount);
+		Json += FString::Printf(TEXT("\"front_continuity_matched_count\":%d,"), M.FrontContinuityMatchedCount);
+		Json += FString::Printf(TEXT("\"front_continuity_candidate_count\":%d,"), M.FrontContinuityCandidateCount);
+		Json += FString::Printf(TEXT("\"front_continuity_ratio\":%.12g,"), M.FrontContinuityRatio);
+		Json += FString::Printf(TEXT("\"distance_min_km\":%.12g,"), M.DistanceMinKm);
+		Json += FString::Printf(TEXT("\"distance_mean_km\":%.12g,"), M.DistanceMeanKm);
+		Json += FString::Printf(TEXT("\"distance_max_km\":%.12g,"), M.DistanceMaxKm);
+		Json += FString::Printf(TEXT("\"distance_oracle_residual_km_max\":%.12g,"), M.DistanceOracleResidualKmMax);
+		Json += FString::Printf(TEXT("\"previously_blocked_sample_count\":%d,"), M.PreviouslyBlockedSampleCount);
+		Json += FString::Printf(TEXT("\"previously_blocked_became_q1q2_oceanic_count\":%d,"), M.PreviouslyBlockedBecameQ1Q2OceanicCount);
+		Json += FString::Printf(TEXT("\"dangerous_nonopening_q1q2_oceanic_count\":%d,"), M.DangerousNonOpeningQ1Q2OceanicCount);
+		Json += FString::Printf(TEXT("\"hole_count_window0\":%d,"), M.HoleCountWindow0);
+		Json += FString::Printf(TEXT("\"hole_count_final\":%d,"), M.HoleCountFinal);
+		Json += FString::Printf(TEXT("\"hole_count_growth\":%d,"), M.HoleCountGrowth);
+		Json += FString::Printf(TEXT("\"unassigned_triangle_count\":%d,"), M.UnassignedTriangleCount);
+		Json += FString::Printf(TEXT("\"unassigned_triangle_budget\":%d,"), M.UnassignedTriangleBudget);
+		Json += FString::Printf(TEXT("\"build_substrate_ms\":%.3f,"), M.BuildSubstrateMs);
+		Json += FString::Printf(TEXT("\"build_plate_local_ms\":%.3f,"), M.BuildPlateLocalMs);
+		Json += FString::Printf(TEXT("\"aabb_build_ms\":%.3f,"), M.AabbBuildMs);
+		Json += FString::Printf(TEXT("\"motion_apply_ms\":%.3f,"), M.MotionApplyMs);
+		Json += FString::Printf(TEXT("\"vector_rotation_ms\":%.3f,"), M.VectorRotationMs);
+		Json += FString::Printf(TEXT("\"tracking_ms\":%.3f,"), M.TrackingMs);
+		Json += FString::Printf(TEXT("\"contact_process_ms\":%.3f,"), M.ContactProcessMs);
+		Json += FString::Printf(TEXT("\"resample_field_ms\":%.3f,"), M.ResampleFieldMs);
+		Json += FString::Printf(TEXT("\"topology_rebuild_ms\":%.3f,"), M.TopologyRebuildMs);
+		Json += FString::Printf(TEXT("\"full_carrier_cycle_ms\":%.3f,"), M.FullCarrierCycleMs);
+		Json += FString::Printf(TEXT("\"total_ms\":%.3f,"), M.TotalMs);
+		Json += FString::Printf(TEXT("\"peak_memory_mb\":%.3f,"), M.PeakMemoryMb);
+		Json += FString::Printf(TEXT("\"paper_regime_characterization_pass\":%s,"), M.bPaperRegimeCharacterizationPass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"dangerous_pump_audit_pass\":%s,"), M.bDangerousPumpAuditPass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"topology_budget_pass\":%s,"), M.bTopologyBudgetPass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"hole_growth_budget_pass\":%s,"), M.bHoleGrowthBudgetPass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"performance_budget_pass\":%s,"), M.bPerformanceBudgetPass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"no_forbidden_fallback_pass\":%s,"), M.bNoForbiddenFallbackPass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"replay_deterministic\":%s,"), M.bReplayDeterministic ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"fixture_pass\":%s,"), M.bFixturePass ? TEXT("true") : TEXT("false"));
+		Json += FString::Printf(TEXT("\"verdict\":%s"), *JsonString(M.Verdict));
+		Json += TEXT("}");
+		return Json;
+	}
+
+	FString FCarrierV2Milestone4::BuildCheckpointReport(
+		const FCarrierV2Milestone4SuiteResult& Suite,
+		const FString& CommandLine,
+		const FString& CommitSha)
+	{
+		const double Start = FPlatformTime::Seconds();
+		FString Report;
+		Report += TEXT("# CarrierLab Milestone 4 Closeout Report\n\n");
+		Report += TEXT("Status: generated by `CarrierLabV2Milestone4`.\n\n");
+		Report += FString::Printf(TEXT("- Git HEAD at commandlet launch: `%s`\n"), CommitSha.IsEmpty() ? TEXT("unknown") : *CommitSha);
+		Report += FString::Printf(TEXT("- Command: `%s`\n"), *CommandLine);
+		Report += FString::Printf(TEXT("- Output root: `%s`\n"), *Suite.OutputRoot);
+		Report += FString::Printf(TEXT("- Metrics JSONL: `%s`\n\n"), *Suite.MetricsPath);
+		Report += TEXT("## Scope\n\n");
+		Report += TEXT("Milestone 4 adds plate-local crust field storage for `z`, `a_o`, `r`, and `f`, scalar/vector transfer oracles, q1/q2 oceanic field generation, O/O age polarity, and read-only per-step convergence tracking inside each resample window. It does not add uplift, erosion, terrain amplification, collision transfer, slab pull, rifting, plate birth/death, persistent front ids, prior-owner fallback, or visual validation.\n\n");
+
+		Report += TEXT("## Paper-Regime Characterization\n\n");
+		Report += TEXT("`M4-FX-014` is a diagnostic stress row, not a field-cycle proof row: it reruns M3R behavior at 50k, 40 plates, 2 Ma timestep, paper-speed `v0=100 mm/yr`, 16 steps/window, and eight windows. Its hard stop condition is dangerous non-opening prior-blocked q1/q2 oceanic generation; topology debt and runtime are reported, not used to loosen M3R budgets.\n\n");
+		Report += TEXT("| fixture | windows | steps/window | vm/v0 | alpha | q1q2 accepted | rejected opening/process/same | prior blocked oceanic | dangerous non-opening | holes w0/final/growth | unassigned/budget | pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Milestone4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Milestone4Metrics& M = Result.Metrics;
+			if (M.FixtureId == TEXT("M4-FX-014"))
+			{
+				Report += FString::Printf(
+					TEXT("| `%s` | %d | %d | %.6g/%.6g | %.6g | %d | %d/%d/%d | %d | %d | %d/%d/%d | %d/%d | %s |\n"),
+					*M.FixtureId,
+					M.LifecycleWindowCount,
+					M.MotionStepCount,
+					M.VmMmPerYr,
+					M.V0MmPerYr,
+					M.CadenceAlpha,
+					M.Q1Q2DivergentAcceptedCount,
+					M.Q1Q2RejectedByOpeningRateCount,
+					M.Q1Q2RejectedByProcessFilterCount,
+					M.Q1Q2RejectedBySamePlateCount,
+					M.PreviouslyBlockedBecameQ1Q2OceanicCount,
+					M.DangerousNonOpeningQ1Q2OceanicCount,
+					M.HoleCountWindow0,
+					M.HoleCountFinal,
+					M.HoleCountGrowth,
+					M.UnassignedTriangleCount,
+					M.UnassignedTriangleBudget,
+					M.bFixturePass ? TEXT("pass") : TEXT("fail"));
+			}
+		}
+		Report += TEXT("\n");
+
+		Report += TEXT("## Fixture Gates\n\n");
+		Report += TEXT("`M4-FX-002` through `M4-FX-013` are synthetic unit-path fixtures; integration evidence comes from the scale field rows and the paper-regime characterization row.\n\n");
+		Report += TEXT("| fixture | samples | windows | fields | single/q1q2/deferred | O/O older/younger/equal | contacts conv/div | fronts | dangerous pump | holes growth/max | unassigned/budget | pass | verdict |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n");
+		for (const FCarrierV2Milestone4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Milestone4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d | %d | %d | %d/%d/%d | %d/%d/%d | %d/%d | %d | %d | %d/%d | %d/%d | %s | `%s` |\n"),
+				*M.FixtureId,
+				M.GlobalSampleCount,
+				M.LifecycleWindowCount,
+				M.FieldVertexCount,
+				M.FieldTransferSingleSourceCount,
+				M.FieldTransferQ1Q2Count,
+				M.FieldTransferDeferredCount,
+				M.OceanOceanOlderSubductingLabelCount,
+				M.OceanOceanYoungerSubductingLabelCount,
+				M.OceanOceanEqualAgeDeferralCount,
+				M.ConvergentContactCount,
+				M.DivergentContactCount,
+				M.ActiveFrontCount,
+				M.DangerousNonOpeningQ1Q2OceanicCount,
+				M.HoleCountGrowth,
+				Result.Config.ProcessConfig.ExpectedMaximumHoleCountGrowth,
+				M.UnassignedTriangleCount,
+				M.UnassignedTriangleBudget,
+				M.bFixturePass ? TEXT("pass") : TEXT("fail"),
+				*M.Verdict);
+		}
+
+		Report += TEXT("\n## Field And Tracking Evidence\n\n");
+		Report += TEXT("| fixture | scalar residual z/age | age advance | q1q2 resets | vector rot/tangent/norm | ridge deg | d(p) min/mean/max | oracle km | continuity matched/candidate/ratio |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+		for (const FCarrierV2Milestone4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Milestone4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %.6g/%.6g | %.6g | %d | %.6g/%.6g/%.6g | %.6g | %.6g/%.6g/%.6g | %.6g | %d/%d/%.6g |\n"),
+				*M.FixtureId,
+				M.ElevationScalarResidualMax,
+				M.OceanicAgeScalarResidualMax,
+				M.AgeAdvanceTotalMa,
+				M.Q1Q2AgeResetCount,
+				M.VectorRotationResidualMax,
+				M.VectorTangentResidualMax,
+				M.VectorNormResidualMax,
+				M.Q1Q2RidgeDirectionResidualDegMax,
+				M.DistanceMinKm,
+				M.DistanceMeanKm,
+				M.DistanceMaxKm,
+				M.DistanceOracleResidualKmMax,
+				M.FrontContinuityMatchedCount,
+				M.FrontContinuityCandidateCount,
+				M.FrontContinuityRatio);
+		}
+
+		Report += TEXT("\n## Performance Accounting\n\n");
+		Report += TEXT("| fixture | build substrate/local | aabb | motion | vector | tracking | contact | resample | topology | full cycle | tracking+contact | budget pass |\n");
+		Report += TEXT("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+		for (const FCarrierV2Milestone4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Milestone4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %.3f/%.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %s |\n"),
+				*M.FixtureId,
+				M.BuildSubstrateMs,
+				M.BuildPlateLocalMs,
+				M.AabbBuildMs,
+				M.MotionApplyMs,
+				M.VectorRotationMs,
+				M.TrackingMs,
+				M.ContactProcessMs,
+				M.ResampleFieldMs,
+				M.TopologyRebuildMs,
+				M.FullCarrierCycleMs,
+				M.TrackingMs + M.ContactProcessMs,
+				M.bPerformanceBudgetPass ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Replay And Baselines\n\n");
+		Report += TEXT("| fixture | M3R compared/mismatch | field | replay field | tracking | replay tracking | resample | replay resample | topology | replay topology | deterministic |\n");
+		Report += TEXT("|---|---:|---|---|---|---|---|---|---|---|---|\n");
+		for (const FCarrierV2Milestone4FixtureResult& Result : Suite.Results)
+		{
+			const FCarrierV2Milestone4Metrics& M = Result.Metrics;
+			Report += FString::Printf(
+				TEXT("| `%s` | %d/%d | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %s |\n"),
+				*M.FixtureId,
+				M.PinnedM3BaselineComparedCount,
+				M.PinnedM3BaselineMismatchCount,
+				*M.PostFieldAuthorityHash,
+				*M.ReplayPostFieldAuthorityHash,
+				*M.ProcessTrackingHash,
+				*M.ReplayProcessTrackingHash,
+				*M.ResampleFieldHash,
+				*M.ReplayResampleFieldHash,
+				*M.RebuiltTopologyHash,
+				*M.ReplayRebuiltTopologyHash,
+				M.bReplayDeterministic ? TEXT("pass") : TEXT("fail"));
+		}
+
+		Report += TEXT("\n## Policy Ledger\n\n");
+		Report += TEXT("| policy | authority class | behavior | audit evidence |\n");
+		Report += TEXT("|---|---|---|---|\n");
+		Report += TEXT("| `M4-POL-PAPER-REGIME-CHARACTERIZATION` | diagnostic | 50k, eight-window, paper-speed/cadence M3R stress row sets debt context before fields | `M4-FX-014` row and dangerous subset |\n");
+		Report += TEXT("| `M4-POL-HOLE-GROWTH-BREACH-PROTOCOL` | diagnostic | paper-regime topology debt is classified and reported; it is not a reason to edit M3R budget denominators | characterization table and unassigned/budget column |\n");
+		Report += TEXT("| `M4-POL-FRONT-CONTINUITY-NO-IDS` | source_implicit | front continuity is measured from re-derived geometry/tracking records, not persistent ids | `persistent_front_id_store_count=0` |\n");
+		Report += TEXT("| `M4-POL-ZERO-FOLD-NEUTRAL` | source_silent | zero `f` is allowed until M5 adds fold updates | vector tangent/norm gates |\n");
+		Report += TEXT("| `M4-POL-RIDGE-DIRECTION-FOR-GENERATED-OCEANIC` | source_explicit | q1/q2 oceanic fields set `r = normalize_tangent((p-qGamma) x p)` | ridge residual column |\n");
+		Report += TEXT("| `M4-POL-OCEAN-OCEAN-AGE-POLARITY` | source_explicit | older oceanic age subducts; equal or missing age defers | O/O older/younger/equal columns |\n");
+		Report += TEXT("| `M4-POL-NONOPENING-PUMP-INDEPENDENT-AUDIT` | diagnostic | dangerous pump subset is recomputed from sample records after sampling | dangerous subset column and sample record hash |\n\n");
+
+		Report += TEXT("## Gate Summary\n\n");
+		Report += FString::Printf(TEXT("- Pinned M3R baseline gate: `%s`\n"), Suite.bPinnedM3BaselinePass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- Micro gate: `%s`\n"), Suite.bMicroGatePass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- Paper-regime characterization: `%s`\n"), Suite.bPaperRegimeCharacterizationPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 50k fields gate: `%s`\n"), Suite.bScale50kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 100k attempted: `%s`, pass: `%s`\n"), Suite.bAttempted100k ? TEXT("yes") : TEXT("no"), Suite.bScale100kPass ? TEXT("pass") : TEXT("n/a"));
+		if (!Suite.bAttempted100k)
+		{
+			Report += FString::Printf(TEXT("- 100k not attempted reason: `%s`\n"), Suite.NotAttempted100kReason.IsEmpty() ? TEXT("not requested") : *Suite.NotAttempted100kReason);
+		}
+		Report += FString::Printf(TEXT("- 250k attempted: `%s`, pass: `%s`\n"), Suite.bAttempted250k ? TEXT("yes") : TEXT("no"), Suite.bScale250kPass ? TEXT("pass") : TEXT("fail"));
+		Report += FString::Printf(TEXT("- 500k attempted: `%s`, pass: `%s`\n"), Suite.bAttempted500k ? TEXT("yes") : TEXT("no"), Suite.bScale500kPass ? TEXT("pass") : TEXT("n/a"));
+		if (!Suite.bAttempted500k)
+		{
+			Report += FString::Printf(TEXT("- 500k not attempted reason: `%s`\n"), Suite.NotAttempted500kReason.IsEmpty() ? TEXT("not requested; optional characterization only") : *Suite.NotAttempted500kReason);
+		}
+		Report += FString::Printf(TEXT("- Final verdict: `%s`\n\n"), *Suite.Verdict);
+		Report += TEXT("## Next Gate\n\n");
+		Report += TEXT("Stop here for explicit user go/no-go before Milestone 5. M4 prepares crust fields and tracking; it does not validate morphology, uplift, collision transfer, erosion, or amplification.\n");
+		Report += FString::Printf(TEXT("\nReport generation ms: %.3f\n"), (FPlatformTime::Seconds() - Start) * 1000.0);
+		return Report;
+	}
+
 	TArray<FCarrierV2Stage1Config> FCarrierV2Stage1::MakeMicroFixtureConfigs()
 	{
 		TArray<FCarrierV2Stage1Config> Configs;
