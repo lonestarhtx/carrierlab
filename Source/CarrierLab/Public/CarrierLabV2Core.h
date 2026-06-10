@@ -1190,6 +1190,268 @@ namespace CarrierLab::V2
 		FString NotAttempted500kReason;
 	};
 
+	struct FCarrierV2Milestone3PinnedM2Baseline
+	{
+		FString FixtureId;
+		FString ExpectedPostCycleAuthorityHash;
+		FString ExpectedResampleOutputHash;
+		FString ExpectedRebuiltTopologyHash;
+	};
+
+	struct FCarrierV2Milestone3ContactRecord
+	{
+		int32 ContactId = INDEX_NONE;
+		int32 PlateA = INDEX_NONE;
+		int32 PlateB = INDEX_NONE;
+		int32 PlateC = INDEX_NONE;
+		int32 LocalTriangleA = INDEX_NONE;
+		int32 LocalTriangleB = INDEX_NONE;
+		int32 SourceEdgeA = INDEX_NONE;
+		int32 SourceEdgeB = INDEX_NONE;
+		double SignedOpeningRate = 0.0;
+		double PlateAContinentalFraction = 0.0;
+		double PlateBContinentalFraction = 0.0;
+		FString ContactClass = TEXT("unknown");
+		FString PolarityClass = TEXT("none");
+		FString Provenance = TEXT("unset");
+	};
+
+	struct FCarrierV2Milestone3TriangleLabelRecord
+	{
+		int32 LabelId = INDEX_NONE;
+		int32 ContactId = INDEX_NONE;
+		int32 PlateId = INDEX_NONE;
+		int32 LocalTriangleId = INDEX_NONE;
+		int32 SourceTriangleId = INDEX_NONE;
+		FString LabelClass = TEXT("unknown");
+		FString Provenance = TEXT("unset");
+		bool bFilterActive = false;
+	};
+
+	struct FCarrierV2Milestone3SampleRecord
+	{
+		int32 SampleId = INDEX_NONE;
+		int32 RawHitCount = 0;
+		int32 FilteredSubductingHitCount = 0;
+		int32 FilteredCollidingHitCount = 0;
+		int32 ValidHitCount = 0;
+		int32 SelectedPlateId = INDEX_NONE;
+		int32 SelectedLocalTriangleId = INDEX_NONE;
+		int32 SelectedSourceTriangleId = INDEX_NONE;
+		int32 AssignedPlateId = INDEX_NONE;
+		double SelectedContinentalFraction = 0.0;
+		bool bSingleHitWritten = false;
+		bool bSelectedFilteredHit = false;
+		bool bFilterExhausted = false;
+		bool bPostFilterUnresolvedMultihit = false;
+		bool bDeferredNondivergentGap = false;
+		bool bGeneratedOceanic = false;
+		bool bPreviouslyBlockedSample = false;
+		bool bPreviouslyBlockedBecameQ1Q2Oceanic = false;
+		bool bBoundaryPairFound = false;
+		bool bQ1Q2DifferentPlates = false;
+		int32 Q1PlateId = INDEX_NONE;
+		int32 Q2PlateId = INDEX_NONE;
+		double Q1DistanceRad = 0.0;
+		double Q2DistanceRad = 0.0;
+		double QGammaDistanceRad = 0.0;
+		double QGammaAlpha = 0.0;
+		double Q1Q2OpeningRate = 0.0;
+		FString SelectionProvenance = TEXT("unset");
+	};
+
+	struct FCarrierV2Milestone3Config
+	{
+		FCarrierV2Milestone2Config CarrierCycleConfig;
+		FString FixtureId = TEXT("M3-FX-001");
+		FString FixtureName = TEXT("PinnedM2Baseline");
+		FString ProcessFilterPolicyId = TEXT("contact_labels_filter_subducting_colliding_only");
+		FString ContactEvidencePolicyId = TEXT("plate_local_boundary_shared_source_edge_motion_sign");
+		FString PolarityPolicyId = TEXT("contact_local_material_conservative");
+		FString PolarityMode = TEXT("auto_contact_local_material");
+		TArray<FCarrierV2Milestone3PinnedM2Baseline> PinnedM2Baselines;
+		bool bRunPinnedM2BaselinesOnly = false;
+		bool bEnableProcessFilters = true;
+		bool bAllowFixtureSpecifiedPolarity = false;
+		bool bForceAllOverlapHitsFiltered = false;
+		bool bForceNoFilterLabels = false;
+		bool bScaleCharacterization = false;
+		bool bRequirePinnedM2Baseline = false;
+		bool bRequireFilterInertNoop = false;
+		bool bRequireHolePumpTripwire = false;
+		bool bRequireFilteredSingleSource = false;
+		bool bRequireFilterExhausted = false;
+		bool bRequirePostFilterMultihit = false;
+		bool bRequireTrueDivergentGap = false;
+		bool bRequireDivergenceRejected = false;
+		bool bRequirePolaritySwap = false;
+		bool bRequireOceanOceanAmbiguous = false;
+		bool bRequireContinentalCollisionCandidate = false;
+		bool bRequireThirdPlateIntrusion = false;
+		bool bRequireResolutionInvariantLabels = false;
+		bool bRequireResolvableScale = false;
+		int32 ExpectedMinimumContacts = 0;
+		int32 ExpectedMinimumFilterLabels = 0;
+		int32 ExpectedMinimumFilteredSingleSource = 0;
+		int32 ExpectedMinimumDivergentGapFill = 0;
+		int32 ExpectedMaximumHoleCountGrowth = 0;
+		double OpeningRateTolerance = 1.0e-12;
+		double ContinentalFractionThreshold = 0.5;
+		double PaperResampleCycleBudgetMs = 3580.0;
+		double ProcessLaneBudgetMs = 260.0;
+		int32 UnassignedTriangleBudget = 0;
+	};
+
+	struct FCarrierV2Milestone3Metrics
+	{
+		FString RunId;
+		FString StageId = TEXT("M3");
+		FString FixtureId;
+		FString FixtureName;
+		FString FixtureKind;
+		FString ProcessFilterPolicyId;
+		FString ContactEvidencePolicyId;
+		FString PolarityPolicyId;
+		FString PolarityMode;
+		FString ConfigHash;
+		FString PreCycleAuthorityHash;
+		FString PostCycleAuthorityHash;
+		FString ContactLabelHash;
+		FString ResampleDecisionHash;
+		FString RebuiltTopologyHash;
+		FString MetricsHash;
+		int32 GlobalSampleCount = 0;
+		int32 GlobalTriangleCount = 0;
+		int32 PlateCount = 0;
+		int32 LifecycleWindowCount = 0;
+		double MaxPlateMotionAngleRad = 0.0;
+		int32 PinnedM2BaselineComparedCount = 0;
+		int32 PinnedM2BaselineMismatchCount = 0;
+		int32 ContactEvidenceCount = 0;
+		int32 ConvergentContactCount = 0;
+		int32 DivergentContactCount = 0;
+		int32 TransformLowMarginContactCount = 0;
+		int32 ThirdPlateContactCount = 0;
+		int32 OceanContinentContactCount = 0;
+		int32 OceanOceanAmbiguousContactCount = 0;
+		int32 ContinentalCollisionCandidateCount = 0;
+		int32 SubductingTriangleLabelCount = 0;
+		int32 CollidingTriangleLabelCount = 0;
+		int32 FilterActiveTriangleLabelCount = 0;
+		int32 PostResetTriangleLabelCount = 0;
+		int64 AabbRayQueryCount = 0;
+		int64 RawHitCountTotal = 0;
+		int32 FilteredSubductingHitCount = 0;
+		int32 FilteredCollidingHitCount = 0;
+		int32 ValidSingleHitWriteCount = 0;
+		int32 FilteredSingleSourceWriteCount = 0;
+		int32 FilterExhaustedSampleCount = 0;
+		int32 PostFilterUnresolvedMultihitCount = 0;
+		int32 Q1Q2BoundaryQueryCount = 0;
+		int32 Q1Q2BoundaryPairCount = 0;
+		int32 Q1Q2DivergentAcceptedCount = 0;
+		int32 Q1Q2DivergenceRejectedCount = 0;
+		int32 Q1Q2GapFillCount = 0;
+		int32 GeneratedOceanicCount = 0;
+		int32 GapFillNoBoundaryPairCount = 0;
+		int32 PreviouslyBlockedSampleCount = 0;
+		int32 PreviouslyBlockedBecameQ1Q2OceanicCount = 0;
+		int32 DeferredOverlapSampleCount = 0;
+		int32 DeferredNondivergentGapCount = 0;
+		int32 HoleCountWindow0 = 0;
+		int32 HoleCountFinal = 0;
+		int32 HoleCountGrowth = 0;
+		int32 RebuiltPlateCount = 0;
+		int32 RebuiltLocalVertexCountSum = 0;
+		int32 RebuiltLocalTriangleCountSum = 0;
+		int32 RebuiltTriangleAssignmentCount = 0;
+		int32 MixedVertexTriangleCount = 0;
+		int32 MajorityTriangleAssignmentCount = 0;
+		int32 ThreeWayTriangleAssignmentCount = 0;
+		int32 UnassignedTriangleCount = 0;
+		int32 UnassignedTriangleBudget = 0;
+		int32 UnsupportedOverlapWriteAttemptCount = 0;
+		int32 PriorOwnerReadCount = 0;
+		int32 PriorOwnerFallbackCount = 0;
+		int32 GlobalOwnerReadCount = 0;
+		int32 CentroidPrimaryResolutionCount = 0;
+		int32 RandomPrimaryResolutionCount = 0;
+		int32 NearestPrimaryResolutionCount = 0;
+		int32 OwnershipRepairDuringResampleCount = 0;
+		int32 RetentionHysteresisAnchorCount = 0;
+		int32 Q1Q2DiscreteApproxCount = 0;
+		int32 Q1Q2PriorOwnerLookupCount = 0;
+		int32 TerrainBeautyMutationCount = 0;
+		int32 SubductionMaterialMutationCount = 0;
+		int32 CollisionMaterialMutationCount = 0;
+		int32 RiftingMutationCount = 0;
+		int32 TopologyRebuildCount = 0;
+		int32 ProcessStateResetCount = 0;
+		int32 RemeshWindowCount = 0;
+		bool bPinnedM2BaselinePass = true;
+		bool bFilterInertNoopPass = true;
+		bool bContactEvidencePass = true;
+		bool bProcessFilterEvidencePass = true;
+		bool bHolePumpTripwirePass = true;
+		bool bQ1Q2DivergencePass = true;
+		bool bOverlapFilterPolicyPass = true;
+		bool bTopologyBudgetPass = true;
+		bool bNoForbiddenFallbackPass = false;
+		bool bPerformanceBudgetPass = true;
+		bool bResolutionInvariantLabelPass = true;
+		bool bReplayDeterministic = false;
+		bool bFixturePass = false;
+		bool bStageGatePass = false;
+		FString Verdict = TEXT("FAIL_IMPLEMENTATION");
+		FString ReplayPostCycleAuthorityHash;
+		FString ReplayContactLabelHash;
+		FString ReplayResampleDecisionHash;
+		FString ReplayRebuiltTopologyHash;
+		FString ReplayMetricsHash;
+		double BuildSubstrateMs = 0.0;
+		double BuildPlateLocalMs = 0.0;
+		double MotionApplyMs = 0.0;
+		double AabbBuildMs = 0.0;
+		double ContactEvidenceMs = 0.0;
+		double ResampleFilterMs = 0.0;
+		double TopologyRebuildMs = 0.0;
+		double MetricsMs = 0.0;
+		double ProcessLaneMs = 0.0;
+		double FullCarrierCycleMs = 0.0;
+		double TotalMs = 0.0;
+		double PeakMemoryMb = 0.0;
+	};
+
+	struct FCarrierV2Milestone3FixtureResult
+	{
+		FCarrierV2Milestone3Config Config;
+		FCarrierV2Milestone3Metrics Metrics;
+		TArray<FCarrierV2Milestone3ContactRecord> Contacts;
+		TArray<FCarrierV2Milestone3TriangleLabelRecord> TriangleLabels;
+		TArray<FCarrierV2Milestone3SampleRecord> SampleRecords;
+		TArray<FCarrierV2Plate> RebuiltPlates;
+		bool bCompleted = false;
+		FString Error;
+	};
+
+	struct FCarrierV2Milestone3SuiteResult
+	{
+		TArray<FCarrierV2Milestone3FixtureResult> Results;
+		bool bMicroGatePass = false;
+		bool bPinnedM2BaselinePass = false;
+		bool bScale50kPass = false;
+		bool bAttempted250k = false;
+		bool bScale250kPass = false;
+		bool bAttempted500k = false;
+		bool bScale500kPass = false;
+		bool bStageGatePass = false;
+		FString Verdict = TEXT("REVISE_MILESTONE_3");
+		FString OutputRoot;
+		FString MetricsPath;
+		FString ReportPath;
+		FString NotAttempted500kReason;
+	};
+
 	struct FCarrierV2FoundationStepperSampleVisual
 	{
 		int32 SampleId = INDEX_NONE;
@@ -1327,6 +1589,19 @@ namespace CarrierLab::V2
 		static FString MetricsToJson(const FCarrierV2Milestone2FixtureResult& Result);
 		static FString BuildCheckpointReport(
 			const FCarrierV2Milestone2SuiteResult& Suite,
+			const FString& CommandLine,
+			const FString& CommitSha);
+	};
+
+	class CARRIERLAB_API FCarrierV2Milestone3
+	{
+	public:
+		static TArray<FCarrierV2Milestone3Config> MakeMicroFixtureConfigs();
+		static FCarrierV2Milestone3Config MakeScaleConfig(int32 SampleCount, bool bComparisonScale);
+		static bool RunFixtureWithReplay(const FCarrierV2Milestone3Config& Config, FCarrierV2Milestone3FixtureResult& OutResult);
+		static FString MetricsToJson(const FCarrierV2Milestone3FixtureResult& Result);
+		static FString BuildCheckpointReport(
+			const FCarrierV2Milestone3SuiteResult& Suite,
 			const FString& CommandLine,
 			const FString& CommitSha);
 	};
